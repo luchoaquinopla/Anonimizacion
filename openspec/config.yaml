@@ -1,0 +1,49 @@
+# Configuración de desarrollo guiado por especificaciones para anonimizacion.
+schema: spec-driven
+
+context: |
+  Stack tecnológico: No inicializado; no se detectaron archivos de aplicación.
+  Arquitectura: No establecida.
+  Pruebas: No se detectó ningún ejecutor de pruebas.
+  Estilo: No se detectaron convenciones del proyecto.
+
+rules:
+  proposal:
+    - Incluir un plan de reversión para cambios riesgosos.
+  specs:
+    - Usar Dado/Cuando/Entonces para los escenarios.
+    - Usar las palabras clave RFC 2119 (MUST, SHALL, SHOULD, MAY).
+  design:
+    - Incluir diagramas de secuencia para flujos complejos.
+    - Documentar las decisiones de arquitectura con su justificación.
+  tasks:
+    - Agrupar por fase y usar numeración jerárquica.
+    - Mantener las tareas realizables en una sola sesión.
+  apply:
+    - Seguir los patrones establecidos por el proyecto cuando existan.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Advertir antes de fusionar deltas destructivos.
+
+testing:
+  strict_tdd: false
+  detected_at: "2026-08-11"
+  runner:
+    command: ""
+    framework: "No se detectó ninguno"
+  layers:
+    unit: false
+    integration: false
+    e2e: false
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter: ""
+    type_checker: ""
+    formatter: ""
