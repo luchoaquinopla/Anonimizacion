@@ -1,27 +1,62 @@
 # Especificación: Ingesta clínica anonimizada
 
 ## Propósito
-Procesar PDFs clínicos sin conservar contenido identificable ni crudo.
+
+Procesar cada PDF clínico como dato efímero mediante un caso de uso desacoplado del origen, sin exponer ni conservar contenido clínico o identificante.
+
+En esta especificación, DEBE corresponde a MUST (obligatorio) y NO DEBE corresponde a MUST NOT (prohibido) según RFC 2119.
 
 ## Requisitos
 
-### Requisito: Procesamiento transitorio
-El sistema DEBE (MUST: obligatorio) leer el PDF sólo transitoriamente y completar extracción, anonimización y controles antes de habilitar datos.
+### Requisito: Puerto de entrada independiente del origen
 
-#### Escenario: Documento aprobado
-- DADO un PDF clínico
-- CUANDO supera privacidad y calidad aprobada
-- ENTONCES habilita sólo observaciones permitidas y trazabilidad técnica
+El sistema DEBE ofrecer un puerto de entrada para invocar el caso de uso de ingesta con el contenido transitorio de un PDF. El contrato DEBE mantener la extracción, la privacidad y el dominio independientes del adaptador de origen, y NO DEBE seleccionar ni exigir un protocolo, *framework* o mecanismo para fuentes futuras.
 
-#### Escenario: Copia sensible
-- DADO cualquier etapa
-- CUANDO se intenta persistir PDF, texto crudo, PII/PHI o contenido sensible en temporales, colas o logs
-- ENTONCES el sistema DEBE impedirlo
+#### Escenario: Invocación desde la carga manual
 
-### Requisito: Controles y decisión
-El sistema DEBE ejecutar anonimización, validación residual independiente y política de calidad por documento antes de persistir.
+- DADO un PDF recibido por el adaptador local de carga manual
+- CUANDO el adaptador solicita su ingesta
+- ENTONCES DEBE invocar el caso de uso mediante el puerto de entrada
+- Y la extracción, la privacidad y las reglas de dominio NO DEBEN depender de la interfaz de navegador
 
-#### Escenario: PII o calidad no aprobada
-- DADO PII residual, campos no verificados o controles incompletos
-- CUANDO se evalúa el documento
-- ENTONCES DEBE bloquear la persistencia clínica y registrar sólo estado y métricas técnicas no identificantes
+#### Escenario: Sustitución conceptual del origen
+
+- DADO un futuro adaptador autorizado que entregue el mismo contenido transitorio admitido
+- CUANDO invoque el puerto de entrada
+- ENTONCES el caso de uso DEBE conservar las mismas reglas de extracción, privacidad, calidad y descarte
+- Y el puerto NO DEBE imponer qué fuente o transporte utiliza ese adaptador
+
+### Requisito: Procesamiento síncrono y exclusivamente en memoria
+
+El caso de uso DEBE completar de forma síncrona, para cada PDF, la clasificación, extracción por familia, anonimización, validación residual y controles de calidad aplicables. Todo PDF, texto, PII/PHI, dato clínico original o anonimizado, observación, resultado detallado y dato intermedio DEBE permanecer sólo en memoria y DEBE descartarse antes de completar el tratamiento del archivo, tanto en éxito como en error.
+
+#### Escenario: Archivo tratado satisfactoriamente
+
+- DADO un PDF clínico admitido
+- CUANDO completa todos los controles obligatorios
+- ENTONCES el caso de uso DEBE descartar sus entradas y salidas clínicas transitorias antes de completar
+- Y DEBE devolver al adaptador sólo un resultado técnico seguro no identificante
+
+#### Escenario: Error durante el tratamiento
+
+- DADO un PDF cuyo tratamiento genera un error o rechazo
+- CUANDO el caso de uso alcanza un resultado terminal controlado
+- ENTONCES DEBE descartar igualmente el PDF y todos los datos transitorios
+- Y NO DEBE devolver contenido, valores ni diagnósticos detallados
+
+### Requisito: Ausencia de retención y canales laterales
+
+El sistema NO DEBE persistir PDFs, texto extraído, PII/PHI, datos clínicos originales o anonimizados, observaciones, resultados, temporales ni estados intermedios. Tampoco DEBE incluir contenido documental o clínico en registros, mensajes o cargas de cola.
+
+#### Escenario: Intento de escritura sensible
+
+- DADO cualquier etapa del caso de uso
+- CUANDO se intenta escribir contenido o un resultado clínico en almacenamiento, archivo temporal o registro
+- ENTONCES el sistema DEBE impedir la escritura
+- Y DEBE completar el descarte en memoria
+
+#### Escenario: Infraestructura de entrega ausente
+
+- DADO el procesamiento de un lote local
+- CUANDO se ejecuta el caso de uso
+- ENTONCES NO DEBE requerir base de datos, cola, *broker* ni servicio de red

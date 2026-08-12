@@ -1,35 +1,55 @@
 # Especificación: Calidad de extracción
 
 ## Propósito
-Medir completitud y confiabilidad antes de habilitar datos clínicos.
+
+Medir con un corpus controlado la cobertura y confiabilidad de los adaptadores por familia documental, sin incorporar muestras ni contenido sensible al producto.
+
+En esta especificación, DEBE corresponde a MUST (obligatorio) y NO DEBE corresponde a MUST NOT (prohibido) según RFC 2119.
 
 ## Requisitos
 
-### Requisito: Corpus, inventario y métricas
-El sistema DEBE (MUST: obligatorio) evaluar cada adaptador versionado contra un corpus autorizado y anotado, usando su inventario de campos esperados. DEBE informar por familia, adaptador y campo: cobertura/recall, exactitud de valor y unidad, tasa de omisiones, rechazo y PII residual.
+### Requisito: Corpus, inventario y métricas por familia
 
-#### Escenario: Evaluación
-- DADO un corpus con resultados esperados
-- CUANDO se ejecuta un adaptador
-- ENTONCES informa las métricas requeridas por familia, campo y versión
+Cada adaptador versionado de laboratorio, ecocardiografía y ECG DEBE evaluarse contra un corpus autorizado y anotado y su inventario versionado de campos esperados. La evaluación DEBE informar, por familia y versión, cobertura, exactitud de valor y unidad, omisiones, rechazos y PII/PHI residual. Para ECG, la evaluación DEBE limitarse a metadatos y medidas textuales y NO DEBE extraer ni evaluar la señal del trazado.
+
+#### Escenario: Evaluación de un adaptador
+
+- DADO un corpus autorizado con resultados esperados para una familia documental
+- CUANDO se evalúa una versión de su adaptador
+- ENTONCES la evaluación DEBE producir las métricas requeridas por familia y versión
+- Y NO DEBE incorporar los PDFs, su texto ni valores clínicos al producto
+
+#### Escenario: Documento ECG
+
+- DADO un PDF de ECG en el corpus controlado
+- CUANDO se evalúa el adaptador correspondiente
+- ENTONCES DEBE considerar sólo metadatos y medidas textuales admitidas
+- Y NO DEBE extraer la señal del trazado
 
 ### Requisito: Umbrales y regresión
-Los umbrales numéricos DEBEN acordarse con datos del corpus antes de producción. Una versión bajo un umbral DEBE ser no apta para persistencia productiva.
+
+Los umbrales numéricos de calidad y privacidad DEBEN acordarse a partir del corpus antes de cualquier uso productivo. Una versión sin umbrales aprobados o que incumpla alguno NO DEBE considerarse apta.
 
 #### Escenario: Umbral ausente o incumplido
-- DADA una versión sin umbral aprobado o con una métrica inferior
-- CUANDO se intenta habilitar en producción
-- ENTONCES el sistema DEBE rechazarla
 
-### Requisito: Decisión por documento
-El sistema DEBE evaluar los estados de todos sus campos esperados con la política aprobada.
+- DADA una versión sin umbral aprobado o con una métrica inferior al umbral aplicable
+- CUANDO se evalúa su aptitud
+- ENTONCES el sistema DEBE declararla no apta
+- Y NO DEBE habilitarla para uso productivo
 
-#### Escenario: Campo no verificable
-- DADO un campo truncado, dañado, ambiguo o faltante requerido
-- CUANDO se evalúa el documento
-- ENTONCES DEBE rechazar su persistencia clínica y conservar sólo métricas técnicas permitidas
+### Requisito: Evaluación sin retención sensible
 
-#### Escenario: Ausencia legítima
-- DADO un campo opcional que no figura en el documento
-- CUANDO su regla confirma la ausencia
-- ENTONCES lo registra como not_present, no como omisión
+El corpus y su contenido DEBEN permanecer fuera del producto. La evaluación NO DEBE persistir en el producto PDFs, texto, PII/PHI, valores clínicos, resultados por muestra ni datos intermedios; sus salidas permitidas DEBEN limitarse a métricas técnicas agregadas no identificantes.
+
+#### Escenario: Final de una evaluación
+
+- DADO que una ejecución de evaluación procesó muestras autorizadas
+- CUANDO finaliza
+- ENTONCES el producto NO DEBE conservar las muestras, su contenido ni resultados por muestra
+- Y sólo DEBE comunicar métricas agregadas que no permitan reconstruir ni identificar un documento
+
+#### Escenario: Métrica con riesgo de identificación
+
+- DADO un desglose que permitiría inferir contenido o identidad de una muestra
+- CUANDO se prepara el informe de evaluación
+- ENTONCES el sistema DEBE omitir o agregar ese desglose hasta que sea no identificante

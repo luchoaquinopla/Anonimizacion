@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "id": "e3c1ffee-85f7-480a-80ec-d55df1fd9c3b",
+  "title": "Incorporar carga manual local",
+  "objective": "Ajustar el plan SDD para carga múltiple local y efímera de PDFs.",
+  "status": "failed",
+  "createdAt": "2026-08-12T19:17:24.439Z",
+  "updatedAt": "2026-08-12T19:18:46.581Z",
+  "runs": [
+    {
+      "runId": "call_M8wB2cnwgF9JJFvKbQURmddN|fc_0f8e20616eb1b616016a7cc6bdc4f881919611392556c58376",
+      "mode": "workflow",
+      "agent": "sdd-proposal",
+      "status": "failed",
+      "startedAt": "2026-08-12T19:18:46.581Z",
+      "completedAt": "2026-08-12T19:18:46.581Z",
+      "usage": {
+        "tokens": 40439
+      }
+    }
+  ],
+  "workflowChildren": [
+    {
+      "workflowRunId": "call_M8wB2cnwgF9JJFvKbQURmddN|fc_0f8e20616eb1b616016a7cc6bdc4f881919611392556c58376",
+      "key": "amend-proposal",
+      "status": "failed",
+      "startedAt": "2026-08-12T19:17:24.475Z",
+      "updatedAt": "2026-08-12T19:18:46.575Z",
+      "artifactPaths": [
+        "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735\\49e85ed0\\run-0\\session.jsonl"
+      ],
+      "runId": "49e85ed0",
+      "agent": "sdd-proposal",
+      "task": "Amend the existing OpenSpec proposal ONLY for change `ingesta-pdf-clinicos` to add the user-approved first delivery shape.\n\nUser decision: implement option 1. Provide a local-only, browser-based manual upload adapter where the user drag-and-drops multiple sample PDFs. Each PDF is processed synchronously and entirely in memory before the response. The UI returns only a batch acknowledgement after all files finish, e.g. received/processed counts and safe per-file technical outcome codes. It must never persist PDFs, raw extracted text, PII/PHI, temp files, logs with contents, queue payloads, or results. It does not expose anonymized clinical data in this first UI.\n\nArchitecture intent: add/retain an inbound port so future adapters (folder watcher, authenticated API, hospital system or queue) can supply the same ingestion use case without changing domain extraction/anonymous validation. Do not choose any future source, broker, auth provider, framework, or storage. Retain all existing hard privacy constraints and state that the browser UI is local only, not network exposed.\n\nRead AGENTS.md, config, and existing proposal. Modify only `openspec/changes/ingesta-pdf-clinicos/proposal.md`; Spanish artifact language. Do not modify specs/design/tasks or create code. Do not commit. Save the significant decision to Engram. Return: status, executive_summary, artifacts, next_recommended, risks, skill_resolution.",
+      "completedAt": "2026-08-12T19:18:46.575Z",
+      "sessionPath": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735\\49e85ed0\\run-0\\session.jsonl",
+      "heartbeat": {
+        "updatedAt": "2026-08-12T19:18:46.575Z",
+        "status": "failed"
+      }
+    }
+  ],
+  "decisions": [],
+  "artifacts": [
+    {
+      "kind": "output",
+      "path": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\49e85ed0_sdd-proposal_0_output.md"
+    },
+    {
+      "kind": "other",
+      "path": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\49e85ed0_sdd-proposal_0_transcript.jsonl",
+      "description": "Child transcript"
+    }
+  ],
+  "receipts": [],
+  "cwd": "D:\\proyectos\\anonimizacion",
+  "ownerSessionId": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735.jsonl",
+  "summary": "Workflow failed: Error: Run 'amend-proposal' failed: Agent 'sdd-proposal' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.\n\nOutput:\nstatus: completado  \nexecutive_summary: Propuesta actualizada con la carga manual local por navegador, lote múltiple síncrono en memoria, acuse técnico seguro y puerto de entrada desacoplado. Decisión persistida en Engram.  \nartifacts: `openspec/changes/ingesta-pdf-clinicos/proposal.md`  \nnext_recommended: Actualizar los artefactos posteriores sólo cuando se autorice la siguiente fase SDD.  \nrisks: PII residual, formatos heterogéneos y exposición accidental de la UI; todos documentados con mitigaciones.  \nskill_resolution: none\n\nOutput artifact: D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\49e85ed0_sdd-proposal_0_output.md\n    at MessagePort.<anonymous> ([worker eval]:287:23)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\n\nCall trace:\n- run amend-proposal: started\n- run amend-proposal: failed (49e85ed0) — Agent 'sdd-proposal' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.\n\nOutput:\nstatus: completado  \nexecutive_summary: Propuesta actualiz...",
+  "acceptance": {
+    "status": "rejected",
+    "evidenceStatus": "rejected",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "write-capable worker/task"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "not-applicable",
+        "message": "tests-added evidence explicitly reported as not applicable."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "failed",
+        "message": "no-staged-files evidence missing from child report."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Sólo se modificó la propuesta solicitada; delimita explícitamente UI local, carga múltiple síncrona en memoria, acuse técnico seguro, ausencia total de persistencia y puerto de entrada sin seleccionar adaptadores futuros."
+        }
+      ],
+      "changedFiles": [
+        "openspec/changes/ingesta-pdf-clinicos/proposal.md"
+      ],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": "No disponible: el entorno del subagente no expone ejecución de shell.",
+          "result": "not-run",
+          "summary": "No hay pruebas ni comandos configurados para este repositorio."
+        }
+      ],
+      "validationOutput": [
+        "Se releyó el archivo tras la escritura y se confirmó que contiene el alcance aprobado y las restricciones de privacidad."
+      ],
+      "residualRisks": [
+        "No se pudo verificar el índice Git; no se certifica la ausencia de archivos previamente staged."
+      ],
+      "noStagedFiles": false,
+      "diffSummary": "Reemplaza la propuesta por la primera entrega aprobada de carga manual local y sin persistencia.",
+      "reviewFindings": [
+        "no blockers"
+      ],
+      "manualNotes": "La decisión significativa se guardó en Engram con topic_key sdd/ingesta-pdf-clinicos/proposal."
+    }
+  },
+  "labels": [
+    "sdd",
+    "anonimizacion",
+    "upload"
+  ]
+}

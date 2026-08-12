@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "id": "06b0c6e2-44d1-4063-b3ae-ee15154d23fc",
+  "title": "Crear tareas de ingesta PDF",
+  "objective": "Generar el plan SDD implementable para ingesta-pdf-clinicos.",
+  "status": "failed",
+  "createdAt": "2026-08-12T19:06:12.869Z",
+  "updatedAt": "2026-08-12T19:08:08.307Z",
+  "runs": [
+    {
+      "runId": "call_5yHe7wdjQE9wvr40R08pgdCS|fc_0f8e20616eb1b616016a7cc41d33e08191b578ceeff51a7c47",
+      "mode": "workflow",
+      "agent": "sdd-tasks",
+      "status": "failed",
+      "startedAt": "2026-08-12T19:08:08.307Z",
+      "completedAt": "2026-08-12T19:08:08.307Z",
+      "usage": {
+        "tokens": 26289
+      }
+    }
+  ],
+  "workflowChildren": [
+    {
+      "workflowRunId": "call_5yHe7wdjQE9wvr40R08pgdCS|fc_0f8e20616eb1b616016a7cc41d33e08191b578ceeff51a7c47",
+      "key": "tasks",
+      "status": "failed",
+      "startedAt": "2026-08-12T19:06:12.903Z",
+      "updatedAt": "2026-08-12T19:08:08.300Z",
+      "artifactPaths": [
+        "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735\\602a226b\\run-0\\session.jsonl"
+      ],
+      "runId": "602a226b",
+      "agent": "sdd-tasks",
+      "task": "Execute exactly the ready SDD phase `sdd-tasks` for change `ingesta-pdf-clinicos`.\n\n## Authoritative status\n- change root: `openspec/changes/ingesta-pdf-clinicos`\n- proposal, 4 specs, and design: present\n- tasks: missing\n- action context: repo-local at `D:/proyectos/anonimizacion`, safe\n- exact ready phase: sdd-tasks\n- apply/verify/sync/archive: blocked pending tasks\n\n## Session decisions\n- Interactive SDD; this is the one approved phase.\n- Store artifacts in both OpenSpec and Engram.\n- One PR default; 400 changed-line review budget.\n\n## Work\nRead AGENTS.md and all existing proposal, four specs, and design. Create only `openspec/changes/ingesta-pdf-clinicos/tasks.md` in Spanish. Follow `openspec/config.yaml`: group by phase and use hierarchical numbering; keep each task feasible in one session. Create a practical first increment: local, in-memory lab-PDF spike with no persistence, then deliberately-gated expansion. Explicitly distinguish implementation tasks from blocking business/clinical decisions. Forecast review workload; do not invent missing corpus, thresholds, source, broker, or pseudonymization approval. Do not create application code, dependencies, test fixtures, or commits.\n\n## Skills to load before work\n- `C:\\Users\\lucho\\.config\\opencode\\skills\\work-unit-commits\\SKILL.md`\n\nSave a concise significant decision/discovery to Engram before returning. Return the SDD Result Contract: status, executive_summary, artifacts, next_recommended, risks, skill_resolution.",
+      "completedAt": "2026-08-12T19:08:08.300Z",
+      "sessionPath": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735\\602a226b\\run-0\\session.jsonl",
+      "heartbeat": {
+        "updatedAt": "2026-08-12T19:08:08.300Z",
+        "status": "failed"
+      }
+    }
+  ],
+  "decisions": [],
+  "artifacts": [
+    {
+      "kind": "output",
+      "path": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\602a226b_sdd-tasks_0_output.md"
+    },
+    {
+      "kind": "other",
+      "path": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\602a226b_sdd-tasks_0_transcript.jsonl",
+      "description": "Child transcript"
+    }
+  ],
+  "receipts": [],
+  "cwd": "D:\\proyectos\\anonimizacion",
+  "ownerSessionId": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-12T18-53-59-870Z_019ff753-00be-7c1b-be0b-e9d845463735.jsonl",
+  "summary": "Workflow failed: Error: Run 'tasks' failed: Agent 'sdd-tasks' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.\n\nOutput:\nstatus: completed\n\nexecutive_summary: Se creó `tasks.md` en español con fases jerárquicas, spike local efímero de laboratorio como primer incremento, decisiones bloqueantes explícitas y expansión deliberadamente condicionada.\n\nartifacts:\n- `openspec/changes/ingesta-pdf-clinicos/tasks.md`\n- Engram: `sdd/ingesta-pdf-clinicos/tasks` (decisión guardada)\n\nnext_recommended: Resolver las aprobaciones de clínica/privacidad y la estrategia de entrega antes de `sdd-apply`.\n\nrisks:\n- Riesgo alto de superar 400 líneas; se recomiendan PRs encadenados.\n- Corpus, umbrales, fuente autorizada, broker y seudonimización siguen sin definir.\n\nskill_resolution: paths-injected\n\nOutput artifact: D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\602a226b_sdd-tasks_0_output.md\n    at MessagePort.<anonymous> ([worker eval]:287:23)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\n\nCall trace:\n- run tasks: started\n- run tasks: failed (602a226b) — Agent 'sdd-tasks' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against ...",
+  "acceptance": {
+    "status": "attested",
+    "evidenceStatus": "attested",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "default lightweight attestation"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return a concise result and residual risks when applicable",
+          "evidence": [
+            "manual-notes",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "manual-notes",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "default lightweight attestation"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return a concise result and residual risks when applicable",
+        "evidence": [
+          "manual-notes",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Se entregó un resultado conciso con artefacto persistido y riesgos residuales explícitos."
+        }
+      ],
+      "changedFiles": [
+        "openspec/changes/ingesta-pdf-clinicos/tasks.md"
+      ],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [],
+      "validationOutput": [
+        "Lectura posterior confirmó el contenido de tasks.md tras el formateo automático."
+      ],
+      "residualRisks": [
+        "Faltan corpus autorizado, inventario clínico, umbrales, fuente autorizada, broker y aprobación de seudonimización.",
+        "El alcance completo excede previsiblemente el presupuesto de 400 líneas."
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "Se añadió únicamente el plan de tareas SDD para el cambio.",
+      "reviewFindings": [
+        "No blockers en el artefacto de tareas; la aplicación queda bloqueada por decisiones pendientes."
+      ],
+      "manualNotes": "Se guardó en Engram la decisión significativa del spike efímero y la necesidad de encadenar PRs."
+    }
+  },
+  "labels": [
+    "sdd",
+    "tasks",
+    "anonimizacion"
+  ]
+}
