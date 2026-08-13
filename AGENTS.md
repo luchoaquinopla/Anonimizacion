@@ -4,13 +4,14 @@ Este repositorio usa OpenSpec para planificar y verificar cambios con trazabilid
 
 ## Idioma de los artefactos
 
-- Redactar en espa駉l los artefactos de OpenSpec y los documentos de trazabilidad: propuestas, especificaciones, dise駉s, tareas, informes de verificaci髇, ADR y documentaci髇 de decisiones.
-- Mantener en ingl閟 el c骴igo, los identificadores, los comentarios y los textos de interfaz, salvo instrucci髇 expl韈ita del usuario o una convenci髇 existente del proyecto.
+- Redactar en espa帽ol los artefactos de OpenSpec y los documentos de trazabilidad: propuestas, especificaciones, dise帽os, tareas, informes de verificaci贸n, ADR y documentaci贸n de decisiones.
+- Todo archivo orientado al repositorio, nombre de prueba, identificador de c贸digo (funciones, variables, constantes, clases, m贸dulos y paquetes), comentario, texto de interfaz y c贸digo futuro debe escribirse en espa帽ol.
+- Se conservan en su idioma original 煤nicamente los nombres exigidos por una API de terceros, incluida la biblioteca est谩ndar.
 
 ## Trazabilidad
 
-- Antes de implementar un cambio relevante, registrar su prop髎ito, alcance, riesgos y criterio de aceptaci髇 en OpenSpec.
-- Documentar las decisiones t閏nicas con alternativas y justificaci髇 cuando sean no triviales.
+- Antes de implementar un cambio relevante, registrar su prop贸sito, alcance, riesgos y criterio de aceptaci贸n en OpenSpec.
+- Documentar las decisiones t茅cnicas con alternativas y justificaci贸n cuando sean no triviales.
 - Verificar el cambio y registrar los comandos ejecutados, resultados y limitaciones conocidas.
 - No inventar el stack, la arquitectura, herramientas ni convenciones: detectarlos o acordarlos antes de establecerlos como norma.
-- Mantener los cambios acotados al alcance aprobado y se馻lar expl韈itamente cualquier supuesto.
+- Mantener los cambios acotados al alcance aprobado y se帽alar expl铆citamente cualquier supuesto.

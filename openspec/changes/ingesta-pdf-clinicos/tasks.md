@@ -1,72 +1,81 @@
-# Tareas: Ingesta de PDFs clínicos anonimizada
+# Tareas: Ingesta local y efímera de PDFs de laboratorio
 
-## Review Workload Forecast
+## Estrategia de entrega y revisión
 
-| Field | Value |
-| ------- | ------- |
-| Estimated changed lines | 650–1.000 (spike, contratos, pruebas y expansión planificada) |
-| 400-line budget risk | High |
-| Chained PRs recommended | Yes |
-| Suggested split | PR 1: spike local de laboratorio sin persistencia → PR 2: evaluación habilitable con corpus aprobado → PR 3: persistencia y familias adicionales |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+La primera entrega se divide en dos PRs encadenados para sostener un tamaño revisable de aproximadamente 400 líneas modificadas por PR. La planificación no autoriza implementar PR 3 ni posteriores: cada uno requiere las puertas expresadas abajo.
 
-Decision needed before apply: Yes
-Chained PRs recommended: Yes
-Chain strategy: pending
-400-line budget risk: High
+| PR | Objetivo | Dependencia | Fuera de alcance |
+| --- | --- | --- | --- |
+| PR 1 | Núcleo efímero, privacidad y adaptador de laboratorio en memoria. | Ninguna adicional. | UI, persistencia, calidad habilitable, otras familias. |
+| PR 2 | UI local de navegador y acuse seguro del lote. | PR 1 integrado. | Red externa, almacenamiento, otras familias. |
+| PR 3 | Evaluación de calidad de laboratorio. | Corpus, inventario y umbrales aprobados. | Persistencia y familias adicionales. |
+| PR 4 | Persistencia, si procede. | Propuesta separada aprobada. | Ecocardiografía, ECG y ML salvo aprobación separada. |
+| PR 5+ | Ecocardiografía, ECG o datasets de ML. | Aprobaciones y evidencia específicas por capacidad. | Cualquier capacidad no aprobada. |
 
-## Límites del incremento inicial
+## PR 1 — Núcleo efímero y adaptador de laboratorio
 
-El primer incremento implementable es exclusivamente un *spike* local, en memoria, para PDFs digitales de laboratorio: no crea persistencia, migraciones, broker, fuente remota, corpus/fixtures ni seudonimización. Las expansiones quedan bloqueadas explícitamente hasta contar con decisiones y evidencia aprobadas.
+### 1.1 Contratos, estados y política de decisión
 
-## Fase 1. Decisiones bloqueantes de negocio, clínica y privacidad
+- [ ] RED: crear pruebas unitarias que fijen los estados exhaustivos (`verified`, `not_present`, `missing`, `ambiguous`, `malformed`, `truncated`), la resolución explícita de los campos del inventario disponible y el rechazo por PII/PHI residual, controles incompletos o campos requeridos no verificables. <!-- sdd-owner: implementation -->
+- [ ] GREEN: implementar los tipos puros, `IngestionInputPort`, `ExtractionResult` efímero y la política de decisión que produzca sólo aprobación técnica o códigos/conteos no identificantes. Ningún tipo de salida contendrá PDF, texto fuente, PII/PHI, valores clínicos, identificadores ni fechas reidentificantes. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: añadir casos de unidades incompatibles, valores malformados o truncados, candidatos múltiples y ausencia legítima opcional; comprobar que ningún campo se omite silenciosamente. <!-- sdd-owner: implementation -->
+- [ ] REFACTOR: separar reglas puras de los detalles PDF y mantener las pruebas verdes; documentar en la evidencia el comando de prueba realmente detectado, sin asumir un *runner*. <!-- sdd-owner: implementation -->
 
-### 1.1. Aprobaciones requeridas antes de habilitar datos
+### 1.2 Extracción en memoria limitada a laboratorio
 
-- Acordar con clínica y privacidad el inventario versionado de campos de laboratorio, cuáles son requeridos u opcionales, las reglas para `not_present` y la política que habilita o rechaza un documento; registrar la decisión en `openspec/changes/ingesta-pdf-clinicos/` antes de implementar cualquier persistencia.
-- Proveer y autorizar un corpus de laboratorio anotado, junto con los umbrales numéricos de cobertura, exactitud de valor/unidad, omisiones, rechazo y PII residual; no inferirlos desde las muestras conocidas.
-- Definir la fuente autorizada del flujo PDF, la expiración de acceso, el identificador técnico no identificante y el procedimiento de reingesta; no seleccionar broker ni contrato de cola hasta conocer volumen y operación.
-- Resolver con producto y privacidad si habrá vinculación longitudinal/señal ECG; exigir aprobación de seudonimización para lo primero y una fuente nativa validada (no trazado PDF) para lo segundo.
+- [ ] RED: añadir pruebas con texto o bloques sintéticos y no identificantes para clasificación de laboratorio, procedencia técnica transitoria y conversión al contrato; no incorporar PDFs reales ni *fixtures* clínicos. <!-- sdd-owner: implementation -->
+- [ ] GREEN: implementar `LaboratoryFamilyAdapter` y el extractor de PDF en memoria con la biblioteca elegida al iniciar la implementación. El adaptador recibirá bytes o flujos efímeros, los descartará al terminar y rechazará de forma segura documentos que no sean de laboratorio. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: ampliar pruebas para orden de lectura variable, filas de tabla incompletas y dos candidatos, comprobando estados y procedencia sin conservar texto extraído. <!-- sdd-owner: implementation -->
+- [ ] REFACTOR: aislar el mapeo de laboratorio detrás del adaptador; verificar que dominio y aplicación no dependan de la biblioteca PDF y que no se agregan OCR, `pdfplumber`, persistencia ni temporales. <!-- sdd-owner: implementation -->
 
-## Fase 2. PR 1 — Spike local de laboratorio, efímero y sin persistencia
+### 1.3 Privacidad y límites operativos
 
-### 2.1. Contrato y límites del núcleo
+- [ ] RED: incorporar casos negativos para el validador residual independiente que demuestren que un hallazgo de PII/PHI bloquea el archivo y que la salida sólo contiene códigos y conteos permitidos. <!-- sdd-owner: implementation -->
+- [ ] GREEN: implementar `PrivacyValidator` en memoria y conectar anonimización, validación residual y política de decisión al flujo de laboratorio. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: cubrir errores de extracción, fallos de validación y lote parcial, demostrando descarte del contenido transitorio tanto en éxito como en error. <!-- sdd-owner: implementation -->
+- [ ] REFACTOR: revisar que no se escriben archivos, no hay logs de contenido, base de datos, migraciones, colas ni *brokers*; mantener la comprobación automatizada correspondiente en verde. <!-- sdd-owner: implementation -->
 
-- [ ] RED: crear pruebas unitarias en `tests/unit/` que fijen los estados exhaustivos (`verified`, `not_present`, `missing`, `ambiguous`, `malformed`, `truncated`), la resolución de todo campo del inventario y el rechazo por PII, campos requeridos no verificables o controles incompletos. <!-- sdd-owner: implementation -->
-- [ ] GREEN: crear los tipos puros y la política de decisión en `src/clinical_ingestion/domain/` para un `ExtractionResult` efímero y un `ApprovedDocument` sin PDF, texto fuente, PII/PHI, identificadores ni fechas reidentificantes; hacer que la política produzca sólo aprobación o códigos/métricas técnicas no identificantes de rechazo. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: añadir casos unitarios de valores malformados/truncados, unidades incompatibles, candidatos múltiples y ausencia legítima opcional en `tests/unit/`, verificando que ningún campo se omite silenciosamente. <!-- sdd-owner: implementation -->
-- [ ] REFACTOR: simplificar nombres y separar reglas de dominio de detalles PDF en `src/clinical_ingestion/domain/`; ejecutar el comprobador de pruebas que se incorpore con el spike y documentar el comando real en la verificación posterior, sin asumir un runner existente. <!-- sdd-owner: implementation -->
+### 1.4 Cierre revisable de PR 1
 
-### 2.2. Adaptador local de laboratorio
+- [ ] Ejecutar las pruebas del PR y registrar comandos, resultados y limitaciones sin incluir contenido clínico. <!-- sdd-owner: implementation -->
+- [ ] Revisar que el diff se mantenga aproximadamente dentro de 400 líneas; dividir trabajo pendiente antes de incorporar UI u otra capacidad. <!-- sdd-owner: parent -->
 
-- [ ] RED: añadir pruebas de adaptador en `tests/unit/` con entradas de texto/bloques en memoria representativas y no identificantes para clasificación de laboratorio, procedencia técnica (página/bloque) y conversión al contrato; no añadir PDFs reales ni fixtures clínicos al repositorio. <!-- sdd-owner: implementation -->
-- [ ] GREEN: implementar en `src/clinical_ingestion/adapters/outbound/` un extractor local en memoria basado en PyMuPDF y en `src/clinical_ingestion/application/` el puerto `FamilyAdapter` para laboratorio, inyectando los bytes/flujo y descartándolos al terminar; no escribir temporales, logs de contenido ni implementar almacenamiento. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: ampliar `tests/unit/` para orden de lectura variable, filas de tabla incompletas y dos candidatos, comprobando estados y procedencia sin conservar texto extraído. <!-- sdd-owner: implementation -->
-- [ ] REFACTOR: aislar el mapeo de laboratorio detrás del adaptador y revisar `src/clinical_ingestion/` para que dominio y aplicación no dependan de PyMuPDF; dejar explícito en el código/configuración que `pdfplumber` y OCR no forman parte del spike. <!-- sdd-owner: implementation -->
+## PR 2 — UI local y acuse seguro de lote
 
-### 2.3. Privacidad y demostración local acotada
+### 2.1 Carga local desacoplada
 
-- [ ] Implementar en `src/clinical_ingestion/application/` los puertos `DocumentSource` y `PrivacyValidator` con sustitutos locales en memoria, más un validador residual independiente; verificar en `tests/unit/` que un hallazgo bloquea el resultado y sólo devuelve códigos/conteos permitidos. <!-- sdd-owner: implementation -->
-- [ ] Crear una entrada local mínima en `src/clinical_ingestion/bootstrap/` (CLI o composición invocable, según se detecte al iniciar el código) que procese un flujo de laboratorio en memoria y muestre únicamente estado, versión, tipo y métricas agregadas; verificar manualmente que no crea archivos ni requiere red, base de datos o broker. <!-- sdd-owner: implementation -->
-- [ ] Documentar en `openspec/changes/ingesta-pdf-clinicos/` la evidencia del spike (comandos reales, resultado, limitaciones y ausencia de persistencia) sin incluir contenido clínico ni copiar una muestra PDF. <!-- sdd-owner: implementation -->
+- [ ] RED: crear pruebas del adaptador de UI que fijen carga múltiple, invocación del `IngestionInputPort` por archivo y emisión de un único acuse sólo después de terminar el lote. <!-- sdd-owner: implementation -->
+- [ ] GREEN: implementar una UI de navegador exclusivamente local para arrastrar PDFs y un adaptador que entregue cada archivo al puerto de entrada sin acoplarse a extracción o privacidad. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: cubrir archivos no laboratorio, errores por archivo y lotes mixtos; comprobar que el acuse conserva sólo cantidades y códigos técnicos seguros. <!-- sdd-owner: implementation -->
+- [ ] REFACTOR: eliminar cualquier exposición de resultados transitorios de la UI y simplificar el límite entre adaptador y caso de uso sin romper las pruebas. <!-- sdd-owner: implementation -->
 
-## Fase 3. PR 2 — Expansión deliberadamente bloqueada por corpus y umbrales aprobados
+### 2.2 Verificación de límites locales
 
-### 3.1. Evaluación de calidad habilitable
+- [ ] RED: añadir pruebas o comprobaciones automatizables que fallen si el acuse contiene texto extraído, PII/PHI, valores clínicos, observaciones o diagnósticos. <!-- sdd-owner: implementation -->
+- [ ] GREEN: configurar la ejecución necesaria para operar sólo localmente, sin publicar un servicio en red externa; no agregar autenticación, API pública, almacenamiento, colas ni *broker*. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: verificar manualmente y con pruebas que no se crean temporales ni logs de contenido durante éxito, error y lote parcial. <!-- sdd-owner: implementation -->
+- [ ] REFACTOR: conservar sólo la configuración mínima necesaria para la UI local y mantener todas las comprobaciones verdes. <!-- sdd-owner: implementation -->
 
-- [ ] Tras recibir el corpus autorizado, inventario y umbrales aprobados de la fase 1, implementar en `src/clinical_ingestion/` y `tests/` el evaluador por familia/campo/versión que informe cobertura, exactitud de valor/unidad, omisiones, rechazos y PII residual, sin almacenar corpus ni contenido fuente. <!-- sdd-owner: implementation -->
-- [ ] Tras aprobar la política de aptitud, conectar el evaluador a la decisión de habilitación para bloquear versiones sin umbral o bajo umbral y registrar sólo métricas técnicas permitidas; verificarlo contra el corpus autorizado fuera del repositorio. <!-- sdd-owner: implementation -->
+### 2.3 Cierre revisable de PR 2
 
-## Fase 4. PR 3 — Persistencia y familias adicionales, sólo con aprobaciones previas
+- [ ] Ejecutar pruebas y comprobaciones manuales del límite local; registrar comandos reales, resultados y limitaciones sin datos sensibles. <!-- sdd-owner: implementation -->
+- [ ] Revisar el tamaño del diff y confirmar que el PR no introduce persistencia, evaluación habilitable, ECG, ecocardiografía ni ML. <!-- sdd-owner: parent -->
 
-### 4.1. Persistencia aprobada y trazable
+## Trabajo diferido — no iniciar sin puerta aprobada
 
-- [ ] Después de definir fuente, retención y esquema con privacidad, implementar `ApprovedObservationStore`, migraciones y pruebas de integración en las rutas concretas acordadas para persistir exclusivamente campos `verified` de documentos aprobados; demostrar que rechazos, PDF y texto crudo no se persisten. <!-- sdd-owner: implementation -->
-- [ ] Después de aprobar inventarios y corpus por familia, incorporar adaptadores versionados de ecocardiografía y ECG de metadatos/medidas textuales con sus pruebas de regresión; excluir expresamente señal del trazado ECG y cualquier vínculo longitudinal no aprobado. <!-- sdd-owner: implementation -->
-- [ ] Tras aprobar definiciones de features, implementar en `src/clinical_ingestion/` la derivación versionada desde observaciones aprobadas y pruebas que excluyan estados distintos de `verified`; no introducir target de predicción. <!-- sdd-owner: implementation -->
+### PR 3 — Evaluación de calidad de laboratorio
 
-## Acciones de revisión y puertas de ciclo de vida
+- [ ] Puerta: recibir corpus autorizado, inventario versionado y umbrales numéricos aprobados de cobertura, exactitud de valor/unidad, omisiones, rechazos y PII residual. <!-- sdd-owner: parent -->
+- [ ] Tras la puerta, aplicar TDD estricto para un evaluador por campo y versión que use el corpus autorizado fuera del repositorio y publique sólo métricas técnicas permitidas. <!-- sdd-owner: implementation -->
 
-- [ ] Iniciar o reutilizar una revisión acotada del PR 1, comprobando el límite de no persistencia, la ausencia de contenido sensible en pruebas/logs y que el diff permanezca dentro del presupuesto antes de aplicar. <!-- sdd-owner: parent -->
-- [ ] Antes de iniciar PR 2 o PR 3, resolver la decisión de entrega por riesgo alto (cadena o excepción) y confirmar que las aprobaciones de la fase correspondiente están documentadas. <!-- sdd-owner: parent -->
+### PR 4 — Persistencia
+
+- [ ] Puerta: aprobar una propuesta separada sobre propósito, retención, acceso, esquema, trazabilidad y controles de privacidad; decidir entonces la tecnología de almacenamiento. <!-- sdd-owner: parent -->
+- [ ] Tras la puerta, aplicar TDD estricto para persistir sólo los datos explícitamente autorizados y demostrar que PDF, texto fuente, PII/PHI y rechazos no se retienen. <!-- sdd-owner: implementation -->
+
+### PR 5+ — Ecocardiografía, ECG y datasets de ML
+
+- [ ] Puerta para ecocardiografía: aprobación clínica y de privacidad, inventario, corpus y umbrales propios. <!-- sdd-owner: parent -->
+- [ ] Puerta para ECG: aprobación equivalente y definición explícita del alcance; la señal de trazado exige una fuente nativa validada y aprobación independiente. <!-- sdd-owner: parent -->
+- [ ] Puerta para ML: aprobación de propósito, gobernanza, *features* versionadas, condiciones de calidad y, si corresponde, *target*. <!-- sdd-owner: parent -->
+- [ ] Tras cada puerta, planificar un PR independiente con RED, GREEN, TRIANGULATE y REFACTOR antes de implementar. <!-- sdd-owner: implementation -->

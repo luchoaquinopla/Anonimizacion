@@ -1,87 +1,87 @@
-# Propuesta: Ingesta local de PDFs clínicos con carga manual
+# Propuesta: Ingesta local de PDFs clínicos de laboratorio
 
-## Intención
+## Decisión y resultado esperado
 
-Habilitar una primera entrega local para evaluar la ingesta de muestras clínicas mediante una interfaz de navegador: la persona usuaria arrastra varios PDFs y recibe, sólo cuando termina el lote completo, un acuse técnico seguro. Cada PDF se procesa de forma síncrona y exclusivamente en memoria; el flujo preserva las barreras de anonimización y validación, pero no expone datos clínicos anonimizados en esta interfaz ni conserva resultados.
+La primera entrega implementable será una UI de navegador **local** para arrastrar PDFs de laboratorio. Procesará cada archivo del lote de manera síncrona y sólo en memoria; al completar el lote devolverá un acuse técnico seguro. No persistirá ni mostrará contenido clínico, texto extraído, PII/PHI, observaciones ni resultados detallados.
 
-La entrega separa la entrada del caso de uso mediante un puerto de entrada. Así, futuros adaptadores autorizados podrán invocar la misma extracción y validación anonimizada sin acoplar el dominio a la carga manual actual.
+La entrega se realizará como una cadena de PRs revisables, de aproximadamente 400 líneas modificadas cada uno. La UI y el procesamiento de laboratorio se consideran completos únicamente al integrar los PRs iniciales de esa cadena.
 
-## Alcance
+## Alcance del primer incremento
 
 ### Incluye
 
-- Adaptador de carga manual local, basado en navegador, que acepta el arrastre de múltiples PDFs de muestra.
-- Procesamiento síncrono, en memoria y por cada PDF del lote antes de emitir la respuesta.
-- Ejecución del caso de uso de clasificación, extracción por familia documental, anonimización, validación residual independiente y validación de calidad/completitud.
-- Un único acuse de lote al finalizar todos los archivos, con cantidades recibidas y procesadas, y códigos técnicos seguros por archivo. Los códigos no contendrán nombres, texto, valores clínicos, identificadores ni otra información que permita reidentificar.
-- Un puerto de entrada para el caso de uso de ingesta, implementado por el adaptador de carga manual local, que mantenga desacoplada la extracción y validación del origen de los PDFs.
-- Adaptadores versionados para laboratorio, ecocardiografía y ECG; para ECG, sólo metadatos y medidas textuales, nunca la señal del trazado.
-- Corpus controlado/anotado, inventario versionado de campos esperados y métricas por familia documental para medir extracción, privacidad y regresión, sin incorporar las muestras ni su contenido al sistema.
+- UI local de navegador para arrastrar múltiples PDFs de laboratorio.
+- Procesamiento en memoria, síncrono y archivo por archivo dentro de un lote.
+- Clasificación limitada a la familia de laboratorio, extracción transitoria, anonimización y validación residual independiente de PII/PHI.
+- Controles de calidad y completitud definidos para el inventario disponible en el incremento, sin declarar aptitud clínica o productiva.
+- Un puerto de entrada que desacople la carga local de la lógica de ingesta.
+- Un único acuse final con cantidades y códigos técnicos seguros por archivo. Los códigos no incluirán nombres, texto, valores clínicos, identificadores ni otro dato reidentificable.
+- Pruebas con datos sintéticos y no identificantes.
 
 ### Excluye
 
-- Exponer la interfaz en red, autenticación, API pública, selector de carpetas, *watcher*, integración hospitalaria, colas o *broker*.
-- Elegir, diseñar o comprometer un origen futuro, proveedor de autenticación, *framework*, almacenamiento o mecanismo de transporte.
-- Persistir PDFs, texto extraído, PII/PHI, datos clínicos anonimizados, resultados, archivos temporales, registros con contenido o *payloads* de cola. Al terminar cada archivo, sus datos transitorios se descartan; al finalizar el lote, sólo se devuelve el acuse en la respuesta.
-- Mostrar en la UI datos clínicos anonimizados, observaciones, *features*, contenido extraído o diagnósticos.
-- Definir *target*, entrenar modelos, generar o persistir *features*, o garantizar cobertura fuera del corpus evaluado.
-- Extraer la señal del trazado ECG desde un PDF o realizar vinculación longitudinal.
+- Persistencia de PDFs, texto, PII/PHI, datos anonimizados, resultados, archivos temporales o registros con contenido.
+- Exponer la UI o el proceso fuera del equipo local, autenticación, API pública, integración hospitalaria, selector de carpetas, *watchers*, colas o *brokers*.
+- Ecocardiografía, ECG —incluidas medidas textuales y señal de trazado—, vinculación longitudinal y seudonimización.
+- Habilitación basada en corpus, métricas de calidad aprobadas, evaluación de calidad productiva o incorporación de muestras clínicas al repositorio.
+- Datasets de ML, *features*, *targets*, entrenamiento o persistencia de datos para ML.
+- Elegir tecnologías de persistencia, mensajería, fuentes remotas o mecanismos de transporte futuros.
+
+## Flujo y límites de privacidad
+
+La UI local entrega los bytes de cada PDF al adaptador de carga. Éste invoca el puerto de entrada de ingesta. El caso de uso clasifica el documento como laboratorio, extrae datos transitorios, anonimiza, ejecuta una validación residual independiente y comprueba las reglas de completitud disponibles. El contenido y los resultados transitorios se descartan tanto ante éxito como ante error. Sólo después de tratar el lote completo se compone el acuse seguro.
+
+La UI deberá verificarse como accesible únicamente en el entorno local y sin exposición a red externa. La elección de la tecnología concreta para servirla no forma parte de esta propuesta; deberá respetar ese límite operativo.
+
+## Entregas encadenadas
+
+| PR | Resultado revisable | Límite |
+| --- | --- | --- |
+| PR 1 | Contratos de ingesta efímera, reglas de privacidad/completitud y adaptador de laboratorio en memoria. | Sin UI pública ni persistencia. |
+| PR 2 | UI local de navegador, carga de lote y acuse seguro conectados al flujo de laboratorio. | Sin exponer contenido, red externa ni almacenamiento. |
+| PR 3 | Evaluación de calidad para laboratorio. | Sólo tras aprobar corpus, inventario y umbrales. |
+| PR 4 | Persistencia, si se autoriza. | Requiere propuesta y aprobación específicas de retención, esquema y privacidad. |
+| PR 5+ | Ecocardiografía, ECG y capacidades de ML. | Cada familia o capacidad requiere aprobación y evidencia propias. |
 
 ## Capacidades
 
-### Nuevas capacidades
+### Nuevas capacidades en el primer incremento
 
-- `carga-manual-local`: recibe un lote de PDFs arrastrados en un navegador local y entrega un acuse técnico seguro al concluirlo.
-- `ingesta-clinica-anonimizada`: caso de uso invocable por un puerto de entrada; procesa en memoria, aplica controles de privacidad y descarta toda salida transitoria.
-- `validacion-privacidad-y-calidad`: comprueba PII/PHI residual, completitud y calidad antes de considerar procesado un archivo, sin conservar su contenido ni resultado clínico.
-- `calidad-de-extraccion`: mide la cobertura del corpus de evaluación por familia documental sin incorporar contenido sensible en el producto.
+- `carga-manual-local`: recibe un lote de PDFs de laboratorio desde un navegador local y devuelve un acuse técnico seguro al finalizarlo.
+- `ingesta-laboratorio-efimera`: procesa únicamente PDFs de laboratorio en memoria mediante un puerto de entrada y descarta sus salidas transitorias.
+- `validacion-privacidad-local`: bloquea resultados con PII/PHI residual o controles incompletos sin retener contenido.
 
-### Capacidades modificadas
+### Capacidades diferidas y bloqueadas
 
-- Ninguna.
-
-## Enfoque
-
-El navegador local entrega cada PDF del lote al adaptador de carga manual. Éste invoca el puerto de entrada de ingesta y espera su finalización síncrona en memoria. El caso de uso clasifica el documento, aplica el extractor/adaptador de su familia, anonimiza y ejecuta validación residual independiente junto con controles de calidad y completitud. La salida clínica transitoria no cruza el límite de la interfaz y se descarta, tanto ante éxito como ante error. Una vez tratados todos los archivos, el adaptador compone el acuse de lote con contadores y códigos técnicos seguros por archivo.
-
-El puerto representa la entrada de PDFs al caso de uso, no un compromiso con protocolos ni fuentes futuras. Un adaptador posterior —por ejemplo, de carpeta, API autenticada, sistema hospitalario o cola— podrá suministrar el mismo caso de uso sólo tras una decisión de producto, privacidad y operación independiente. No forma parte de esta entrega elegirlo ni implementarlo.
-
-La UI y el proceso se ejecutarán localmente y no se expondrán por red. No se crearán archivos temporales ni persistencia de ningún tipo; tampoco se registrará contenido de los documentos, texto extraído, PII/PHI, datos anonimizados ni resultados. La observabilidad, si se aprobara posteriormente, deberá limitarse a códigos técnicos no identificantes y no forma parte de esta propuesta.
+- `calidad-de-extraccion`: se habilitará sólo con corpus autorizado, inventario versionado y umbrales aprobados.
+- Adaptadores de ecocardiografía y ECG: cada uno requerirá aprobación clínica, inventario, corpus y umbrales; ECG requerirá además una decisión explícita sobre el alcance de sus medidas y excluirá la señal de trazado salvo una aprobación posterior.
+- Persistencia y auditoría: requieren una propuesta separada que defina retención, acceso, modelo de datos y controles de privacidad.
+- Datasets de ML: requieren aprobaciones independientes sobre propósito, definición de *features*, gobernanza y, si aplica, *target*.
 
 ## Áreas afectadas
 
 | Área | Impacto | Descripción |
 | --- | --- | --- |
-| `openspec/changes/ingesta-pdf-clinicos/proposal.md` | Modificada | Define la primera forma de entrega aprobada y sus límites. |
-| Futuro adaptador local de navegador | Nueva | Carga manual múltiple y acuse técnico de lote. |
-| Futuro caso de uso de ingesta y puerto de entrada | Nuevo | Límite estable entre los adaptadores de origen y extracción/validación. |
-| Futuro dominio de extracción y validación | Nuevo | Procesamiento transitorio por familia documental, anonimización y controles de calidad. |
+| `openspec/changes/ingesta-pdf-clinicos/` | Modificada | Plan y puertas de aprobación del cambio. |
+| Futuro adaptador local de navegador | Nueva | Carga manual múltiple y acuse técnico seguro. |
+| Futuro caso de uso y adaptador de laboratorio | Nuevo | Procesamiento efímero y desacoplado de la fuente local. |
+| Futuro dominio de privacidad/completitud | Nuevo | Reglas transitorias que no exponen ni retienen datos clínicos. |
 
-## Riesgos
+## Riesgos y mitigaciones
 
-| Riesgo | Probabilidad | Mitigación |
-| --- | --- | --- |
-| PII/PHI residual durante la extracción | Media | Procesar sólo en memoria, aplicar anonimización y validación residual independiente, y no exponer ni persistir salidas. |
-| El usuario interpreta un código técnico como resultado clínico | Media | Limitar el acuse a contadores y códigos técnicos seguros; no mostrar observaciones, valores ni diagnósticos. |
-| Variación de formatos u omisiones clínicas | Alta | Adaptadores versionados, corpus anotado, umbrales acordados y métricas de regresión. |
-| El navegador local o su configuración se expone accidentalmente en red | Media | Establecer y verificar explícitamente la ejecución sólo local y sin exposición de red. |
-| La falta de persistencia impide reintentos o auditoría de contenido | Alta | Solicitar una nueva carga desde la fuente autorizada; cualquier retención requerirá una propuesta y aprobación separadas. |
-
-## Plan de reversión
-
-Deshabilitar el adaptador de carga manual local y retirar su acceso local. Como no se persisten PDFs, texto, PII/PHI, resultados ni temporales, la reversión no requiere purga ni migración de datos. El origen autorizado conserva, fuera de este sistema, la posibilidad de volver a proporcionar una muestra si corresponde.
-
-## Dependencias
-
-- Corpus autorizado y anotado, inventario versionado de campos esperados y criterios acordados de calidad y privacidad.
-- Definición de códigos técnicos seguros que no revelen contenido ni identidad.
-- Verificación operativa de que la UI y el proceso se ejecutan exclusivamente en el equipo local y sin exposición de red.
+| Riesgo | Mitigación |
+| --- | --- |
+| PII/PHI residual durante la extracción | Procesamiento sólo en memoria, anonimización, validación residual independiente y pruebas sintéticas negativas. |
+| El acuse se interpreta como resultado clínico | Limitarlo a contadores y códigos técnicos seguros; no mostrar observaciones, valores ni diagnósticos. |
+| Variación de formatos de laboratorio | Limitar el primer alcance, declarar rechazos seguros y diferir habilitación por corpus hasta contar con evidencia aprobada. |
+| Exposición accidental de la UI | Verificar ejecución exclusivamente local y sin publicación externa antes de aceptar el PR 2. |
+| La falta de persistencia limita reintentos | Requerir una nueva carga desde la fuente autorizada; cualquier retención necesita aprobación separada. |
 
 ## Criterios de éxito
 
-- [ ] Una persona puede arrastrar múltiples PDFs de muestra en una UI local y recibe un único acuse después de que termina el procesamiento síncrono de todo el lote.
-- [ ] El acuse informa cantidades recibidas/procesadas y sólo códigos técnicos seguros por archivo; no expone datos clínicos anonimizados, texto, PII/PHI ni resultados detallados.
-- [ ] No se persisten PDFs, texto crudo, PII/PHI, datos anonimizados, resultados, temporales, registros con contenido, *payloads* de cola ni datos intermedios.
-- [ ] La carga manual invoca el caso de uso mediante un puerto de entrada, sin acoplar extracción y validación a este origen ni seleccionar adaptadores futuros.
-- [ ] Cada archivo completa anonimización, validación residual y controles de calidad/completitud en memoria antes de descartarse.
-- [ ] El corpus informa cobertura, exactitud de valor/unidad, omisiones, rechazos y PII residual; los umbrales se acuerdan antes de cualquier uso productivo.
+- [ ] Una persona puede arrastrar múltiples PDFs de laboratorio en una UI local y recibe un único acuse al finalizar el lote completo.
+- [ ] Cada PDF completa extracción transitoria, anonimización, validación residual y controles de completitud antes de descartarse.
+- [ ] El acuse contiene sólo cantidades y códigos técnicos seguros; no contiene datos clínicos, texto, PII/PHI ni resultados detallados.
+- [ ] No se crean persistencia, temporales, registros con contenido, colas ni integraciones remotas.
+- [ ] El flujo de carga local invoca un puerto de entrada sin acoplar la lógica de ingesta a la UI.
+- [ ] Ninguna capacidad diferida se inicia sin la aprobación y evidencia indicadas en este documento.

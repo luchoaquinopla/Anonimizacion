@@ -1,0 +1,1 @@
+"""Adaptadores locales en memoria."""
