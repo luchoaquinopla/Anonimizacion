@@ -35,21 +35,21 @@ No iniciada. Se traslada íntegramente a PR 2 para cerrar PR 1 cerca del presupu
 
 ### 1.4 Cierre revisable de PR 1
 
-- [ ] Ejecutar las pruebas del PR y registrar comandos, resultados y limitaciones sin incluir contenido clínico. <!-- sdd-owner: implementation -->
+- [x] Ejecutar las pruebas del PR y registrar comandos, resultados y limitaciones sin incluir contenido clínico. Evidencia corregida: el 2026-08-14, `.venv/Scripts/python.exe -m pytest` finalizó con 25 pruebas aprobadas y árbol limpio. <!-- sdd-owner: implementation -->
 - [x] Revisar que el diff se mantenga aproximadamente dentro de 400 líneas; dividir trabajo pendiente antes de incorporar UI u otra capacidad. PR 1 se cierra con aproximadamente 357 líneas modificadas y 1.3 se difiere a PR 2. <!-- sdd-owner: parent -->
 
 ## PR 2 — Privacidad y límites operativos
 
 ### 2.1 Privacidad y descarte transitorio
 
-- [ ] RED: incorporar casos negativos para el validador residual independiente que demuestren que un hallazgo de PII/PHI bloquea el archivo y que la salida sólo contiene códigos y conteos permitidos. <!-- sdd-owner: implementation -->
-- [ ] GREEN: implementar `PrivacyValidator` en memoria y conectar anonimización, validación residual y política de decisión al flujo de laboratorio. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: cubrir errores de extracción, fallos de validación y lote parcial, demostrando descarte del contenido transitorio tanto en éxito como en error. <!-- sdd-owner: implementation -->
-- [ ] REFACTOR: revisar que no se escriben archivos, no hay logs de contenido, base de datos, migraciones, colas ni *brokers*; mantener la comprobación automatizada correspondiente en verde. <!-- sdd-owner: implementation -->
+- [x] RED: incorporar casos negativos para el validador residual independiente que demuestren que un hallazgo de PII/PHI bloquea el archivo y que la salida sólo contiene códigos y conteos permitidos. Completado con pruebas sintéticas de bloqueo residual y límite de salida. <!-- sdd-owner: implementation -->
+- [x] GREEN: implementar `PrivacyValidator` en memoria y conectar anonimización, validación residual y política de decisión al flujo de laboratorio. Completado mediante validador inyectable y anonimización explícita previa. <!-- sdd-owner: implementation -->
+- [x] TRIANGULATE: cubrir errores de extracción y fallos de validación aplicables sin lote, demostrando descarte del contenido transitorio tanto en éxito como en error. El lote parcial se difiere explícitamente a PR 3 porque PR 2 no implementa procesamiento por lote. <!-- sdd-owner: implementation -->
+- [x] REFACTOR: revisar que no se escriben archivos, no hay logs de contenido, base de datos, migraciones, colas ni *brokers*; mantener la comprobación automatizada correspondiente en verde. Completado con comprobación automatizada de dependencias laterales prohibidas. <!-- sdd-owner: implementation -->
 
 ### 2.2 Cierre revisable de PR 2
 
-- [ ] Ejecutar las pruebas del PR y registrar comandos, resultados y limitaciones sin incluir contenido clínico. <!-- sdd-owner: implementation -->
+- [x] Ejecutar las pruebas del PR y registrar comandos, resultados y limitaciones sin incluir contenido clínico. Completado: 31 pruebas aprobadas con `.venv/Scripts/python.exe -m pytest`. Limitación: no existe lote en PR 2. <!-- sdd-owner: implementation -->
 - [ ] Revisar que el diff se mantenga aproximadamente dentro de 400 líneas antes de incorporar UI u otra capacidad. <!-- sdd-owner: parent -->
 
 ## PR 3 — UI local y acuse seguro de lote
@@ -58,7 +58,7 @@ No iniciada. Se traslada íntegramente a PR 2 para cerrar PR 1 cerca del presupu
 
 - [ ] RED: crear pruebas del adaptador de UI que fijen carga múltiple, invocación del `IngestionInputPort` por archivo y emisión de un único acuse sólo después de terminar el lote. <!-- sdd-owner: implementation -->
 - [ ] GREEN: implementar una UI de navegador exclusivamente local para arrastrar PDFs y un adaptador que entregue cada archivo al puerto de entrada sin acoplarse a extracción o privacidad. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: cubrir archivos no laboratorio, errores por archivo y lotes mixtos; comprobar que el acuse conserva sólo cantidades y códigos técnicos seguros. <!-- sdd-owner: implementation -->
+- [ ] TRIANGULATE: cubrir archivos no laboratorio, errores por archivo, lotes mixtos y lote parcial; comprobar que el acuse conserva sólo cantidades y códigos técnicos seguros. <!-- sdd-owner: implementation -->
 - [ ] REFACTOR: eliminar cualquier exposición de resultados transitorios de la UI y simplificar el límite entre adaptador y caso de uso sin romper las pruebas. <!-- sdd-owner: implementation -->
 
 ### 3.2 Verificación de límites locales

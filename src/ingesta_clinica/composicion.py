@@ -6,4 +6,7 @@ from ingesta_clinica.aplicacion.puertos.entrada import PuertoEntradaIngesta
 
 def crear_puerto_entrada_ingesta() -> PuertoEntradaIngesta:
     """Compone el caso de uso con el adaptador de laboratorio en memoria."""
-    return PuertoEntradaIngesta(AdaptadorFamiliaLaboratorio())
+    return PuertoEntradaIngesta(
+        AdaptadorFamiliaLaboratorio(),
+        codigos_campos_obligatorios={"marcador_laboratorio_alfa"},
+    )

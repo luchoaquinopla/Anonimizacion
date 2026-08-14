@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,37 @@ class SalidaTecnicaSegura:
     aprobada: bool
     codigos: tuple[str, ...]
     conteos: Mapping[str, int]
+
+
+class PuertoAnonimizacion(Protocol):
+    """Anonimiza contenido efímero antes del control residual independiente."""
+
+    def anonimizar(self, contenido: bytes) -> str:
+        """Devuelve contenido transitorio anonimizado."""
+        raise NotImplementedError
+
+
+class PuertoValidadorPrivacidad(Protocol):
+    """Valida residuales sin depender de la etapa de anonimización."""
+
+    def validar(self, contenido_anonimizado: str) -> ResultadoValidacionPrivacidad:
+        """Devuelve únicamente la decisión técnica de privacidad."""
+        raise NotImplementedError
+
+
+class AnonimizadorBasico:
+    """Elimina marcadores sintéticos identificables antes de validarlos."""
+
+    _marcadores_a_eliminar = (
+        "token_identificador_sintetico",
+        "token_contacto_sintetico",
+    )
+
+    def anonimizar(self, contenido: bytes) -> str:
+        texto = contenido.decode("utf-8", errors="ignore")
+        for marcador in self._marcadores_a_eliminar:
+            texto = texto.replace(marcador, "")
+        return texto
 
 
 class ValidadorPrivacidad:
