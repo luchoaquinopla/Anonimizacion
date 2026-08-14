@@ -1,10 +1,10 @@
 schema: spec-driven
 
 context: |
-  Tech stack: not yet selected — repository contains only Git metadata
-  Architecture: not established
-  Testing: none (no runner detected)
-  Style: not established
+  Tech stack: Python 3.11+, pydantic, pytest
+  Architecture: pipeline de etapas puras (ver design.md de pdf-pii-anonymization)
+  Testing: pytest
+  Style: nombres en español (ver AGENTS.md, sección "Convenciones de código")
 
 rules:
   proposal:
@@ -20,10 +20,10 @@ rules:
     - Keep tasks completable in one session
   apply:
     - Follow existing code patterns
-    tdd: false           # Set to true once a stack + test runner are chosen
-    test_command: ""
+    tdd: true
+    test_command: "pytest"
   verify:
-    test_command: ""
+    test_command: "pytest"
     build_command: ""
     coverage_threshold: 0
   archive:

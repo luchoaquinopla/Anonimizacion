@@ -95,9 +95,15 @@ nombre del médico, y la decisión sobre señal cruda de ECG (ver riesgo técnic
 
 ## Convenciones de código
 
-- Identificadores, comentarios y mensajes de error del código: **inglés**, salvo que
-  reflejen literalmente un campo del dominio en español (ej. nombres de campos que vienen
-  tal cual del PDF).
+- Nombres de archivos, funciones, variables y constantes: **español**. Esto incluye
+  identificadores de dominio (`fecha_nacimiento`, no `date_of_birth`), nombres de módulos y
+  de tests. Palabras reservadas del lenguaje/librerías (`class`, `def`, `return`, nombres de
+  API de terceros como `SecretStr` o `Protocol`) se mantienen como las define la librería.
+- Comentarios: **cortos y concisos** — una línea siempre que se pueda. Solo explicar el
+  *por qué* cuando no sea obvio (una decisión no evidente, una restricción externa); nunca
+  repetir en prosa lo que el código ya dice. Nada de bloques de comentario largos ni
+  docstrings de varios párrafos.
+- Mensajes de error y logs: español, mismas reglas de brevedad.
 - Documentación del proyecto (este archivo, `openspec/`, README): **español**, porque el
   dominio y los documentos fuente son en español.
 - Un parser/extractor por tipo de documento, implementando una interfaz común (patrón
