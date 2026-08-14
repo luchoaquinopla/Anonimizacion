@@ -107,7 +107,9 @@ nombre del médico, y la decisión sobre señal cruda de ECG (ver riesgo técnic
 
 ## Estado del proyecto (SDD)
 
-Persistencia: `hybrid` (OpenSpec + Engram). Ver `openspec/` para specs formales.
+Persistencia: `hybrid` (OpenSpec + Engram). Ver `openspec/` para specs formales y
+[`docs/pipeline.md`](docs/pipeline.md) para el diagrama de flujo y la explicación de por qué se
+eligió cada librería del stack (PyMuPDF, Presidio+spaCy, HMAC, Celery+Redis, Postgres+Parquet).
 
 - ✅ `sdd-init` corrido (proyecto `anonimizacion`)
 - ✅ `sdd-explore` corrido — comparación de enfoques para extracción, detección de PII,
