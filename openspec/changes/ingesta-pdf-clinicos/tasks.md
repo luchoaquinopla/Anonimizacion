@@ -56,22 +56,22 @@ No iniciada. Se traslada íntegramente a PR 2 para cerrar PR 1 cerca del presupu
 
 ### 3.1 Carga local desacoplada
 
-- [ ] RED: crear pruebas del adaptador de UI que fijen carga múltiple, invocación del `IngestionInputPort` por archivo y emisión de un único acuse sólo después de terminar el lote. <!-- sdd-owner: implementation -->
-- [ ] GREEN: implementar una UI de navegador exclusivamente local para arrastrar PDFs y un adaptador que entregue cada archivo al puerto de entrada sin acoplarse a extracción o privacidad. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: cubrir archivos no laboratorio, errores por archivo, lotes mixtos y lote parcial; comprobar que el acuse conserva sólo cantidades y códigos técnicos seguros. <!-- sdd-owner: implementation -->
-- [ ] REFACTOR: eliminar cualquier exposición de resultados transitorios de la UI y simplificar el límite entre adaptador y caso de uso sin romper las pruebas. <!-- sdd-owner: implementation -->
+- [x] RED: crear pruebas del adaptador de UI que fijen carga múltiple, invocación del `IngestionInputPort` por archivo y emisión de un único acuse sólo después de terminar el lote. Completado en PR 3 con `tests/test_carga_local_pr3.py`. <!-- sdd-owner: implementation -->
+- [x] GREEN: implementar una UI de navegador exclusivamente local para arrastrar PDFs y un adaptador que entregue cada archivo al puerto de entrada sin acoplarse a extracción o privacidad. Completado en PR 3 mediante vista estática local y `AdaptadorCargaLocal`. <!-- sdd-owner: implementation -->
+- [x] TRIANGULATE: cubrir archivos no laboratorio, errores por archivo, lotes mixtos y lote parcial; comprobar que el acuse conserva sólo cantidades y códigos técnicos seguros. Completado en PR 3 con lote mixto/parcial y normalización segura. <!-- sdd-owner: implementation -->
+- [x] REFACTOR: eliminar cualquier exposición de resultados transitorios de la UI y simplificar el límite entre adaptador y caso de uso sin romper las pruebas. Completado en PR 3: se aisló el procesamiento efímero por archivo. <!-- sdd-owner: implementation -->
 
 ### 3.2 Verificación de límites locales
 
-- [ ] RED: añadir pruebas o comprobaciones automatizables que fallen si el acuse contiene texto extraído, PII/PHI, valores clínicos, observaciones o diagnósticos. <!-- sdd-owner: implementation -->
-- [ ] GREEN: configurar la ejecución necesaria para operar sólo localmente, sin publicar un servicio en red externa; no agregar autenticación, API pública, almacenamiento, colas ni *broker*. <!-- sdd-owner: implementation -->
-- [ ] TRIANGULATE: verificar manualmente y con pruebas que no se crean temporales ni logs de contenido durante éxito, error y lote parcial. <!-- sdd-owner: implementation -->
-- [ ] REFACTOR: conservar sólo la configuración mínima necesaria para la UI local y mantener todas las comprobaciones verdes. <!-- sdd-owner: implementation -->
+- [x] RED: añadir pruebas o comprobaciones automatizables que fallen si el acuse contiene texto extraído, PII/PHI, valores clínicos, observaciones o diagnósticos. Completado en PR 3 con casos negativos de acuse y contenido de UI. <!-- sdd-owner: implementation -->
+- [x] GREEN: configurar la ejecución necesaria para operar sólo localmente, sin publicar un servicio en red externa; no agregar autenticación, API pública, almacenamiento, colas ni *broker*. Completado en PR 3 con UI estática sin servicio ni dependencias de red. <!-- sdd-owner: implementation -->
+- [x] TRIANGULATE: verificar manualmente y con pruebas que no se crean temporales ni logs de contenido durante éxito, error y lote parcial. Completado en PR 3 con comprobación automatizada de dependencias laterales y ejecuciones de lote. <!-- sdd-owner: implementation -->
+- [x] REFACTOR: conservar sólo la configuración mínima necesaria para la UI local y mantener todas las comprobaciones verdes. Completado en PR 3: sólo se conserva marcado estático local. <!-- sdd-owner: implementation -->
 
 ### 3.3 Cierre revisable de PR 3
 
-- [ ] Ejecutar pruebas y comprobaciones manuales del límite local; registrar comandos reales, resultados y limitaciones sin datos sensibles. <!-- sdd-owner: implementation -->
-- [ ] Revisar el tamaño del diff y confirmar que el PR no introduce persistencia, evaluación habilitable, ECG, ecocardiografía ni ML. <!-- sdd-owner: parent -->
+- [x] Ejecutar pruebas y comprobaciones manuales del límite local; registrar comandos reales, resultados y limitaciones sin datos sensibles. Completado en PR 3: 43 pruebas aprobadas y `git diff --check` sin errores. <!-- sdd-owner: implementation -->
+- [x] Revisar el tamaño del diff y confirmar que el PR no introduce persistencia, evaluación habilitable, ECG, ecocardiografía ni ML. Confirmado el 2026-08-14: código y pruebas de PR 3 suman 263 líneas (`git diff --no-index`), sin persistencia, evaluación habilitable, ECG, ecocardiografía, ML, red externa, autenticación, API pública, colas ni brokers. `docs/architecture/diagrama.md` se difiere a un commit de documentación aparte para no mezclar alcance ni presupuesto de líneas. <!-- sdd-owner: parent -->
 
 ## Trabajo diferido — no iniciar sin puerta aprobada
 
