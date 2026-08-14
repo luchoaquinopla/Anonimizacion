@@ -2,3 +2,8 @@
 .venv/
 # Archivo reservado de Windows que Git no puede indexar.
 NUL
+
+# Artefactos locales de ejecución que no forman parte del producto.
+.pi/subagents/
+__pycache__/
+*.py[cod]
