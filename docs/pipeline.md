@@ -10,41 +10,24 @@ ante cualquier discrepancia, el `design.md` es la fuente de verdad.
 
 ```mermaid
 flowchart LR
-    subgraph ECG["ECG (Mortara)"]
-        E1["PDF ECG<br/>sin DNI, solo nombre + F.Nac."] --> E2["Extracción<br/>PyMuPDF"] --> E3["Parser ECG"]
-    end
+    E["PDF ECG<br/>sin DNI, solo nombre + F.Nac."] --> EP["Parser ECG"]
+    L["PDF laboratorio<br/>DNI + nombre + F.Nac."] --> LP["Parser Lab"]
+    C["PDF ecocardiograma<br/>DNI + nombre + F.Nac."] --> CP["Parser Eco"]
 
-    subgraph LAB["Laboratorio"]
-        L1["PDF laboratorio<br/>DNI + nombre + F.Nac."] --> L2["Extracción<br/>PyMuPDF"] --> L3["Parser Lab"]
-    end
+    EP --> R["Registro tipado<br/>(1 modelo, 3 orígenes)"]
+    LP --> R
+    CP --> R
 
-    subgraph ECO["Ecocardiograma"]
-        C1["PDF ecocardiograma<br/>DNI + nombre + F.Nac."] --> C2["Extracción<br/>PyMuPDF"] --> C3["Parser Eco"]
-    end
-
-    E3 --> R["Registro tipado<br/>(genérico, 1 modelo para los 3 orígenes)"]
-    L3 --> R
-    C3 --> R
-
-    R --> PII["Detección de PII<br/>Presidio + spaCy + recognizer DNI"]
-    PII -. "nombre / DNI / F.Nac. crudos" .-> DISCARD(["✕ nunca persistidos"])
+    R --> PII["Detección de PII<br/>Presidio + spaCy + DNI"]
+    PII -. "nombre / DNI / F.Nac." .-> DISCARD(["✕ nunca persistidos"])
 
     PII --> PSEUDO["Pseudonimización<br/>HMAC(DNI + pepper) → patient_id"]
-    PSEUDO -- "escribe (Lab/Eco: tienen DNI)" --> BRIDGE["Tabla puente<br/>alt_id ↔ patient_id"]
-    BRIDGE -. "consulta (ECG: sin DNI propio)" .-> PSEUDO
+    PSEUDO <--> BRIDGE["Tabla puente<br/>alt_id ↔ patient_id<br/>(la escribe Lab/Eco, la lee ECG)"]
 
-    PSEUDO --> LINK["Vinculación<br/>ventana ±7 días por patient_id"]
+    PSEUDO --> LINK["Vinculación<br/>±7 días por patient_id"]
 
-    LINK --> PG[("Postgres<br/>relacional · linkage")]
-    LINK --> PARQUET[("Parquet<br/>bulk · entrenamiento DL")]
-
-    E3 -. doc inválido .-> Q["Cuarentena<br/>aislado, no aborta el lote"]
-    L3 -. doc inválido .-> Q
-    C3 -. doc inválido .-> Q
-
-    E1 -. original .-> ENC["Almacenamiento cifrado<br/>PDF original, fuente de verdad"]
-    L1 -. original .-> ENC
-    C1 -. original .-> ENC
+    LINK --> PG[("Postgres<br/>relacional")]
+    LINK --> PARQUET[("Parquet<br/>entrenamiento DL")]
 ```
 
 **Lectura del diagrama**: los tres tipos de documento solo se tocan en su parser — todo lo que
@@ -53,6 +36,11 @@ significa escribir una clase de parser nueva, sin tocar el resto del pipeline. E
 documento sin DNI propio: resuelve su `patient_id` consultando la tabla puente que laboratorio y
 ecocardiograma completan (ellos sí traen DNI). La PII cruda muere en el paso de pseudonimización —
 de ahí en más todo lo que circula es un `patient_id` irreversible.
+
+Dos caminos secundarios no están en el diagrama porque no cambian el mecanismo central: un
+documento inválido (layout no reconocido, PII sin resolver) se aísla en **cuarentena** sin abortar
+el lote, y cada **PDF original** se retiene cifrado aparte como fuente de verdad para reprocesar
+— nunca se mezcla con el dataset anonimizado. Detalle completo en `design.md`.
 
 ## Librerías principales
 
