@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "d1852be7-415a-4fd0-a3ec-f3763ac2d2a9",
+  "title": "return runs.run('status', {agent:'sdd-status', task:'Resolve authoritative SDD status for the exi...",
+  "objective": "return runs.run('status', {agent:'sdd-status', task:'Resolve authoritative SDD status for the exi...",
+  "status": "failed",
+  "createdAt": "2026-08-13T20:36:06.765Z",
+  "updatedAt": "2026-08-13T20:36:06.820Z",
+  "runs": [
+    {
+      "runId": "ea064db7-2dda-474d-979c-c8dfcd884620",
+      "mode": "workflow",
+      "asyncDir": "C:\\Users\\lucho\\AppData\\Local\\Temp\\pi-subagents-user-lucho\\async-subagent-runs\\ea064db7-2dda-474d-979c-c8dfcd884620",
+      "status": "failed",
+      "startedAt": "2026-08-13T20:36:06.774Z",
+      "completedAt": "2026-08-13T20:36:06.820Z"
+    }
+  ],
+  "workflowChildren": [],
+  "decisions": [],
+  "artifacts": [
+    {
+      "kind": "status",
+      "path": "C:\\Users\\lucho\\AppData\\Local\\Temp\\pi-subagents-user-lucho\\async-subagent-runs\\ea064db7-2dda-474d-979c-c8dfcd884620\\status.json"
+    },
+    {
+      "kind": "other",
+      "path": "C:\\Users\\lucho\\AppData\\Local\\Temp\\pi-subagents-user-lucho\\async-subagent-runs\\ea064db7-2dda-474d-979c-c8dfcd884620\\events.jsonl",
+      "description": "Lifecycle events"
+    }
+  ],
+  "receipts": [],
+  "cwd": "D:\\proyectos\\anonimizacion",
+  "ownerSessionId": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-13T20-34-24-535Z_019ffcd5-4a97-7c95-bd1c-be27ff7b559d.jsonl",
+  "summary": "workflowScript must be valid JavaScript.\nIf task text contains Markdown fences or backticks, use an array joined with \"\\n\" or escaped strings instead of a raw backtick template literal.\n\nOriginal SyntaxError:\nworkflow-script.js:2\nreturn runs.run('status', {agent:'sdd-status', task:'Resolve authoritative SDD status for the existing OpenSpec change `ingesta-pdf-clinicos` in D:/proyectos/anonimizacion. The user explicitly approved proceeding phase by phase. Session preflight is injected: interactive mode, OpenSpec artifacts, auto-forecast chaining, 400 changed-line review budget. Perform READ-ONLY work. Return the full structured status contract: active change selection; artifact paths; exact unchecked task lines; apply/verify/sync/archive dependencies; actionContext; nextRecommended; risks; and a concise result envelope in Spanish. Do not edit files. Project artifact convention is Spanish.'}), async:false, context:'fresh', timeoutMs:120000,\n                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^\n\nSyntaxError: Unexpected token ':'\n    at new Script (node:vm:117:7)\n    at MessagePort.<anonymous> ([worker eval]:298:18)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)"
+}

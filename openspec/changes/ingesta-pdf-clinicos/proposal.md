@@ -2,9 +2,9 @@
 
 ## Decisión y resultado esperado
 
-La primera entrega implementable será una UI de navegador **local** para arrastrar PDFs de laboratorio. Procesará cada archivo del lote de manera síncrona y sólo en memoria; al completar el lote devolverá un acuse técnico seguro. No persistirá ni mostrará contenido clínico, texto extraído, PII/PHI, observaciones ni resultados detallados.
+Se cierra ahora la primera entrega revisable (PR 1) con el núcleo efímero y el adaptador sintético de laboratorio en memoria. Las secciones 1.1 y 1.2 completaron RED, GREEN, TRIANGULATE y REFACTOR; el cambio implementado ocupa aproximadamente 357 líneas modificadas, cercano al presupuesto de 400 líneas.
 
-La entrega se realizará como una cadena de PRs revisables, de aproximadamente 400 líneas modificadas cada uno. La UI y el procesamiento de laboratorio se consideran completos únicamente al integrar los PRs iniciales de esa cadena.
+La sección 1.3, de privacidad y límites operativos, no se inició y pasa íntegramente a la siguiente entrega encadenada (PR 2). La UI local y el acuse de lote permanecen en una entrega posterior. La cadena completa conservará el procesamiento síncrono y sólo en memoria, sin persistir ni mostrar contenido clínico, texto extraído, PII/PHI, observaciones ni resultados detallados.
 
 ## Alcance del primer incremento
 
@@ -37,11 +37,12 @@ La UI deberá verificarse como accesible únicamente en el entorno local y sin e
 
 | PR | Resultado revisable | Límite |
 | --- | --- | --- |
-| PR 1 | Contratos de ingesta efímera, reglas de privacidad/completitud y adaptador de laboratorio en memoria. | Sin UI pública ni persistencia. |
-| PR 2 | UI local de navegador, carga de lote y acuse seguro conectados al flujo de laboratorio. | Sin exponer contenido, red externa ni almacenamiento. |
-| PR 3 | Evaluación de calidad para laboratorio. | Sólo tras aprobar corpus, inventario y umbrales. |
-| PR 4 | Persistencia, si se autoriza. | Requiere propuesta y aprobación específicas de retención, esquema y privacidad. |
-| PR 5+ | Ecocardiografía, ECG y capacidades de ML. | Cada familia o capacidad requiere aprobación y evidencia propias. |
+| PR 1 — cerrado | Contratos de ingesta efímera, estados, política de decisión y adaptador sintético de laboratorio en memoria (secciones 1.1 y 1.2). | Sin integración de `PrivacyValidator`, UI pública ni persistencia. |
+| PR 2 — siguiente | Privacidad y límites operativos trasladados de la sección 1.3: validación residual independiente y descarte verificable. | Sin UI, persistencia ni capacidades nuevas. |
+| PR 3 | UI local de navegador, carga de lote y acuse seguro conectados al flujo de laboratorio. | Sin exponer contenido, red externa ni almacenamiento. |
+| PR 4 | Evaluación de calidad para laboratorio. | Sólo tras aprobar corpus, inventario y umbrales. |
+| PR 5 | Persistencia, si se autoriza. | Requiere propuesta y aprobación específicas de retención, esquema y privacidad. |
+| PR 6+ | Ecocardiografía, ECG y capacidades de ML. | Cada familia o capacidad requiere aprobación y evidencia propias. |
 
 ## Capacidades
 

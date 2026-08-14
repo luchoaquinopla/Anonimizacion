@@ -1,0 +1,141 @@
+{
+  "runId": "73d6dd49",
+  "agent": "gentle-ai-verify",
+  "task": "Read-only verify PR 1 section 1.2 REFACTOR in D:/proyectos/anonimizacion. Do not edit.\nRun .venv/Scripts/python.exe -m pytest. Inspect the laboratory adapter enough to confirm the refactor maintains behavior and the mapping is isolated in cohesive helpers. Confirm application/domain do not import concrete adapters or PDF libraries. Report concise Spanish results and any regressions.",
+  "exitCode": 0,
+  "processSignal": "SIGTERM",
+  "usage": {
+    "input": 19677,
+    "output": 1575,
+    "cacheRead": 14336,
+    "cacheWrite": 0,
+    "cost": 0.15280300000000002,
+    "turns": 4
+  },
+  "model": "openai-codex/gpt-5.6-sol:medium",
+  "attemptedModels": [
+    "openai-codex/gpt-5.6-sol:medium"
+  ],
+  "modelAttempts": [
+    {
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 19677,
+        "output": 1575,
+        "cacheRead": 14336,
+        "cacheWrite": 0,
+        "cost": 0.15280300000000002,
+        "turns": 4
+      }
+    }
+  ],
+  "durationMs": 56308,
+  "toolCount": 11,
+  "launchContractDigest": "92ec1571c41ac2af43acdbaff2c49993b3af25fe5936ec0fd10c305598413850",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:e1444f47667fe298"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:e1444f47667fe298"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "attested",
+    "evidenceStatus": "attested",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "read-only task wording"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [
+            "review-findings",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "review-findings",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only task wording"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [
+          "review-findings",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Sin hallazgos ni regresiones. Evidencia en src/ingesta_clinica/adaptadores/salida/laboratorio.py, tests/test_contrato_adaptador_laboratorio.py y tests/test_contrato_bloques_laboratorio.py."
+        }
+      ],
+      "changedFiles": [],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": ".venv/Scripts/python.exe -m pytest",
+          "result": "passed",
+          "summary": "25 pruebas aprobadas en 0.06s."
+        }
+      ],
+      "validationOutput": [
+        "25 passed in 0.06s",
+        "El mapeo de bloques está aislado en helpers privados cohesivos.",
+        "No se encontraron imports de adaptadores concretos ni librerías PDF en aplicación o dominio."
+      ],
+      "residualRisks": [
+        "Estado de staging y diff no verificado porque no se autorizó ejecutar comandos Git."
+      ],
+      "noStagedFiles": false,
+      "diffSummary": "Verificación de solo lectura; este agente no realizó cambios. El diff existente no fue inspeccionado mediante Git.",
+      "reviewFindings": [
+        "no blockers: src/ingesta_clinica/adaptadores/salida/laboratorio.py - comportamiento cubierto y responsabilidades del mapeo separadas en helpers cohesivos",
+        "no regressions: tests - 25 pruebas aprobadas"
+      ],
+      "manualNotes": "noStagedFiles=false representa falta de verificación, no evidencia de archivos staged."
+    }
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": false
+    }
+  },
+  "transcriptPath": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\73d6dd49_gentle-ai-verify_0_transcript.jsonl",
+  "timestamp": 1786665432897
+}

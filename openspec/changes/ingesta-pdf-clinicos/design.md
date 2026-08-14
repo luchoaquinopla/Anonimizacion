@@ -2,7 +2,9 @@
 
 ## Decisión
 
-El primer incremento será un flujo local, en memoria y limitado a PDFs de laboratorio. Una UI de navegador local cargará un lote de archivos y recibirá, al finalizarlo, un acuse técnico seguro. El sistema no persistirá datos ni utilizará PostgreSQL, migraciones, colas, *brokers*, fuentes remotas o conjuntos de datos de ML.
+Se cierra la primera entrega revisable con el núcleo efímero y el adaptador sintético de laboratorio en memoria. Las secciones 1.1 y 1.2 completaron RED, GREEN, TRIANGULATE y REFACTOR, con aproximadamente 357 líneas modificadas. La sección 1.3 —privacidad y límites operativos— no se inició y se traslada íntegramente a la siguiente entrega encadenada, antes de incorporar la UI.
+
+El flujo objetivo seguirá siendo local, en memoria y limitado a PDFs de laboratorio. Una UI de navegador local cargará un lote de archivos y recibirá, al finalizarlo, un acuse técnico seguro en una entrega posterior. El sistema no persistirá datos ni utilizará PostgreSQL, migraciones, colas, *brokers*, fuentes remotas o conjuntos de datos de ML.
 
 ```text
 Navegador local
@@ -42,15 +44,19 @@ La política de decisión bloquea un documento si encuentra PII/PHI residual, un
 
 ## Diseño por PR encadenado
 
-### PR 1 — Núcleo efímero y laboratorio en memoria
+### PR 1 — Cerrado: núcleo efímero y laboratorio en memoria
 
-Implementa contratos, estados, política de privacidad/completitud y adaptador de laboratorio que opere sobre bytes o flujos en memoria. Las pruebas triangulan resultados válidos, campos ausentes, valores malformados, candidatos ambiguos y hallazgos residuales de PII/PHI. Este PR no contiene una UI de usuario ni persistencia.
+Completó contratos, estados, política de decisión y adaptador sintético de laboratorio que opera sobre datos en memoria. Las secciones 1.1 y 1.2 cuentan con evidencia RED, GREEN, TRIANGULATE y REFACTOR para resultados válidos, campos ausentes, valores malformados, candidatos ambiguos y variantes de bloques sintéticos. No incluye `PrivacyValidator`, UI de usuario ni persistencia.
 
-### PR 2 — UI local y acuse de lote
+### PR 2 — Siguiente: privacidad y límites operativos
 
-Añade el adaptador de navegador local, carga múltiple y composición del acuse final. La UI no recibe resultados clínicos transitorios. Las pruebas cubren que el acuse se emite al final del lote, que sólo contiene datos permitidos y que los fallos por archivo no exponen contenido. Se verifica además la operación local sin publicación externa.
+Recibe sin cambios de alcance la sección 1.3: `PrivacyValidator` en memoria, conexión de anonimización, validación residual independiente y política de decisión al flujo de laboratorio. Sus pruebas deberán cubrir hallazgos de PII/PHI, errores de extracción, fallos de validación y descarte de contenido transitorio en éxito y error. No incorpora UI ni persistencia.
 
-Cada PR debe mantener un tamaño aproximado de 400 líneas modificadas. Si un diseño concreto supera ese límite, se descompone antes de implementarlo sin agregar capacidades nuevas.
+### PR 3 — UI local y acuse de lote
+
+Añade el adaptador de navegador local, carga múltiple y composición del acuse final, una vez integrado PR 2. La UI no recibe resultados clínicos transitorios. Las pruebas cubren que el acuse se emite al final del lote, que sólo contiene datos permitidos y que los fallos por archivo no exponen contenido. Se verifica además la operación local sin publicación externa.
+
+Cada PR debe mantener un tamaño aproximado de 400 líneas modificadas. PR 1 se cierra cerca de ese presupuesto, con aproximadamente 357 líneas modificadas; por ese motivo la sección 1.3 se entrega en PR 2 y no se agrega al cierre actual.
 
 ## Calidad y verificación del incremento
 
@@ -62,8 +68,8 @@ El primer incremento no declara precisión clínica, cobertura de formatos ni ap
 
 | Capacidad | Puerta antes de diseñar o implementar |
 | --- | --- |
-| Evaluación de calidad de laboratorio (PR 3) | Corpus autorizado, inventario versionado y umbrales de cobertura, exactitud, omisiones, rechazos y PII residual aprobados. |
-| Persistencia (PR 4) | Nueva propuesta aprobada que establezca necesidad, retención, acceso, esquema, trazabilidad y controles de privacidad. La tecnología se decide entonces. |
+| Evaluación de calidad de laboratorio (PR 4) | Corpus autorizado, inventario versionado y umbrales de cobertura, exactitud, omisiones, rechazos y PII residual aprobados. |
+| Persistencia (PR 5) | Nueva propuesta aprobada que establezca necesidad, retención, acceso, esquema, trazabilidad y controles de privacidad. La tecnología se decide entonces. |
 | Ecocardiografía | Aprobación clínica y de privacidad, inventario propio, corpus autorizado y umbrales por familia. |
 | ECG | Aprobación equivalente; alcance explícito de medidas. La señal del trazado queda excluida hasta contar con fuente nativa validada y aprobación independiente. |
 | Vínculo longitudinal | Decisión explícita de producto y privacidad sobre seudonimización, retención y acceso. |

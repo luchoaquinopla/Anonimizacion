@@ -1,2 +1,4 @@
 .atl/
 .venv/
+# Archivo reservado de Windows que Git no puede indexar.
+NUL

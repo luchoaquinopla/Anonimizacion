@@ -1,0 +1,138 @@
+{
+  "runId": "b0c1ef41",
+  "agent": "sdd-status",
+  "task": "Resolve authoritative SDD status for the existing OpenSpec change ingesta-pdf-clinicos in D:/proyectos/anonimizacion. The user explicitly approved proceeding phase by phase. Session preflight is injected: interactive mode, OpenSpec artifacts, auto-forecast chaining, 400 changed-line review budget. Perform READ-ONLY work. Return the full structured status contract: active change selection; artifact paths; exact unchecked task lines; apply/verify/sync/archive dependencies; actionContext; nextRecommended; risks; and a concise result envelope in Spanish. Do not edit files. Project artifact convention is Spanish.",
+  "exitCode": 1,
+  "processSignal": "SIGTERM",
+  "usage": {
+    "input": 24962,
+    "output": 3474,
+    "cacheRead": 44032,
+    "cacheWrite": 0,
+    "cost": 0.10041839999999999,
+    "turns": 5
+  },
+  "model": "openai-codex/gpt-5.6-terra:low",
+  "attemptedModels": [
+    "openai-codex/gpt-5.6-terra:low"
+  ],
+  "modelAttempts": [
+    {
+      "model": "openai-codex/gpt-5.6-terra:low",
+      "success": false,
+      "exitCode": 1,
+      "error": "Agent 'sdd-status' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.",
+      "usage": {
+        "input": 24962,
+        "output": 3474,
+        "cacheRead": 44032,
+        "cacheWrite": 0,
+        "cost": 0.10041839999999999,
+        "turns": 5
+      }
+    }
+  ],
+  "durationMs": 87582,
+  "toolCount": 8,
+  "error": "Agent 'sdd-status' requested unavailable child tools: glob.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.",
+  "launchContractDigest": "f6b3cbae8ea7b75ce34f6c308f7a18cfe2c0e56ea18ec5c34326082afa12d791",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:e1444f47667fe298"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:e1444f47667fe298"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "attested",
+    "evidenceStatus": "attested",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "read-only task wording"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [
+            "review-findings",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "review-findings",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only task wording"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [
+          "review-findings",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Hallazgos concretos con severidad y rutas/líneas: proposal.md:13-19,45; design.md:5,8-12,23-24,38-40; tasks.md:7-17,21,27-30,36-72."
+        }
+      ],
+      "changedFiles": [],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": "git rev-parse --show-toplevel; find openspec/changes/ingesta-pdf-clinicos; grep/nl de tareas y artefactos",
+          "result": "passed",
+          "summary": "Se validó el repositorio, el cambio OpenSpec, los artefactos, las tareas y la ausencia de reportes de ciclo de vida."
+        }
+      ],
+      "validationOutput": [
+        "Cambio existente validado: openspec/changes/ingesta-pdf-clinicos.",
+        "16 tareas de implementación pendientes; 2 acciones parent pendientes; sin marcadores de ownership malformados.",
+        "apply-progress.md, verify-report.md y sync-report.md no existen."
+      ],
+      "residualRisks": [
+        "Bloqueo de alcance contradictorio entre propuesta, diseño y tareas.",
+        "Riesgo alto de exceder 400 líneas sin estrategia de cadena decidida.",
+        "Aprobaciones clínicas, de privacidad y de corpus/umbrales pendientes."
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "Sin cambios realizados; revisión estrictamente de solo lectura.",
+      "reviewFindings": [
+        "blocker: openspec/changes/ingesta-pdf-clinicos/proposal.md:13-19,45 vs tasks.md:21,32-52 vs design.md:5,8-12,23-24,38-40 — alcance incompatible.",
+        "blocker: openspec/changes/ingesta-pdf-clinicos/tasks.md:7-17 — estrategia de PR encadenados pendiente ante previsión de 650–1.000 líneas."
+      ],
+      "manualNotes": "No se editaron archivos."
+    }
+  },
+  "transcriptPath": "D:\\proyectos\\anonimizacion\\.pi\\subagents\\artifacts\\b0c1ef41_sdd-status_0_transcript.jsonl",
+  "timestamp": 1786653463404
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "7f1eb227-8ac9-4e0f-93f9-ef84f9331bc1",
+  "title": "Update ONLY OpenSpec planning artifacts for change ingesta-pdf-clinicos in D:/proyectos/anonimiza...",
+  "objective": "Update ONLY OpenSpec planning artifacts for change ingesta-pdf-clinicos in D:/proyectos/anonimizacion. Do not implement code, do not modify tests, do not commit or push.\n\nExplicit user delivery decision: close the current first reviewable delivery now because the implemented core plus synthetic laboratory adapter is approximately 357 changed lines, near the 400-line budget. Move PR 1 section 1.3 privacy and operational limits into the next chained PR/delivery. Preserve the actual completed state accurately: 1.1 and 1.2 have completed RED/GREEN/TRIANGULATE/REFACTOR; 1.3 is not started. Reconcile only the relevant delivery/task planning language in proposal.md, design.md, tasks.md as needed. Do not falsely mark code or tests complete beyond that. Keep Spanish OpenSpec style and traceability. Run git diff --check. Return Spanish envelope with exact artifacts and changed summary.\n\n## Skills to load before work\nC:\\Users\\lucho\\.config\\opencode\\skills\\cognitive-doc-design\\SKILL.md\nC:\\Users\\lucho\\.config\\opencode\\skills\\work-unit-commits\\SKILL.md",
+  "status": "failed",
+  "createdAt": "2026-08-14T00:00:21.688Z",
+  "updatedAt": "2026-08-14T00:03:21.775Z",
+  "runs": [
+    {
+      "runId": "call_AbNXcpwh9gwZD8QMroB9usai|fc_0d714da792b88a9c016a7e5a8ffa888191bb1c2c870872d7df",
+      "mode": "workflow",
+      "status": "failed",
+      "startedAt": "2026-08-14T00:03:21.707Z",
+      "completedAt": "2026-08-14T00:03:21.707Z"
+    }
+  ],
+  "workflowChildren": [
+    {
+      "workflowRunId": "call_AbNXcpwh9gwZD8QMroB9usai|fc_0d714da792b88a9c016a7e5a8ffa888191bb1c2c870872d7df",
+      "key": "split-delivery",
+      "status": "failed",
+      "startedAt": "2026-08-14T00:00:21.730Z",
+      "updatedAt": "2026-08-14T00:03:21.775Z",
+      "artifactPaths": [
+        "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-13T20-34-24-535Z_019ffcd5-4a97-7c95-bd1c-be27ff7b559d\\8b37bd54\\run-0\\session.jsonl"
+      ],
+      "runId": "8b37bd54",
+      "agent": "worker",
+      "task": "Update ONLY OpenSpec planning artifacts for change ingesta-pdf-clinicos in D:/proyectos/anonimizacion. Do not implement code, do not modify tests, do not commit or push.\n\nExplicit user delivery decision: close the current first reviewable delivery now because the implemented core plus synthetic laboratory adapter is approximately 357 changed lines, near the 400-line budget. Move PR 1 section 1.3 privacy and operational limits into the next chained PR/delivery. Preserve the actual completed state accurately: 1.1 and 1.2 have completed RED/GREEN/TRIANGULATE/REFACTOR; 1.3 is not started. Reconcile only the relevant delivery/task planning language in proposal.md, design.md, tasks.md as needed. Do not falsely mark code or tests complete beyond that. Keep Spanish OpenSpec style and traceability. Run git diff --check. Return Spanish envelope with exact artifacts and changed summary.\n\n## Skills to load before work\nC:\\Users\\lucho\\.config\\opencode\\skills\\cognitive-doc-design\\SKILL.md\nC:\\Users\\lucho\\.config\\opencode\\skills\\work-unit-commits\\SKILL.md",
+      "completedAt": "2026-08-14T00:03:21.775Z",
+      "sessionPath": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-13T20-34-24-535Z_019ffcd5-4a97-7c95-bd1c-be27ff7b559d\\8b37bd54\\run-0\\session.jsonl",
+      "heartbeat": {
+        "updatedAt": "2026-08-14T00:03:21.775Z",
+        "status": "failed"
+      }
+    }
+  ],
+  "decisions": [],
+  "artifacts": [],
+  "receipts": [],
+  "cwd": "D:\\proyectos\\anonimizacion",
+  "ownerSessionId": "C:\\Users\\lucho\\.pi\\agent\\sessions\\--D--proyectos-anonimizacion--\\2026-08-13T20-34-24-535Z_019ffcd5-4a97-7c95-bd1c-be27ff7b559d.jsonl",
+  "summary": "Workflow failed: Workflow script timed out after 180000ms.\n\nCall trace:\n- run split-delivery: started"
+}
