@@ -45,4 +45,5 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "parseo_incompleto",
         "clave_pii_no_resuelta",
         "clave_pii_ambigua",
+        "error_transitorio_agotado",
     }

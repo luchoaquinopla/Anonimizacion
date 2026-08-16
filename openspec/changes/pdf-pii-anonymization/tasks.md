@@ -89,13 +89,13 @@ Pydantic).
 
 ## Fase 8: Pipeline / Ejecutor
 
-- [ ] 8.1 Test + impl `pipeline/etapas.py`, `pipeline/resultado.py`
-- [ ] 8.2 Test + impl `pipeline/ejecutor.py` — aislamiento de fallo por documento, reintentos solo en errores transitorios
+- [x] 8.1 Test + impl `pipeline/etapas.py`, `pipeline/resultado.py`
+- [x] 8.2 Test + impl `pipeline/ejecutor.py` — aislamiento de fallo por documento, reintentos solo en errores transitorios
 
 ## Fase 9: Trabajadores
 
-- [ ] 9.1 Impl `trabajadores/app.py` (Celery), `trabajadores/politica_reintentos.py` (backoff 5s/30s/180s)
-- [ ] 9.2 Test + impl `trabajadores/tareas.py` — mensaje de cola solo `{id_documento, uri, sha256}`
+- [x] 9.1 Impl `trabajadores/app.py` (Celery), `trabajadores/politica_reintentos.py` (backoff 5s/30s/180s)
+- [x] 9.2 Test + impl `trabajadores/tareas.py` — mensaje de cola solo `{id_documento, uri, sha256}`
 
 ## Fase 10: Observabilidad
 
