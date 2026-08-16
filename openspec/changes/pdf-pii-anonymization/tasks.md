@@ -74,10 +74,10 @@ Pydantic).
 
 ## Fase 6: Pseudonimización y Vinculación
 
-- [ ] 6.1 Test + impl `pseudonimizacion/almacen_pepper.py` (pepper desde env/archivo cifrado, nunca en repo)
-- [ ] 6.2 Test + impl `pseudonimizacion/claves.py` — HMAC `id_paciente` (canonicalización DNI) y `id_alt_paciente`
-- [ ] 6.3 Test + impl `pseudonimizacion/resolutor_claves.py` — lab como puente id_alt_paciente→id_paciente, `CLAVE_PII_NO_RESUELTA`
-- [ ] 6.4 Test + impl `pseudonimizacion/vinculacion.py` — clustering por ancla ±7 días, `id_episodio`, casos borde (7 vs 8 días, empates)
+- [x] 6.1 Test + impl `pseudonimizacion/almacen_pepper.py` (pepper desde env/archivo cifrado, nunca en repo)
+- [x] 6.2 Test + impl `pseudonimizacion/claves.py` — HMAC `id_paciente` (canonicalización DNI) y `id_alt_paciente`
+- [x] 6.3 Test + impl `pseudonimizacion/resolutor_claves.py` — lab como puente id_alt_paciente→id_paciente, `CLAVE_PII_NO_RESUELTA`
+- [x] 6.4 Test + impl `pseudonimizacion/vinculacion.py` — clustering por ancla ±7 días, `id_episodio`, casos borde (7 vs 8 días, empates)
 
 ## Fase 7: Salida / Storage
 
