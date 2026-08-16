@@ -8,6 +8,7 @@ el entorno de desarrollo de este repo no tiene Postgres instalado).
 
 from __future__ import annotations
 
+import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -25,6 +26,11 @@ config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+_URL_ENV = "ANONIMIZACION_DB_URL"
+_url_desde_entorno = os.environ.get(_URL_ENV)
+if _url_desde_entorno:
+    config.set_main_option("sqlalchemy.url", _url_desde_entorno)
 
 target_metadata = Base.metadata
 
