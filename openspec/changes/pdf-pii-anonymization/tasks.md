@@ -61,10 +61,10 @@ Pydantic).
 
 ## Fase 4: Parseo
 
-- [ ] 4.1 Test + impl `src/anonimizacion/parseo/base.py` (`ParseadorDocumento` Protocol) + `registro.py`
-- [ ] 4.2 Test + impl `parseo/laboratorio_general.py` — reconciliación multi-página, secciones HEMATOLOGIA/HEMOSTASIA/QUÍMICA/IONOGRAMA
-- [ ] 4.3 Test + impl `parseo/ecg_mortara.py` — tolerancia a `PID / NAME MISMATCH`
-- [ ] 4.4 Test + impl `parseo/eco_doppler.py` — medidas + texto libre por sección + firma
+- [x] 4.1 Test + impl `src/anonimizacion/parseo/base.py` (`ParseadorDocumento` Protocol) + `registro.py`
+- [x] 4.2 Test + impl `parseo/laboratorio_general.py` — reconciliación multi-página, secciones HEMATOLOGIA/HEMOSTASIA/QUÍMICA/IONOGRAMA
+- [x] 4.3 Test + impl `parseo/ecg_mortara.py` — tolerancia a `PID / NAME MISMATCH`
+- [x] 4.4 Test + impl `parseo/eco_doppler.py` — medidas + texto libre por sección + firma
 
 ## Fase 5: Detección de PII
 
