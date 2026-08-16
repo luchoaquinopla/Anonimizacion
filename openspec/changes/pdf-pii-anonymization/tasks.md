@@ -68,9 +68,9 @@ Pydantic).
 
 ## Fase 5: Detección de PII
 
-- [ ] 5.1 Test + impl `src/anonimizacion/pii/reconocedores/dni_ar.py` (regex + validación formato)
-- [ ] 5.2 Test + impl `pii/motor.py` (Presidio + spaCy es_core_news_lg, IDs internos como cuasi-identificadores, baja confianza marcada)
-- [ ] 5.3 Test + impl `pii/politica.py` — namespace propio para médico (`id_medico`), texto libre incluido
+- [x] 5.1 Test + impl `src/anonimizacion/pii/reconocedores/dni_ar.py` (regex + validación formato)
+- [x] 5.2 Test + impl `pii/motor.py` (Presidio + spaCy es_core_news_lg, IDs internos como cuasi-identificadores, baja confianza marcada)
+- [x] 5.3 Test + impl `pii/politica.py` — namespace propio para médico (`id_medico`), texto libre incluido
 
 ## Fase 6: Pseudonimización y Vinculación
 
