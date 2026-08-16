@@ -81,11 +81,11 @@ Pydantic).
 
 ## Fase 7: Salida / Storage
 
-- [ ] 7.1 Modelo SQLAlchemy + migración: `vinculo_paciente`, `episodio`, `medicion_ecg`, `resultado_laboratorio` (EAV), `medicion_eco`, `texto_seccion_eco`
-- [ ] 7.2 Test + impl `salida/constructor_registro.py` (DocumentoParseado+ClavesPaciente → RegistroAnonimizado)
-- [ ] 7.3 Test + impl `salida/destinos/postgres.py`
-- [ ] 7.4 Test + impl `salida/destinos/parquet.py` (particionado tipo_documento/año)
-- [ ] 7.5 Test + impl `salida/cuarentena.py` — solo id_documento+código+etapa
+- [x] 7.1 Modelo SQLAlchemy + migración: `vinculo_paciente`, `episodio`, `medicion_ecg`, `resultado_laboratorio` (EAV), `medicion_eco`, `texto_seccion_eco`
+- [x] 7.2 Test + impl `salida/constructor_registro.py` (DocumentoParseado+ClavesPaciente → RegistroAnonimizado)
+- [x] 7.3 Test + impl `salida/destinos/postgres.py`
+- [x] 7.4 Test + impl `salida/destinos/parquet.py` (particionado tipo_documento/año)
+- [x] 7.5 Test + impl `salida/cuarentena.py` — solo id_documento+código+etapa
 
 ## Fase 8: Pipeline / Ejecutor
 

@@ -12,6 +12,7 @@ from anonimizacion.pseudonimizacion.claves import (
     canonicalizar_dni,
     generar_id_alt_paciente,
     generar_id_episodio,
+    generar_id_matricula_medico,
     generar_id_medico,
     generar_id_paciente,
     normalizar_nombre,
@@ -97,6 +98,25 @@ def test_generar_id_medico_es_determinista_y_namespace_propio() -> None:
 
     assert id_medico == id_medico_2
     assert id_medico != id_paciente_mismo_nombre
+
+
+def test_generar_id_matricula_medico_es_determinista_y_namespace_propio() -> None:
+    # Q3: "la matrícula recibe el mismo tratamiento (es identificador directo)"
+    # -- pseudonimizada, en su propio namespace (no mezclada con id_medico
+    # del nombre ni con id_paciente).
+    id_matricula = generar_id_matricula_medico(PEPPER_TEST, "12345")
+    id_matricula_2 = generar_id_matricula_medico(PEPPER_TEST, "12345")
+    id_medico_mismo_valor = generar_id_medico(PEPPER_TEST, "12345")
+
+    assert id_matricula == id_matricula_2
+    assert id_matricula != id_medico_mismo_valor
+
+
+def test_generar_id_matricula_medico_distinta_matricula_distinta_clave() -> None:
+    id_1 = generar_id_matricula_medico(PEPPER_TEST, "12345")
+    id_2 = generar_id_matricula_medico(PEPPER_TEST, "67890")
+
+    assert id_1 != id_2
 
 
 def test_generar_id_episodio_es_determinista_y_recomputable() -> None:

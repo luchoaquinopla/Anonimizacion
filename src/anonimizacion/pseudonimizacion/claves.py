@@ -81,6 +81,21 @@ def generar_id_medico(pepper: bytes, nombre: str) -> str:
     return _hmac_hex(pepper, mensaje)
 
 
+def generar_id_matricula_medico(pepper: bytes, matricula: str) -> str:
+    """`id_matricula_medico = HMAC(pepper, "matricula_medico|" + matricula)` (decisión Q3, Fase 7).
+
+    Q3 dice explícitamente que la matrícula "recibe el mismo tratamiento"
+    que el nombre del médico -- es un identificador directo, así que se
+    pseudonimiza igual que `id_medico`, pero en su propio namespace (prefijo
+    distinto) para que nunca colisione con `id_medico` ni con ningún otro.
+    Usada por `salida/constructor_registro.py` (Fase 7) al construir
+    `ContenidoEcoSalida.id_matricula_informante` a partir de
+    `FirmaMedico.matricula`.
+    """
+    mensaje = f"matricula_medico|{matricula.strip()}"
+    return _hmac_hex(pepper, mensaje)
+
+
 def generar_id_episodio(pepper: bytes, id_paciente: str, fecha_ancla: date) -> str:
     """`id_episodio = HMAC(pepper, id_paciente + "|" + fecha_ancla)`.
 
