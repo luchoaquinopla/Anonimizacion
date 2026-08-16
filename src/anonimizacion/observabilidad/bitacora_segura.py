@@ -28,16 +28,22 @@ entre el pipeline de detección de PII y esta bitácora. Si no se inyecta
 ninguno, el filtro sigue operando en modo reducido (solo regex DNI) -- se
 documenta explícitamente como modo degradado, no como el caso esperado en
 producción.
+
+**Nota PR9**: la lógica de redacción (regex DNI + spans del motor) que este
+módulo originaba en PR8 se extrajo a `pii/redaccion.py` como módulo
+compartido -- reusada acá y también por `salida/constructor_registro.py`
+para cerrar el gap de redacción de texto libre en el registro de salida (ver
+docstring de ese módulo). Este archivo importa de ahí en vez de definir su
+propia copia del regex/las funciones.
 """
 
 from __future__ import annotations
 
 import logging
-import re
-from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from collections.abc import Mapping
+from typing import Any
 
-MARCADOR_REDACTADO = "[REDACTADO]"
+from anonimizacion.pii.redaccion import DetectorEntidades, MARCADOR_REDACTADO, redactar_texto
 
 #: Defensa primaria (capa 1). Ver design.md, decisión "Sin PII en cola, logs
 #: ni DLQ": "`bitacora_segura` serializa únicamente campos de una whitelist
@@ -47,46 +53,11 @@ CAMPOS_PERMITIDOS: frozenset[str] = frozenset(
     {"id_documento", "tipo_documento", "etapa", "codigo", "duracion_ms"}
 )
 
-# Mismo patrón de forma que `pii/reconocedores/dni_ar.py::_PATRONES` (con
-# puntos y sin puntos), pero simplificado: acá no hace falta el score ni la
-# validación de rango de Presidio -- es una segunda barrera de regex lisa y
-# llana, independiente de que el motor de PII esté disponible o no.
-_PATRON_DNI = re.compile(r"(?<![\d.])\d{1,2}\.\d{3}\.\d{3}(?!\d)|(?<!\d)\d{7,8}(?!\d)")
-
-
-class DetectorEntidades(Protocol):
-    """Lo mínimo que este módulo necesita del motor de PII.
-
-    `MotorPii.detectar` (`pii/motor.py`) ya cumple este contrato; se declara
-    acá como Protocol -no se importa `MotorPii` directamente- para poder
-    inyectar dobles de test livianos sin pagar el costo de cargar spaCy.
-    """
-
-    def detectar(self, texto: str) -> Sequence[Any]: ...
-
-
-def _redactar_por_regex(texto: str) -> str:
-    return _PATRON_DNI.sub(MARCADOR_REDACTADO, texto)
-
-
-def _redactar_por_motor(texto: str, motor: DetectorEntidades) -> str:
-    detecciones = motor.detectar(texto)
-    if not detecciones:
-        return texto
-    # reemplazar de atrás para adelante: así los offsets de las detecciones
-    # anteriores (calculadas sobre el texto original) siguen siendo válidos.
-    for deteccion in sorted(detecciones, key=lambda d: d.inicio, reverse=True):
-        texto = texto[: deteccion.inicio] + MARCADOR_REDACTADO + texto[deteccion.fin :]
-    return texto
-
 
 def _redactar(valor: Any, motor_pii: DetectorEntidades | None) -> Any:
     if not isinstance(valor, str):
         return valor
-    redactado = _redactar_por_regex(valor)
-    if motor_pii is not None:
-        redactado = _redactar_por_motor(redactado, motor_pii)
-    return redactado
+    return redactar_texto(valor, motor_pii=motor_pii)
 
 
 def filtrar_y_redactar(

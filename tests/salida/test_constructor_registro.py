@@ -182,6 +182,70 @@ def test_eco_sin_firma_deja_campos_de_medico_informante_en_none() -> None:
     assert registro.contenido.id_matricula_informante is None
 
 
+def test_eco_texto_libre_con_dni_se_redacta_por_regex_incluso_sin_motor_inyectado() -> None:
+    """Gap de PR7/PR8 (ver apply-progress): `secciones_texto` es texto libre dictado --
+    puede traer PII incrustada por error (ver `pii/politica.py`, `_detecciones_texto_libre`).
+    Incluso sin `motor_pii` inyectado (modo degradado, mismo principio que
+    `observabilidad/bitacora_segura.py`), el regex de DNI debe redactar."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez"), dni=SecretStr("12345678")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(
+            medidas=(),
+            secciones_texto=(
+                SeccionTextoEco(
+                    nombre="CONCLUSIONES",
+                    texto="Paciente con DNI 12.345.678 presenta funcion conservada",
+                ),
+            ),
+            firma=None,
+        ),
+        adicionales={},
+    )
+
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+
+    texto_redactado = registro.contenido.secciones_texto[0].texto
+    assert "12.345.678" not in texto_redactado
+    assert "[REDACTADO]" in texto_redactado
+
+
+def test_eco_texto_libre_con_nombre_se_redacta_via_motor_pii_inyectado() -> None:
+    """Con `motor_pii` inyectado (composición real del pipeline, ver `pipeline/ejecutor.py`),
+    un nombre mencionado incidentalmente en la conclusión dictada también se redacta --
+    cierra el gap explícito dejado por PR7/PR8 para que 11.3 (escaneo con `pii.motor`) pase."""
+    from anonimizacion.pii.motor import MotorPii
+
+    motor = MotorPii()
+
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(
+            medidas=(),
+            secciones_texto=(
+                SeccionTextoEco(
+                    nombre="CONCLUSIONES",
+                    texto="Revisado por el Dr. Roberto Fernandez, funcion sistolica conservada",
+                ),
+            ),
+            firma=None,
+        ),
+        adicionales={},
+    )
+
+    registro = construir_registro(
+        documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, motor_pii=motor
+    )
+
+    texto_redactado = registro.contenido.secciones_texto[0].texto
+    assert "Roberto Fernandez" not in texto_redactado
+
+
 def test_claves_sin_id_paciente_resuelto_lanza_value_error() -> None:
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECG,

@@ -207,9 +207,11 @@ class EjecutorPipeline:
         )
         # Detección de PII sobre texto libre (design.md, "corre también sobre texto
         # libre"): se ejecuta acá para que la etapa exista explícitamente en el
-        # pipeline real. El uso de sus hallazgos para depurar `secciones_texto`
-        # antes de `construir_registro` es un gap conocido, no resuelto por
-        # tasks.md 8.x/9.x -- ver nota en el docstring del módulo y el reporte final.
+        # pipeline real y clasifique la PII en sus namespaces (paciente/médico/
+        # cuasi-identificador, ver `pii/politica.py`). La REDACCIÓN efectiva de
+        # `secciones_texto` (el gap dejado abierto por PR7/PR8) se aplica más
+        # abajo, en `_emitir`, pasando `self._motor` a `construir_registro` --
+        # ver `pii/redaccion.py` y el docstring de `salida/constructor_registro.py`.
         self._clasificar_pii(documento, self._motor)
         claves = _ejecutar_con_reintentos(
             lambda: self._resolver_claves(
@@ -240,7 +242,11 @@ class EjecutorPipeline:
 
     def _emitir(self, resuelto: _DocumentoResuelto, id_episodio: str) -> ExitoDocumento:
         registro = self._construir_registro(
-            resuelto.documento, resuelto.claves, id_episodio=id_episodio, pepper=self._pepper
+            resuelto.documento,
+            resuelto.claves,
+            id_episodio=id_episodio,
+            pepper=self._pepper,
+            motor_pii=self._motor,
         )
         _ejecutar_con_reintentos(
             lambda: self._destino.escribir_registro(registro), etapa=Etapa.SALIDA.value, dormir=self._dormir

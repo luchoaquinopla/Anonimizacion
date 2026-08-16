@@ -92,7 +92,7 @@ def _construir_ejecutor(
             d.id_documento: f"episodio-{d.id_paciente}" for d in documentos
         }
     if construir_registro is None:
-        construir_registro = lambda documento, claves, *, id_episodio, pepper: RegistroAnonimizado(  # noqa: E731
+        construir_registro = lambda documento, claves, *, id_episodio, pepper, motor_pii=None: RegistroAnonimizado(  # noqa: E731
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
             tipo_documento=documento.tipo_documento,

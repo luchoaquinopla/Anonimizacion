@@ -16,19 +16,29 @@
    -- ni en `contenido` ni en `adicionales`.
 3. Tipar `contenido` según `modelos_salida.py` (uno por `TipoDocumento`).
 
-Lo que este módulo NO hace: detección de PII en texto libre (eso es
-`pii/motor.py` + `pii/politica.py`, Fase 5, orquestado por el pipeline en
-Fase 8 -- `ContenidoEco.secciones_texto` llega acá asumiendo que esa etapa ya
-corrió antes en el pipeline real; ver design.md "La detección de PII corre
-también sobre texto libre"). Tampoco decide el pivote ancho de
-`MedidaEco` a columnas fijas de `medicion_eco` -- eso es una decisión de la
-capa SQL, no del ensamblado de dominio (ver `destinos/postgres.py`).
+4. Redactar PII de texto libre (`ContenidoEco.secciones_texto`) -- fix
+   aditivo de PR9 que cierra un gap dejado explícitamente abierto por PR7/PR8
+   (ver `apply-progress` de esas sesiones y el docstring de
+   `pii/redaccion.py`): `pii/politica.py::clasificar` ya detecta PII en texto
+   libre desde PR4, pero nadie usaba esos hallazgos para redactar antes de
+   este ensamblaje. Ahora `construir_registro` recibe un `motor_pii`
+   opcional (mismo patrón "modo degradado" que `observabilidad/
+   bitacora_segura.py`: sin motor solo se redactan DNIs por regex; con motor
+   -- el que inyecta `pipeline/ejecutor.py`, ya cargado -- también se
+   redactan nombres/otras entidades vía NER) y aplica
+   `pii/redaccion.py::redactar_texto` sobre cada sección de texto libre
+   antes de armar `ContenidoEcoSalida.secciones_texto`.
+
+Tampoco decide el pivote ancho de `MedidaEco` a columnas fijas de
+`medicion_eco` -- eso es una decisión de la capa SQL, no del ensamblado de
+dominio (ver `destinos/postgres.py`).
 """
 
 from __future__ import annotations
 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.pii.redaccion import DetectorEntidades, redactar_texto
 from anonimizacion.pseudonimizacion.claves import generar_id_matricula_medico, generar_id_medico
 from anonimizacion.salida.modelos_salida import (
     ContenidoEcgSalida,
@@ -114,7 +124,12 @@ def _contenido_ecg_salida(documento: DocumentoParseado, id_medico: str | None) -
     )
 
 
-def _contenido_eco_salida(documento: DocumentoParseado, pepper: bytes, id_medico_solicitante: str | None) -> ContenidoEcoSalida:
+def _contenido_eco_salida(
+    documento: DocumentoParseado,
+    pepper: bytes,
+    id_medico_solicitante: str | None,
+    motor_pii: DetectorEntidades | None,
+) -> ContenidoEcoSalida:
     contenido = documento.contenido
     firma = contenido.firma
 
@@ -127,8 +142,12 @@ def _contenido_eco_salida(documento: DocumentoParseado, pepper: bytes, id_medico
         FilaMedidaEco(nombre=medida.nombre, valor=medida.valor, unidad=medida.unidad)
         for medida in contenido.medidas
     )
+    # Fix aditivo PR9 (cierra gap PR7/PR8): texto libre dictado puede traer
+    # PII incidental (ver docstring del módulo y `pii/redaccion.py`).
     secciones_texto = tuple(
-        FilaTextoSeccionEco(nombre=seccion.nombre, texto=seccion.texto)
+        FilaTextoSeccionEco(
+            nombre=seccion.nombre, texto=redactar_texto(seccion.texto, motor_pii=motor_pii)
+        )
         for seccion in contenido.secciones_texto
     )
 
@@ -147,6 +166,7 @@ def construir_registro(
     *,
     id_episodio: str,
     pepper: bytes,
+    motor_pii: DetectorEntidades | None = None,
 ) -> RegistroAnonimizado:
     """Ensambla el `RegistroAnonimizado` final: cero PII, `contenido` tipado por `TipoDocumento`."""
     if claves.id_paciente is None:
@@ -164,7 +184,7 @@ def construir_registro(
         id_medico_solicitante = _pseudonimizar_medico_de_adicionales(
             adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE
         )
-        contenido = _contenido_eco_salida(documento, pepper, id_medico_solicitante)
+        contenido = _contenido_eco_salida(documento, pepper, id_medico_solicitante, motor_pii)
     else:
         raise ValueError(f"tipo_documento no soportado por construir_registro: {documento.tipo_documento!r}")
 

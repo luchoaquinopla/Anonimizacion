@@ -104,8 +104,8 @@ Pydantic).
 
 ## Fase 11: Integración / E2E
 
-- [ ] 11.1 Fixtures sintéticas versionadas por tipo en `tests/fixtures/`
-- [ ] 11.2 Test integración: 1 documento roto en lote de N no aborta el lote, queda en cuarentena
-- [ ] 11.3 Test integración: escaneo del output con `pii.motor` no encuentra PII
-- [ ] 11.4 Test E2E: ECG+Lab+Eco sintéticos del mismo paciente ≤7 días → mismo `id_paciente`/`id_episodio`
-- [ ] 11.5 Test seguridad: socket bloqueado en la suite, ninguna llamada de red
+- [x] 11.1 Fixtures sintéticas versionadas por tipo en `tests/fixtures/`
+- [x] 11.2 Test integración: 1 documento roto en lote de N no aborta el lote, queda en cuarentena
+- [x] 11.3 Test integración: escaneo del output con `pii.motor` no encuentra PII
+- [x] 11.4 Test E2E: ECG+Lab+Eco sintéticos del mismo paciente ≤7 días → mismo `id_paciente`/`id_episodio`
+- [x] 11.5 Test seguridad: socket bloqueado en la suite, ninguna llamada de red
