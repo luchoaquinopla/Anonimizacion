@@ -136,3 +136,111 @@ def test_lab_con_dni_pero_sin_fecha_nac_no_registra_puente_pero_resuelve_id_paci
 
     assert claves.id_paciente == generar_id_paciente(PEPPER_TEST, "12345678")
     assert claves.id_alt_paciente is None
+
+
+# --- Colisión de homónimos (post-PR5 fix) ---------------------------------
+#
+# `id_alt_paciente` se calcula SOLO con nombre+fecha_nac (no es un
+# identificador único de persona real). Dos pacientes reales distintos con
+# el mismo nombre y la misma fecha de nacimiento producen el MISMO
+# `id_alt_paciente` -- sin este fix, el segundo `registrar_puente` pisaba en
+# silencio la entrada del primero, y un ECG del primer paciente terminaba
+# resolviendo a la identidad del segundo.
+
+
+def test_dos_pacientes_homonimos_con_dni_distinto_no_mezclan_identidades(
+    resolutor: ResolutorClaves,
+) -> None:
+    # paciente A: DNI 11111111, "Juan Perez", 1980-01-01 -- llega primero
+    identidad_lab_a = IdentidadCruda(
+        nombre=SecretStr("Juan Perez"),
+        dni=SecretStr("11111111"),
+        fecha_nac=SecretStr("1980-01-01"),
+    )
+    resolver_claves(
+        identidad_lab_a, PEPPER_TEST, resolutor, id_documento="lab-a", etapa="pseudonimizacion"
+    )
+
+    # paciente B: DNI 22222222, TAMBIEN "Juan Perez", TAMBIEN 1980-01-01 -- homónimo
+    identidad_lab_b = IdentidadCruda(
+        nombre=SecretStr("Juan Perez"),
+        dni=SecretStr("22222222"),
+        fecha_nac=SecretStr("1980-01-01"),
+    )
+    resolver_claves(
+        identidad_lab_b, PEPPER_TEST, resolutor, id_documento="lab-b", etapa="pseudonimizacion"
+    )
+
+    # el ECG de A (sin DNI, solo nombre+fecha_nac) NO debe resolver a B ni a A:
+    # el id_alt_paciente es ambiguo, no hay forma segura de saber a cuál corresponde.
+    identidad_ecg_a = IdentidadCruda(nombre=SecretStr("Juan Perez"), fecha_nac=SecretStr("1980-01-01"))
+    with pytest.raises(ErrorParseo) as excinfo:
+        resolver_claves(
+            identidad_ecg_a, PEPPER_TEST, resolutor, id_documento="ecg-a", etapa="pseudonimizacion"
+        )
+
+    assert excinfo.value.codigo == CodigoErrorDocumento.CLAVE_PII_AMBIGUA
+    assert excinfo.value.etapa == "pseudonimizacion"
+
+
+def test_registrar_mismo_puente_dos_veces_es_idempotente_no_marca_ambiguo(
+    resolutor: ResolutorClaves,
+) -> None:
+    id_alt = generar_id_alt_paciente(PEPPER_TEST, "Juan Perez", "1980-01-01")
+    id_paciente = generar_id_paciente(PEPPER_TEST, "11111111")
+
+    # reprocesar el mismo laboratorio dos veces (mismo id_alt_paciente, mismo id_paciente)
+    resolutor.registrar_puente(id_alt, id_paciente)
+    resolutor.registrar_puente(id_alt, id_paciente)
+
+    assert resolutor.resolver(id_alt) == id_paciente
+
+
+def test_id_alt_paciente_ambiguo_nunca_vuelve_a_resolver_ni_con_tercer_registro(
+    resolutor: ResolutorClaves,
+) -> None:
+    id_alt = generar_id_alt_paciente(PEPPER_TEST, "Juan Perez", "1980-01-01")
+    id_paciente_a = generar_id_paciente(PEPPER_TEST, "11111111")
+    id_paciente_b = generar_id_paciente(PEPPER_TEST, "22222222")
+    id_paciente_c = generar_id_paciente(PEPPER_TEST, "33333333")
+
+    resolutor.registrar_puente(id_alt, id_paciente_a)
+    resolutor.registrar_puente(id_alt, id_paciente_b)  # conflicto -> ambiguo
+    assert resolutor.resolver(id_alt) is None
+
+    # un tercer registro (que "desempataría" 2 a 1 si se contara) tampoco lo destraba:
+    # una vez ambiguo, queda ambiguo permanentemente.
+    resolutor.registrar_puente(id_alt, id_paciente_a)
+    resolutor.registrar_puente(id_alt, id_paciente_a)
+    resolutor.registrar_puente(id_alt, id_paciente_c)
+    assert resolutor.resolver(id_alt) is None
+
+
+def test_resolver_claves_lanza_clave_pii_ambigua_no_no_resuelta(
+    resolutor: ResolutorClaves,
+) -> None:
+    identidad_lab_a = IdentidadCruda(
+        nombre=SecretStr("Juan Perez"),
+        dni=SecretStr("11111111"),
+        fecha_nac=SecretStr("1980-01-01"),
+    )
+    identidad_lab_b = IdentidadCruda(
+        nombre=SecretStr("Juan Perez"),
+        dni=SecretStr("22222222"),
+        fecha_nac=SecretStr("1980-01-01"),
+    )
+    resolver_claves(
+        identidad_lab_a, PEPPER_TEST, resolutor, id_documento="lab-a", etapa="pseudonimizacion"
+    )
+    resolver_claves(
+        identidad_lab_b, PEPPER_TEST, resolutor, id_documento="lab-b", etapa="pseudonimizacion"
+    )
+
+    identidad_ecg = IdentidadCruda(nombre=SecretStr("Juan Perez"), fecha_nac=SecretStr("1980-01-01"))
+    with pytest.raises(ErrorParseo) as excinfo:
+        resolver_claves(
+            identidad_ecg, PEPPER_TEST, resolutor, id_documento="ecg-a", etapa="pseudonimizacion"
+        )
+
+    assert excinfo.value.codigo == CodigoErrorDocumento.CLAVE_PII_AMBIGUA
+    assert excinfo.value.codigo != CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA

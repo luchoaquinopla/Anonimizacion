@@ -47,16 +47,60 @@ class ResolutorClaves:
     Implementación en memoria para PR5; el contrato (`registrar_puente` /
     `resolver`) es el que Fase 7 respalda con la tabla Postgres
     `vinculo_paciente`.
+
+    Homónimos y ambigüedad (fix post-PR5): `id_alt_paciente` se deriva SOLO
+    de nombre+fecha_nac (ver `claves.py`), no es un identificador único de
+    persona real. Dos pacientes reales distintos con el mismo nombre y la
+    misma fecha de nacimiento producen el MISMO `id_alt_paciente`. Si eso
+    pasa, `registrar_puente` NO sobrescribe en silencio: marca ese
+    `id_alt_paciente` como ambiguo, y un `id_alt_paciente` ambiguo nunca
+    vuelve a resolver (`resolver` devuelve `None` permanentemente para él,
+    incluso si un registro posterior "desempataría" -- no hay forma
+    automática segura de saber cuál `id_paciente` es el correcto sin
+    intervención humana). Registrar el mismo `id_alt_paciente` con el MISMO
+    `id_paciente` más de una vez (reprocesar el mismo laboratorio) es
+    idempotente y NO dispara ambigüedad.
+
+    Nota de diseño para Fase 7 (tabla Postgres `vinculo_paciente`, ver
+    design.md decisión Q1, tasks.md 7.1): la implementación que respalde
+    esta clase con una tabla real TIENE que preservar esta misma semántica
+    al persistir el puente -- por ejemplo, guardando múltiples filas
+    candidatas por `id_alt_paciente` con un flag `ambiguo` (o tabla de
+    conflictos separada), o una restricción/trigger que detecte en el
+    INSERT que ya existe una fila con el mismo `id_alt_paciente` pero
+    distinto `id_paciente` y marque ambigüedad en vez de pisar la fila
+    existente. Un simple `UPSERT ... ON CONFLICT (id_alt_paciente) DO
+    UPDATE` reintroduciría exactamente este bug (pisaría el puente
+    anterior en silencio) -- quien implemente PR6 no debe usar ese patrón
+    para esta tabla sin resolver primero la detección de conflicto.
     """
 
     def __init__(self) -> None:
         self._puentes: dict[str, str] = {}
+        self._ambiguos: set[str] = set()
 
     def registrar_puente(self, id_alt_paciente: str, id_paciente: str) -> None:
-        self._puentes[id_alt_paciente] = id_paciente
+        if id_alt_paciente in self._ambiguos:
+            return  # ya ambiguo -- permanece ambiguo, no hay vuelta atrás
+
+        existente = self._puentes.get(id_alt_paciente)
+        if existente is None:
+            self._puentes[id_alt_paciente] = id_paciente
+        elif existente != id_paciente:
+            # mismo id_alt_paciente, id_paciente distinto -> homónimos reales:
+            # no hay forma segura de saber cuál es el correcto, se marca ambiguo
+            # y se descarta cualquier candidato previo.
+            del self._puentes[id_alt_paciente]
+            self._ambiguos.add(id_alt_paciente)
+        # si existente == id_paciente: reprocesamiento idempotente, no-op
 
     def resolver(self, id_alt_paciente: str) -> str | None:
+        if id_alt_paciente in self._ambiguos:
+            return None
         return self._puentes.get(id_alt_paciente)
+
+    def es_ambiguo(self, id_alt_paciente: str) -> bool:
+        return id_alt_paciente in self._ambiguos
 
 
 def resolver_claves(
@@ -100,5 +144,9 @@ def resolver_claves(
                 id_alt_paciente=id_alt_paciente,
                 version_clave=VERSION_CLAVE_ACTUAL,
             )
+        if resolutor.es_ambiguo(id_alt_paciente):
+            # hay candidatos, pero son conflictivos (homónimos) -- reprocesar
+            # no lo arregla solo, a diferencia de CLAVE_PII_NO_RESUELTA.
+            raise ErrorParseo(CodigoErrorDocumento.CLAVE_PII_AMBIGUA, etapa=etapa)
 
     raise ErrorParseo(CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA, etapa=etapa)

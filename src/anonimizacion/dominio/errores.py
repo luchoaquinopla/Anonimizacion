@@ -16,6 +16,12 @@ class CodigoErrorDocumento(str, Enum):
     TIPO_NO_RECONOCIDO = "tipo_no_reconocido"
     PARSEO_INCOMPLETO = "parseo_incompleto"
     CLAVE_PII_NO_RESUELTA = "clave_pii_no_resuelta"
+    # Hay más de un `id_paciente` candidato para el mismo `id_alt_paciente`
+    # (homónimos: mismo nombre+fecha_nac, DNI distinto). A diferencia de
+    # CLAVE_PII_NO_RESUELTA (todavía no hay ningún puente, reprocesar más
+    # tarde puede resolverlo solo), esto requiere revisión manual --
+    # reprocesar no lo arregla.
+    CLAVE_PII_AMBIGUA = "clave_pii_ambigua"
 
 
 @dataclass(frozen=True)

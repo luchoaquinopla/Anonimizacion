@@ -40,4 +40,9 @@ def test_error_parseo_permite_etapa_distinta_de_parseo() -> None:
 
 def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
     codigos = {miembro.value for miembro in CodigoErrorDocumento}
-    assert codigos == {"tipo_no_reconocido", "parseo_incompleto", "clave_pii_no_resuelta"}
+    assert codigos == {
+        "tipo_no_reconocido",
+        "parseo_incompleto",
+        "clave_pii_no_resuelta",
+        "clave_pii_ambigua",
+    }
