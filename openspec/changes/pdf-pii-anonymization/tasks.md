@@ -51,13 +51,13 @@ Pydantic).
 
 ## Fase 2: Ingesta + Extracción
 
-- [ ] 2.1 Test + impl `src/anonimizacion/ingesta/artefacto.py` (`ArtefactoCrudo`: uri+sha256+formato)
-- [ ] 2.2 Test + impl `src/anonimizacion/ingesta/fuente.py` (`FuenteArtefacto` filesystem)
-- [ ] 2.3 Test + impl `src/anonimizacion/extraccion/texto_pymupdf.py` — spec pdf-text-extraction: texto nativo sin OCR, fallo explícito en PDF corrupto (fixtures lab/ECG sintéticas)
+- [x] 2.1 Test + impl `src/anonimizacion/ingesta/artefacto.py` (`ArtefactoCrudo`: uri+sha256+formato)
+- [x] 2.2 Test + impl `src/anonimizacion/ingesta/fuente.py` (`FuenteArtefacto` filesystem)
+- [x] 2.3 Test + impl `src/anonimizacion/extraccion/texto_pymupdf.py` — spec pdf-text-extraction: texto nativo sin OCR, fallo explícito en PDF corrupto (fixtures lab/ECG sintéticas)
 
 ## Fase 3: Detección de Tipo de Documento
 
-- [ ] 3.1 Test + impl `src/anonimizacion/deteccion/firmas/` (marcadores por tipo) y `detector_tipo.py` — spec document-type-detection: clasificación + `TIPO_NO_RECONOCIDO` sin abortar
+- [x] 3.1 Test + impl `src/anonimizacion/deteccion/firmas/` (marcadores por tipo) y `detector_tipo.py` — spec document-type-detection: clasificación + `TIPO_NO_RECONOCIDO` sin abortar
 
 ## Fase 4: Parseo
 
