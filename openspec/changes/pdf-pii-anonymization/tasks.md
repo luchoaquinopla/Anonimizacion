@@ -99,8 +99,8 @@ Pydantic).
 
 ## Fase 10: Observabilidad
 
-- [ ] 10.1 Test + impl `observabilidad/bitacora_segura.py` — whitelist de campos + filtro de redacción (property test: PII nunca en salida)
-- [ ] 10.2 Impl `observabilidad/metricas.py`
+- [x] 10.1 Test + impl `observabilidad/bitacora_segura.py` — whitelist de campos + filtro de redacción (property test: PII nunca en salida)
+- [x] 10.2 Impl `observabilidad/metricas.py`
 
 ## Fase 11: Integración / E2E
 
