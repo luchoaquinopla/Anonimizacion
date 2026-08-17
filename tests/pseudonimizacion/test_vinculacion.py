@@ -34,9 +34,9 @@ def test_exactamente_siete_dias_entra_al_mismo_episodio() -> None:
         _doc("d2", "pac-1", date(2024, 1, 8)),  # exactamente 7 días de la ancla
     ]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] == episodios["d2"]
+    assert resultado.id_episodio_por_documento["d1"] == resultado.id_episodio_por_documento["d2"]
 
 
 def test_exactamente_ocho_dias_abre_episodio_nuevo() -> None:
@@ -45,9 +45,9 @@ def test_exactamente_ocho_dias_abre_episodio_nuevo() -> None:
         _doc("d2", "pac-1", date(2024, 1, 9)),  # exactamente 8 días de la ancla
     ]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] != episodios["d2"]
+    assert resultado.id_episodio_por_documento["d1"] != resultado.id_episodio_por_documento["d2"]
 
 
 def test_empate_de_fecha_ambos_entran_al_mismo_episodio() -> None:
@@ -56,9 +56,9 @@ def test_empate_de_fecha_ambos_entran_al_mismo_episodio() -> None:
         _doc("d2", "pac-1", date(2024, 1, 1), tipo="ecg"),
     ]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] == episodios["d2"]
+    assert resultado.id_episodio_por_documento["d1"] == resultado.id_episodio_por_documento["d2"]
 
 
 def test_ancla_no_se_desplaza_dentro_de_la_ventana_evita_deriva() -> None:
@@ -72,10 +72,10 @@ def test_ancla_no_se_desplaza_dentro_de_la_ventana_evita_deriva() -> None:
         _doc("d3", "pac-1", date(2024, 1, 13)),
     ]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] == episodios["d2"]
-    assert episodios["d3"] != episodios["d1"]  # NO deriva vía d2
+    assert resultado.id_episodio_por_documento["d1"] == resultado.id_episodio_por_documento["d2"]
+    assert resultado.id_episodio_por_documento["d3"] != resultado.id_episodio_por_documento["d1"]  # NO deriva vía d2
 
 
 def test_pacientes_distintos_nunca_comparten_episodio() -> None:
@@ -84,17 +84,17 @@ def test_pacientes_distintos_nunca_comparten_episodio() -> None:
         _doc("d2", "pac-2", date(2024, 1, 1)),
     ]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] != episodios["d2"]
+    assert resultado.id_episodio_por_documento["d1"] != resultado.id_episodio_por_documento["d2"]
 
 
 def test_id_episodio_coincide_con_generar_id_episodio_de_claves() -> None:
     documentos = [_doc("d1", "pac-1", date(2024, 1, 1))]
 
-    episodios = vincular_episodios(documentos, PEPPER_TEST)
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
 
-    assert episodios["d1"] == generar_id_episodio(PEPPER_TEST, "pac-1", date(2024, 1, 1))
+    assert resultado.id_episodio_por_documento["d1"] == generar_id_episodio(PEPPER_TEST, "pac-1", date(2024, 1, 1))
 
 
 def test_orden_de_entrada_no_afecta_el_resultado_se_ordena_por_fecha() -> None:
@@ -105,10 +105,10 @@ def test_orden_de_entrada_no_afecta_el_resultado_se_ordena_por_fecha() -> None:
     ]
     documentos_desordenados = [documentos_en_orden[2], documentos_en_orden[0], documentos_en_orden[1]]
 
-    episodios_ordenado = vincular_episodios(documentos_en_orden, PEPPER_TEST)
-    episodios_desordenado = vincular_episodios(documentos_desordenados, PEPPER_TEST)
+    resultado_ordenado = vincular_episodios(documentos_en_orden, PEPPER_TEST)
+    resultado_desordenado = vincular_episodios(documentos_desordenados, PEPPER_TEST)
 
-    assert episodios_ordenado == episodios_desordenado
+    assert resultado_ordenado == resultado_desordenado
 
 
 def test_es_determinista_y_recomputable_mismo_lote_mismo_resultado() -> None:
@@ -121,3 +121,33 @@ def test_es_determinista_y_recomputable_mismo_lote_mismo_resultado() -> None:
     segundo = vincular_episodios(documentos, PEPPER_TEST)
 
     assert primero == segundo
+
+
+def test_metadata_por_episodio_expone_id_paciente_y_fecha_ancla() -> None:
+    # fix post-PR9: `escribir_episodio` (salida/destinos/postgres.py) necesita
+    # `id_paciente` + `fecha_ancla` por episodio, no solo el mapeo documento->episodio.
+    documentos = [
+        _doc("d1", "pac-1", date(2024, 1, 1)),
+        _doc("d2", "pac-1", date(2024, 1, 5)),  # mismo episodio que d1 (ancla=1/1)
+    ]
+
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
+
+    id_episodio = resultado.id_episodio_por_documento["d1"]
+    assert id_episodio == resultado.id_episodio_por_documento["d2"]
+    metadata = resultado.metadata_por_episodio[id_episodio]
+    assert metadata.id_paciente == "pac-1"
+    assert metadata.fecha_ancla == date(2024, 1, 1)  # la ancla, no la fecha de d2
+
+
+def test_metadata_por_episodio_una_entrada_por_episodio_unico_no_por_documento() -> None:
+    documentos = [
+        _doc("d1", "pac-1", date(2024, 1, 1)),
+        _doc("d2", "pac-1", date(2024, 1, 5)),  # mismo episodio que d1
+        _doc("d3", "pac-1", date(2024, 1, 20)),  # episodio nuevo
+    ]
+
+    resultado = vincular_episodios(documentos, PEPPER_TEST)
+
+    assert len(resultado.metadata_por_episodio) == 2  # 2 episodios, no 3 documentos
+    assert set(resultado.metadata_por_episodio) == set(resultado.id_episodio_por_documento.values())

@@ -21,6 +21,7 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.ejecutor import BACKOFF_SEGUNDOS, MAX_REINTENTOS, EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
+from anonimizacion.pseudonimizacion.vinculacion import MetadataEpisodio, ResultadoVinculacion
 
 PEPPER = b"pepper-de-test-no-usar-en-produccion"
 
@@ -45,8 +46,21 @@ def _documento(id_paciente_sufijo: str, fecha: date = date(2026, 1, 10)) -> Docu
 class _EscritorFake:
     escritos: list[RegistroAnonimizado]
     fallar_veces: int = 0
+    episodios_escritos: list[str] = None  # type: ignore[assignment]
+    orden_llamadas: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.episodios_escritos is None:
+            self.episodios_escritos = []
+        if self.orden_llamadas is None:
+            self.orden_llamadas = []
+
+    def escribir_episodio(self, *, id_episodio: str, id_paciente: str, fecha_ancla) -> None:
+        self.orden_llamadas.append(f"episodio:{id_episodio}")
+        self.episodios_escritos.append(id_episodio)
 
     def escribir_registro(self, registro: RegistroAnonimizado) -> None:
+        self.orden_llamadas.append(f"registro:{registro.id_episodio}")
         if self.fallar_veces > 0:
             self.fallar_veces -= 1
             raise ConnectionError("fallo transitorio simulado de DB")
@@ -88,9 +102,17 @@ def _construir_ejecutor(
     dormir = dormir or _DormirFake()
 
     if vincular_episodios is None:
-        vincular_episodios = lambda documentos, pepper: {  # noqa: E731
-            d.id_documento: f"episodio-{d.id_paciente}" for d in documentos
-        }
+
+        def vincular_episodios(documentos, pepper):  # noqa: ANN001, ANN201
+            id_episodio_por_documento = {d.id_documento: f"episodio-{d.id_paciente}" for d in documentos}
+            metadata_por_episodio = {
+                f"episodio-{d.id_paciente}": MetadataEpisodio(id_paciente=d.id_paciente, fecha_ancla=d.fecha_estudio)
+                for d in documentos
+            }
+            return ResultadoVinculacion(
+                id_episodio_por_documento=id_episodio_por_documento,
+                metadata_por_episodio=metadata_por_episodio,
+            )
     if construir_registro is None:
         construir_registro = lambda documento, claves, *, id_episodio, pepper, motor_pii=None: RegistroAnonimizado(  # noqa: E731
             id_paciente=claves.id_paciente,
@@ -250,7 +272,14 @@ def test_fallo_de_un_documento_no_impide_vincular_episodios_de_los_demas() -> No
 
     def vincular_episodios(documentos, pepper):
         llamados_con.extend(documentos)
-        return {d.id_documento: f"episodio-{d.id_paciente}" for d in documentos}
+        id_episodio_por_documento = {d.id_documento: f"episodio-{d.id_paciente}" for d in documentos}
+        metadata_por_episodio = {
+            f"episodio-{d.id_paciente}": MetadataEpisodio(id_paciente=d.id_paciente, fecha_ancla=d.fecha_estudio)
+            for d in documentos
+        }
+        return ResultadoVinculacion(
+            id_episodio_por_documento=id_episodio_por_documento, metadata_por_episodio=metadata_por_episodio
+        )
 
     items = [
         ItemLote(id_documento="doc-1", artefacto=_artefacto("uno")),
@@ -289,6 +318,48 @@ def test_error_transitorio_en_la_escritura_de_salida_tambien_se_reintenta() -> N
     assert len(escritor.escritos) == 1
     assert isinstance(resultados[0], ExitoDocumento)
     assert dormir.llamadas == [BACKOFF_SEGUNDOS[0]]
+
+
+def test_escribe_episodio_antes_del_registro_y_solo_una_vez_por_episodio_unico() -> None:
+    # fix post-PR9: `resultado_laboratorio`/`medicion_ecg`/`medicion_eco`/
+    # `texto_seccion_eco` son FK contra `episodio.id_episodio` -- si
+    # `escribir_episodio` no se llama ANTES de `escribir_registro`, la
+    # escritura del registro viola la FK (`ForeignKeyViolation` en Postgres
+    # real). Acá se prueba con dos documentos del MISMO episodio: el episodio
+    # debe escribirse UNA sola vez, antes que cualquiera de los dos registros.
+    items = [
+        ItemLote(id_documento="doc-1", artefacto=_artefacto("uno")),
+        ItemLote(id_documento="doc-2", artefacto=_artefacto("dos")),
+    ]
+
+    def extraer(artefacto):
+        return _documento(artefacto.uri)
+
+    def vincular_episodios(documentos, pepper):
+        # ambos documentos comparten el mismo episodio (mismo id_paciente/ancla)
+        id_episodio_por_documento = {d.id_documento: "episodio-compartido" for d in documentos}
+        metadata_por_episodio = {
+            "episodio-compartido": MetadataEpisodio(id_paciente="pac-compartido", fecha_ancla=date(2026, 1, 10))
+        }
+        return ResultadoVinculacion(
+            id_episodio_por_documento=id_episodio_por_documento, metadata_por_episodio=metadata_por_episodio
+        )
+
+    ejecutor, escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=extraer,
+        resolver_claves=lambda *a, **k: ClavesPaciente(id_paciente="pac-compartido", id_alt_paciente=None, version_clave=1),
+        vincular_episodios=vincular_episodios,
+    )
+
+    resultados = ejecutor.procesar_lote(items)
+
+    assert all(isinstance(r, ExitoDocumento) for r in resultados)
+    # el episodio se escribió UNA sola vez, no una por documento
+    assert escritor.episodios_escritos == ["episodio-compartido"]
+    # y ANTES de cualquiera de los dos registros que lo referencian
+    assert escritor.orden_llamadas[0] == "episodio:episodio-compartido"
+    assert escritor.orden_llamadas.count("episodio:episodio-compartido") == 1
+    assert escritor.orden_llamadas[1:] == ["registro:episodio-compartido", "registro:episodio-compartido"]
 
 
 def test_lote_vacio_no_falla() -> None:

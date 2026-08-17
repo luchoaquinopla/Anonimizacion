@@ -39,7 +39,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -55,7 +55,7 @@ from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pii.politica import clasificar as _clasificar_real
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
 from anonimizacion.pseudonimizacion.resolutor_claves import resolver_claves as _resolver_claves_real
-from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular
+from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, ResultadoVinculacion
 from anonimizacion.pseudonimizacion.vinculacion import vincular_episodios as _vincular_episodios_real
 from anonimizacion.salida.constructor_registro import construir_registro as _construir_registro_real
 
@@ -71,9 +71,18 @@ MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
 
 
 class DestinoEscritura(Protocol):
-    """Lo único que el ejecutor necesita de un destino (`salida/destinos/postgres.py` lo implementa)."""
+    """Lo único que el ejecutor necesita de un destino (`salida/destinos/postgres.py` lo implementa).
+
+    `escribir_episodio` (fix post-PR9): la fila `episodio` es padre por FK de
+    `resultado_laboratorio`/`medicion_ecg`/`medicion_eco`/`texto_seccion_eco`
+    (ver `salida/modelos_orm.py`) -- el ejecutor debe escribirla ANTES de
+    llamar `escribir_registro` para cualquier documento de ese episodio, o
+    la escritura del registro viola la FK (`ForeignKeyViolation` en Postgres
+    real). Ver docstring de `_emitir` para el detalle del fix.
+    """
 
     def escribir_registro(self, registro: RegistroAnonimizado) -> None: ...
+    def escribir_episodio(self, *, id_episodio: str, id_paciente: str, fecha_ancla: date) -> None: ...
 
 
 class DestinoCuarentena(Protocol):
@@ -153,7 +162,7 @@ class EjecutorPipeline:
         detectar_tipo: Callable[[TextoExtraido], TipoDocumento] = _detectar_tipo_real,
         obtener_parseador: Callable[[TipoDocumento], ParseadorDocumento] = _obtener_parseador_real,
         resolver_claves: Callable[..., ClavesPaciente] = _resolver_claves_real,
-        vincular_episodios: Callable[[list[DocumentoParaVincular], bytes], dict[str, str]] = (
+        vincular_episodios: Callable[[list[DocumentoParaVincular], bytes], ResultadoVinculacion] = (
             _vincular_episodios_real
         ),
         construir_registro: Callable[..., RegistroAnonimizado] = _construir_registro_real,
@@ -183,12 +192,20 @@ class EjecutorPipeline:
             except ErrorParseo as excepcion:
                 resultados.append(self._a_fallo(item.id_documento, excepcion))
 
-        episodios = self._vincular_episodios_resueltos(resueltos)
+        resultado_vinculacion = self._vincular_episodios_resueltos(resueltos)
+        # episodios ya escritos EN ESTE LOTE (fix post-PR9): `escribir_episodio`
+        # es idempotente del lado del destino (ver `EscritorPostgres.
+        # escribir_episodio`), pero este set evita el round-trip redundante a
+        # DB para cada documento adicional que comparte episodio, y mantiene
+        # la semántica "una escritura por episodio único" que pide el fix.
+        episodios_escritos: set[str] = set()
 
         for resuelto in resueltos:
-            id_episodio = episodios[resuelto.id_documento]
+            id_episodio = resultado_vinculacion.id_episodio_por_documento[resuelto.id_documento]
             try:
-                resultados.append(self._emitir(resuelto, id_episodio))
+                resultados.append(
+                    self._emitir(resuelto, id_episodio, resultado_vinculacion, episodios_escritos)
+                )
             except ErrorParseo as excepcion:
                 resultados.append(self._a_fallo(resuelto.id_documento, excepcion))
 
@@ -226,9 +243,9 @@ class EjecutorPipeline:
         )
         return _DocumentoResuelto(id_documento=item.id_documento, documento=documento, claves=claves)
 
-    def _vincular_episodios_resueltos(self, resueltos: list[_DocumentoResuelto]) -> dict[str, str]:
+    def _vincular_episodios_resueltos(self, resueltos: list[_DocumentoResuelto]) -> ResultadoVinculacion:
         if not resueltos:
-            return {}
+            return ResultadoVinculacion(id_episodio_por_documento={}, metadata_por_episodio={})
         documentos = [
             DocumentoParaVincular(
                 id_documento=r.id_documento,
@@ -240,7 +257,39 @@ class EjecutorPipeline:
         ]
         return self._vincular_episodios(documentos, self._pepper)
 
-    def _emitir(self, resuelto: _DocumentoResuelto, id_episodio: str) -> ExitoDocumento:
+    def _emitir(
+        self,
+        resuelto: _DocumentoResuelto,
+        id_episodio: str,
+        resultado_vinculacion: ResultadoVinculacion,
+        episodios_escritos: set[str],
+    ) -> ExitoDocumento:
+        """Escribe el episodio (si todavía no se escribió en este lote) y luego el registro.
+
+        Fix post-PR9: `resultado_laboratorio`/`medicion_ecg`/`medicion_eco`/
+        `texto_seccion_eco` son FK contra `episodio.id_episodio` (ver
+        `salida/modelos_orm.py`) -- escribir el registro sin que exista antes
+        la fila `episodio` viola esa FK (`ForeignKeyViolation` en Postgres
+        real). `escribir_episodio` se llama ANTES de `escribir_registro`,
+        envuelta en la misma política de reintentos, y solo una vez por
+        `id_episodio` (idempotente del lado del destino de todos modos, ver
+        `EscritorPostgres.escribir_episodio`). Si la escritura del episodio
+        falla de forma transitoria y agota reintentos, `episodios_escritos`
+        NO se marca -- el próximo documento del mismo episodio la reintenta,
+        preservando el aislamiento de fallo por documento (spec
+        `batch-processing`).
+        """
+        if id_episodio not in episodios_escritos:
+            metadata = resultado_vinculacion.metadata_por_episodio[id_episodio]
+            _ejecutar_con_reintentos(
+                lambda: self._destino.escribir_episodio(
+                    id_episodio=id_episodio, id_paciente=metadata.id_paciente, fecha_ancla=metadata.fecha_ancla
+                ),
+                etapa=Etapa.SALIDA.value,
+                dormir=self._dormir,
+            )
+            episodios_escritos.add(id_episodio)
+
         registro = self._construir_registro(
             resuelto.documento,
             resuelto.claves,

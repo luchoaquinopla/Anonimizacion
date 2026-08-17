@@ -49,15 +49,46 @@ class DocumentoParaVincular:
     tipo_documento: str
 
 
-def vincular_episodios(
-    documentos: list[DocumentoParaVincular], pepper: bytes
-) -> dict[str, str]:
+@dataclass(frozen=True)
+class MetadataEpisodio:
+    """`id_paciente` + `fecha_ancla` de un episodio -- lo que
+    `salida/destinos/postgres.py::EscritorPostgres.escribir_episodio` necesita
+    para persistir la fila `episodio` (fix post-PR9, ver
+    `sdd/pdf-pii-anonymization/apply-progress`)."""
+
+    id_paciente: str
+    fecha_ancla: date
+
+
+@dataclass(frozen=True)
+class ResultadoVinculacion:
+    """Resultado de `vincular_episodios`.
+
+    `id_episodio_por_documento` es el contrato original (Fase 6-9): mapeo
+    `id_documento -> id_episodio`, consumido por `pipeline/ejecutor.py` para
+    saber qué episodio le corresponde a cada documento resuelto.
+
+    `metadata_por_episodio` es nuevo (fix post-PR9): expone `id_paciente` +
+    `fecha_ancla` por episodio ÚNICO (una entrada por episodio, no por
+    documento) -- sin esto, `pipeline/ejecutor.py` no tenía forma de saber
+    qué `fecha_ancla` pasarle a `EscritorPostgres.escribir_episodio` antes de
+    emitir las filas hijas (`resultado_laboratorio`/`medicion_ecg`/
+    `medicion_eco`/`texto_seccion_eco`), que son FK contra `episodio` --
+    ver docstring del módulo, apartado "por qué pasa" en apply-progress.
+    """
+
+    id_episodio_por_documento: dict[str, str]
+    metadata_por_episodio: dict[str, MetadataEpisodio]
+
+
+def vincular_episodios(documentos: list[DocumentoParaVincular], pepper: bytes) -> ResultadoVinculacion:
     """Asigna `id_episodio` a cada `id_documento`, clusterizando por ancla ±7 días por paciente."""
     por_paciente: dict[str, list[DocumentoParaVincular]] = {}
     for documento in documentos:
         por_paciente.setdefault(documento.id_paciente, []).append(documento)
 
-    resultado: dict[str, str] = {}
+    id_episodio_por_documento: dict[str, str] = {}
+    metadata_por_episodio: dict[str, MetadataEpisodio] = {}
     for id_paciente, documentos_paciente in por_paciente.items():
         ordenados = sorted(
             documentos_paciente,
@@ -68,8 +99,16 @@ def vincular_episodios(
         for documento in ordenados:
             if fecha_ancla is None or (documento.fecha_estudio - fecha_ancla).days > _VENTANA_DIAS:
                 fecha_ancla = documento.fecha_estudio
-            resultado[documento.id_documento] = generar_id_episodio(
-                pepper, id_paciente, fecha_ancla
+            id_episodio = generar_id_episodio(pepper, id_paciente, fecha_ancla)
+            id_episodio_por_documento[documento.id_documento] = id_episodio
+            # `setdefault`: el primer documento que abre el episodio fija su
+            # metadata; documentos siguientes absorbidos al mismo episodio no
+            # deben pisarla (misma `fecha_ancla` de todos modos, por construcción).
+            metadata_por_episodio.setdefault(
+                id_episodio, MetadataEpisodio(id_paciente=id_paciente, fecha_ancla=fecha_ancla)
             )
 
-    return resultado
+    return ResultadoVinculacion(
+        id_episodio_por_documento=id_episodio_por_documento,
+        metadata_por_episodio=metadata_por_episodio,
+    )
