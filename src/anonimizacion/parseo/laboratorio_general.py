@@ -27,6 +27,17 @@ Nombre: X      Fecha: Y" en una sola línea), cada campo capturado se trunca
 en el primer separador de 2+ espacios (`_primer_segmento`, misma convención
 que `parseo/ecg_mortara.py`) para no arrastrar el campo siguiente como parte
 del valor.
+
+Fix post-PR9 #4 (recalibración lab/eco contra 3 documentos reales, ver
+`sdd/pdf-pii-anonymization/apply-progress`): calibrado contra un único
+documento real de laboratorio, tres variantes de etiqueta no contempladas
+por los regex anteriores: `F.Nacimiento :` (espacio antes de los dos
+puntos), `Médico:` (sin la palabra "derivante") y `Hora de Extracción:`
+(con "de" en el medio). `_CAMPOS_HEADER` se ajustó para tolerar espacio
+opcional antes de `:` y palabras intermedias opcionales, sin dejar de
+matchear las variantes originales (los cambios son estrictamente más
+permisivos, backward compatible). Calibrado contra una sola muestra —
+podría no generalizar a otras variantes de formato no vistas.
 """
 
 from __future__ import annotations
@@ -50,12 +61,12 @@ _SECCIONES = ("HEMATOLOGIA", "HEMOSTASIA", "QUIMICA CLINICA", "IONOGRAMA")
 _CAMPOS_HEADER = {
     "nombre": r"Apellido y Nombre:\s*(.+)",
     "dni": r"DNI:\s*(.+)",
-    "fecha_nac": r"F\.Nacimiento:\s*(.+)",
+    "fecha_nac": r"F\.Nacimiento\s*:\s*(.+)",
     "edad": r"Edad:\s*(.+)",
-    "medico_derivante": r"M[eé]dico derivante:\s*(.+)",
+    "medico_derivante": r"M[eé]dico(?:\s+derivante)?:\s*(.+)",
     "numero_peticion": r"N[ºo°]\s*Petici[oó]n:\s*(.+)",
     "fecha": r"Fecha:\s*(.+)",
-    "hora_extraccion": r"Hora Extracci[oó]n:\s*(.+)",
+    "hora_extraccion": r"Hora(?:\s+de)?\s+Extracci[oó]n:\s*(.+)",
     "origen": r"Origen:\s*(.+)",
 }
 

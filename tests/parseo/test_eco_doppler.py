@@ -18,7 +18,7 @@ _DOCUMENTO_COMPLETO = (
     "Paciente: Fernandez Marta\n"
     "Documento: 28999111\n"
     "Nº Estudio: EE-2024-01\n"
-    "Fecha: 20/03/2024\n"
+    "Fecha Estudio: 20/03/2024\n"
     "Medico Solicitante: Dr. Ruiz\n"
     "Peso: 68\n"
     "Altura: 165\n"
@@ -36,13 +36,13 @@ _DOCUMENTO_COMPLETO = (
     "MOTILIDAD SEGMENTARIA\n"
     "Motilidad conservada en todos los segmentos.\n"
     "\n"
-    "VALVULAS\n"
+    "VALVULAS CARDIACAS\n"
     "Valvulas de aspecto y funcion normal.\n"
     "\n"
     "PERICARDIO\n"
     "Sin derrame pericardico.\n"
     "\n"
-    "FLUJOS DOPPLER\n"
+    "EVALUACION DE FLUJOS POR DOPPLER\n"
     "Flujos dentro de parametros normales.\n"
     "\n"
     "CONCLUSIONES\n"
@@ -72,7 +72,7 @@ def test_secciones_de_texto_no_se_mezclan_con_medidas() -> None:
     texto = TextoExtraido(paginas=(_DOCUMENTO_COMPLETO,))
     resultado = ParseadorEcoDoppler().parsear(texto)
     seccion_valvulas = next(
-        s for s in resultado.contenido.secciones_texto if s.nombre == "VALVULAS"
+        s for s in resultado.contenido.secciones_texto if s.nombre == "VALVULAS CARDIACAS"
     )
     assert "normal" in seccion_valvulas.texto.lower()
 
@@ -91,9 +91,11 @@ def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> N
     separador de 2+ espacios para no arrastrar el campo vecino de la misma
     fila visual.
     """
-    pagina_sin_ordenar = "Paciente:\nFecha:\nMEDIDAS\nAO | 28 | mm\nFernandez Marta\n20/03/2024\n"
+    pagina_sin_ordenar = (
+        "Paciente:\nFecha Estudio:\nMEDIDAS\nAO | 28 | mm\nFernandez Marta\n20/03/2024\n"
+    )
     pagina_ordenada = (
-        "Paciente: Fernandez Marta      Fecha: 20/03/2024\n"
+        "Paciente: Fernandez Marta      Fecha Estudio: 20/03/2024\n"
         "MEDIDAS\nAO | 28 | mm\n"
     )
     texto = TextoExtraido(paginas=(pagina_sin_ordenar,), paginas_ordenadas=(pagina_ordenada,))
@@ -102,3 +104,173 @@ def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> N
 
     assert resultado.identidad.nombre.get_secret_value() == "Fernandez Marta"
     assert resultado.fecha_estudio.isoformat() == "2024-03-20"
+
+
+def test_header_real_con_paciente_mayusculas_y_fecha_estudio() -> None:
+    """Fix post-PR9 #4: el documento real trae `PACIENTE:` (todo en
+    mayúsculas) y `Fecha Estudio:` (nunca `Fecha:` a secas), además de
+    `N° ESTUDIO:` en mayúsculas y `S.C.` sin dos puntos.
+    """
+    header_real = (
+        "Fecha Estudio: 20/03/2024 PACIENTE: Fernandez Marta      Documento: 28999111\n"
+        "Edad: 50 años      N° ESTUDIO: 12345      Peso: 70 kg   Altura: 170 cm   S.C.  1.80 m2\n"
+        "Médico Solicitante: Dr. Ruiz\n"
+        "\nMEDIDAS\nAO | 28 | mm\n"
+    )
+    texto = TextoExtraido(paginas=(header_real,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert resultado.identidad.nombre.get_secret_value() == "Fernandez Marta"
+    assert resultado.fecha_estudio.isoformat() == "2024-03-20"
+    assert resultado.identidad.ids_internos[0].get_secret_value() == "12345"
+    assert resultado.adicionales["superficie_corporal"] == "1.80 m2"
+    assert resultado.adicionales["edad"] == "50 años"
+
+
+_HEADER_MINIMO = (
+    "Paciente: Prueba Sintetica\n"
+    "Documento: 11222333\n"
+    "Fecha Estudio: 05/06/2025\n"
+)
+
+
+def test_parsea_cuerpo_de_medidas_formato_dos_columnas_sin_pipes() -> None:
+    """Fix post-PR9 #4: el documento real trae las medidas en una tabla de
+    dos sub-columnas separadas por 2+ espacios (no `|`), cada una con
+    nombre + valor + rango de referencia opcional (rango descartado, no hay
+    campo en `MedidaEco` para guardarlo). Una fila puede traer solo
+    nombre + valor sin rango (p. ej. "VD    NORMAL").
+
+    Calibrado contra una sola muestra real -- el separador de columna
+    (`\\s{2,}`) y la heurística nombre/valor/rango podrían no generalizar
+    a layouts con más o menos columnas.
+    """
+    pagina = (
+        _HEADER_MINIMO
+        + "\n"
+        + "MEDIDAS\n"
+        + "         MEDIDAS    VALOR       VALOR NORMAL            MEDIDAS    VALOR     VALOR NORMAL\n"
+        + "           XX           10 mm        < 20 mm                YY        5 mm      < 9 mm\n"
+        + "             ZZ         50 %       > 25%                 WW         NORMAL\n"
+    )
+    texto = TextoExtraido(paginas=(pagina,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    medidas = {m.nombre: m for m in resultado.contenido.medidas}
+    assert set(medidas) == {"XX", "YY", "ZZ", "WW"}
+    assert medidas["XX"].valor == "10"
+    assert medidas["XX"].unidad == "mm"
+    assert medidas["YY"].valor == "5"
+    assert medidas["YY"].unidad == "mm"
+    assert medidas["ZZ"].valor == "50"
+    assert medidas["ZZ"].unidad == "%"
+    assert medidas["WW"].valor == "NORMAL"
+    assert medidas["WW"].unidad is None
+
+
+def test_secciones_anidadas_con_subsecciones_y_dos_puntos() -> None:
+    """Fix post-PR9 #4: `MOTILIDAD SEGMENTARIA:` (con dos puntos) matchea
+    igual que la variante sin dos puntos; `VALVULAS CARDIACAS` y
+    `EVALUACION DE FLUJOS POR DOPPLER` traen subsecciones anidadas
+    (AORTICA/MITRAL/... y FLUJO AORTICO/...) que se representan como
+    `SeccionTextoEco` propias con nombre compuesto `"padre - hija"` -- ver
+    docstring de `_parsear_cuerpo` para la decisión de diseño (el modelo
+    `SeccionTextoEco` es plano, sin jerarquía nativa).
+    """
+    pagina = (
+        _HEADER_MINIMO
+        + "\n"
+        + "MOTILIDAD SEGMENTARIA:\n"
+        + "Sin alteraciones.\n"
+        + "\n"
+        + "VALVULAS CARDIACAS\n"
+        + "AORTICA\n"
+        + "Valva tricuspide.\n"
+        + "MITRAL\n"
+        + "Valva normal.\n"
+        + "\n"
+        + "AURICULAS\n"
+        + "IZQUIERDA:\n"
+        + "Tamano normal.\n"
+        + "DERECHA:\n"
+        + "Tamano normal.\n"
+        + "\n"
+        + "EVALUACION DE FLUJOS POR DOPPLER\n"
+        + "FLUJO AORTICO\n"
+        + "Sin gradiente significativo.\n"
+        + "\n"
+        + "CONCLUSIONES\n"
+        + "Estudio normal.\n"
+    )
+    texto = TextoExtraido(paginas=(pagina,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    secciones = {s.nombre: s.texto for s in resultado.contenido.secciones_texto}
+    assert secciones["MOTILIDAD SEGMENTARIA"] == "Sin alteraciones."
+    assert secciones["VALVULAS CARDIACAS - AORTICA"] == "Valva tricuspide."
+    assert secciones["VALVULAS CARDIACAS - MITRAL"] == "Valva normal."
+    assert secciones["AURICULAS - IZQUIERDA"] == "Tamano normal."
+    assert secciones["AURICULAS - DERECHA"] == "Tamano normal."
+    assert secciones["EVALUACION DE FLUJOS POR DOPPLER - FLUJO AORTICO"] == (
+        "Sin gradiente significativo."
+    )
+    assert secciones["CONCLUSIONES"] == "Estudio normal."
+
+
+def test_firma_heuristica_sin_etiqueta_firma_detecta_nombre_y_matricula() -> None:
+    """Fix post-PR9 #4: el documento real NO trae la etiqueta "Firma:" -- el
+    nombre del médico informante aparece en una línea propia en mayúsculas
+    y, en una línea posterior (no necesariamente adyacente), aparece
+    "Matrícula <letra> <número>". Heurística: la última línea "nombre-like"
+    (todo mayúsculas, 2+ palabras) vista ANTES de la línea de matrícula se
+    usa como nombre de la firma.
+    """
+    pagina = (
+        _HEADER_MINIMO
+        + "\n"
+        + "CONCLUSIONES\n"
+        + "Estudio normal.\n"
+        + "\n"
+        + "MEDICO DE PRUEBA APELLIDO\n"
+        + "\n"
+        + "Matricula W 6707\n"
+        + "\n"
+        + "DIAGNOSTICO POR IMAGENES\n"
+    )
+    texto = TextoExtraido(paginas=(pagina,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert resultado.contenido.firma is not None
+    assert resultado.contenido.firma.nombre == "MEDICO DE PRUEBA APELLIDO"
+    assert resultado.contenido.firma.matricula == "W 6707"
+    # La línea de nombre y la línea "Matricula ..." no deben quedar mezcladas
+    # con el texto de CONCLUSIONES.
+    conclusiones = next(
+        s for s in resultado.contenido.secciones_texto if s.nombre == "CONCLUSIONES"
+    )
+    assert conclusiones.texto == "Estudio normal."
+
+
+def test_firma_heuristica_sin_candidato_de_nombre_queda_en_none() -> None:
+    """Si aparece una línea de matrícula pero nunca hubo una línea
+    nombre-like previa (todo mayúsculas, 2+ palabras) que pudiera ser el
+    nombre del médico, es preferible dejar `firma=None` a extraer un
+    nombre incorrecto (podría pseudonimizar al médico equivocado).
+    """
+    pagina = (
+        _HEADER_MINIMO
+        + "\n"
+        + "CONCLUSIONES\n"
+        + "Estudio normal.\n"
+        + "\n"
+        + "Matricula W 6707\n"
+    )
+    texto = TextoExtraido(paginas=(pagina,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert resultado.contenido.firma is None

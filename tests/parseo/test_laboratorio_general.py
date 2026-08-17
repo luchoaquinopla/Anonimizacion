@@ -100,6 +100,35 @@ def test_header_ausente_lanza_error_parseo() -> None:
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
 
 
+def test_header_real_con_espacio_antes_de_dos_puntos_y_etiquetas_alternativas() -> None:
+    """Fix post-PR9 #4 (recalibración lab/eco contra 3 documentos reales):
+    el documento real trae `F.Nacimiento :` (espacio antes de los dos
+    puntos), `Médico:` (sin la palabra "derivante") y `Hora de Extracción:`
+    (con la palabra "de" en el medio). Sin este fix, `fecha_nac` nunca se
+    captura y el puente `id_alt_paciente` hacia el ECG nunca se arma.
+    """
+    header_real = (
+        "Apellido y Nombre: Perez Juan\n"
+        "DNI: 30111222\n"
+        "F.Nacimiento : 01/05/1980\n"
+        "Edad: 44\n"
+        "Médico: Dr. Gomez\n"
+        "Nº Petición: 987654\n"
+        "Fecha: 10/01/2024\n"
+        "Hora de Extracción: 08:30\n"
+        "Origen: Guardia\n"
+    )
+    texto = TextoExtraido(
+        paginas=(header_real + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert resultado.identidad.fecha_nac.get_secret_value() == "1980-05-01"
+    assert resultado.adicionales["medico_derivante"] == "Dr. Gomez"
+    assert resultado.adicionales["hora_extraccion"] == "08:30"
+
+
 def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
     """Fix post-PR9: el parser lee `paginas_ordenadas` (orden geométrico,
     `sort=True`), no `paginas` (orden de dibujado) -- ver

@@ -131,7 +131,7 @@ def texto_eco(
         f"Paciente: {nombre}\n"
         f"Documento: {dni}\n"
         f"No Estudio: {numero_estudio}\n"
-        f"Fecha: {fecha}\n"
+        f"Fecha Estudio: {fecha}\n"
         f"Medico Solicitante: {medico_solicitante}\n"
         "Peso: 70\n"
         "Altura: 170\n"
