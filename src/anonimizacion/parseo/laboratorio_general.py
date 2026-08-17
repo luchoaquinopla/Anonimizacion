@@ -38,6 +38,43 @@ opcional antes de `:` y palabras intermedias opcionales, sin dejar de
 matchear las variantes originales (los cambios son estrictamente más
 permisivos, backward compatible). Calibrado contra una sola muestra —
 podría no generalizar a otras variantes de formato no vistas.
+
+Fix post-PR9 #6 (cuerpo real de resultados, ver
+`sdd/pdf-pii-anonymization/apply-progress`): el fix #4 solo calibró el
+HEADER contra el documento real; el CUERPO (filas de resultado) seguía
+asumiendo el formato `|` sintético y nunca matcheaba nada contra un
+documento real (0 filas extraídas). `_extraer_resultados` ahora reconoce
+también el formato real: columnas separadas por 2+ espacios (`\\s{2,}`,
+misma convención que `_primer_segmento`), fila válida cuando el segundo
+token tiene forma numérica (entero o decimal, con signo opcional) — el
+resto de columnas (unidad / rango de referencia) se clasifican por forma:
+un token con forma `"min - max"` es rango, cualquier otro token no-rango es
+unidad. El formato `|` legado se preserva sin cambios para no romper las
+fixtures sintéticas existentes (se intenta primero). Además:
+- La sección puede aparecer en dos formas en el mismo documento real
+  (`-NOMBRE-` con guiones en línea propia, seguido inmediatamente de
+  `NOMBRE` sin guiones como aparente duplicado) — ambas se normalizan
+  (guiones + acentos removidos) antes de comparar contra `_SECCIONES`.
+- Hay sub-bloques dentro de una sección conocida (p. ej. "HEMOGRAMA" dentro
+  de "HEMATOLOGIA") que el modelo `ResultadoLaboratorio` no distingue de la
+  sección padre (campo `seccion` plano) — se usa el nombre de
+  sección/sub-bloque MÁS RECIENTE visto como `seccion` de cada fila
+  siguiente. Heurística de detección de sub-bloque (`_es_subencabezado_seccion`):
+  línea sin dígitos, sin `:`, íntegramente en mayúsculas y solo
+  letras/espacios/puntos — filtra la enorme mayoría del ruido real (notas
+  metodológicas, párrafos legales, líneas de firma, que vienen en
+  minúsculas o mixto), pero podría no generalizar a un sub-encabezado real
+  con dígitos o símbolos no vistos en la muestra calibrada.
+- Ruido explícito filtrado sin romper el parseo: encabezado de columna
+  repetido por página (`_es_encabezado_tabla_repetido`, detecta "RESULTADO"
+  + "UNIDADES"/"REFERENCIA" en la misma línea), número de página, notas con
+  `:`.
+- Gap conocido, no cubierto: un nombre de prueba partido en dos líneas
+  (p. ej. `"Filtrado Glomerular Estimado (CKD-EPI    102 ... mL/min/1.73m²"`
+  seguido de una línea de continuación `" 2021)"`) se extrae con el nombre
+  truncado/incompleto en vez de reconstruirse — se prioriza no romper el
+  resto de filas (formato de una sola línea, la gran mayoría) antes que
+  cubrir este caso avanzado. Calibrado contra una sola muestra real.
 """
 
 from __future__ import annotations
@@ -57,6 +94,11 @@ _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
 
 _SECCIONES = ("HEMATOLOGIA", "HEMOSTASIA", "QUIMICA CLINICA", "IONOGRAMA")
+
+_PATRON_VALOR_FILA = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
+_PATRON_RANGO_REFERENCIA = re.compile(r"^[+-]?\d+(?:[.,]\d+)?\s*-\s*[+-]?\d+(?:[.,]\d+)?$")
+
+_MAPA_ACENTOS = str.maketrans("ÁÉÍÓÚáéíóúÜüÀÈÌÒÙàèìòù", "AEIOUaeiouUuAEIOUaeiou")
 
 _CAMPOS_HEADER = {
     "nombre": r"Apellido y Nombre:\s*(.+)",
@@ -134,6 +176,52 @@ def _parsear_fecha_nacimiento(texto: str) -> str | None:
         return None
 
 
+def _quitar_acentos(texto: str) -> str:
+    return texto.translate(_MAPA_ACENTOS)
+
+
+def _normalizar_encabezado_seccion(linea_limpia: str) -> str:
+    """Normaliza una línea candidata a nombre de sección: quita acentos,
+    guiones (el documento real trae `-NOMBRE-`) y mayusculiza, para poder
+    compararla contra `_SECCIONES` sin importar la variante exacta."""
+    return _quitar_acentos(linea_limpia).strip().strip("-").strip().upper()
+
+
+def _es_encabezado_tabla_repetido(candidata: str) -> bool:
+    """Encabezado de columnas repetido en cada página del documento real
+    (`"Pruebas   Resultado   ...   Unidades   Valores de Referencia"`) —
+    ruido a ignorar, no un nombre de sección ni una fila de resultado."""
+    return "RESULTADO" in candidata and ("UNIDADES" in candidata or "REFERENCIA" in candidata)
+
+
+def _es_subencabezado_seccion(linea_limpia: str, candidata: str) -> bool:
+    """Heurística para sub-bloques dentro de una sección conocida (ver
+    docstring del módulo, Fix post-PR9 #6): línea sin dígitos, sin `:`,
+    íntegramente en mayúsculas y compuesta solo de letras/espacios/puntos.
+    Filtra la enorme mayoría del ruido real (notas, párrafos legales,
+    firmas), que viene en minúsculas o mixto — podría no generalizar a un
+    sub-encabezado con dígitos o símbolos no vistos en la muestra."""
+    if ":" in linea_limpia or any(caracter.isdigit() for caracter in linea_limpia):
+        return False
+    if linea_limpia != linea_limpia.upper():
+        return False
+    return bool(re.fullmatch(r"[A-Z\s.]+", candidata))
+
+
+def _clasificar_columnas_extra(tokens: list[str]) -> tuple[str | None, str | None]:
+    """Clasifica las columnas después de nombre+valor: un token con forma
+    `"min - max"` es rango de referencia, cualquier otro es unidad (se
+    conserva el primero no-rango encontrado)."""
+    unidades: str | None = None
+    valores_referencia: str | None = None
+    for token in tokens:
+        if _PATRON_RANGO_REFERENCIA.match(token):
+            valores_referencia = token
+        elif unidades is None:
+            unidades = token
+    return unidades, valores_referencia
+
+
 def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
     resultados: list[ResultadoLaboratorio] = []
     seccion_actual: str | None = None
@@ -141,26 +229,55 @@ def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
         linea_limpia = linea.strip()
         if not linea_limpia:
             continue
-        candidata = linea_limpia.upper()
+        candidata = _normalizar_encabezado_seccion(linea_limpia)
+
+        if _es_encabezado_tabla_repetido(candidata):
+            continue
+
         if candidata in _SECCIONES:
             seccion_actual = candidata
             continue
-        if seccion_actual is None or "|" not in linea_limpia:
-            continue
-        partes = [parte.strip() for parte in linea_limpia.split("|")]
-        if len(partes) < 2:
-            continue
-        unidades = partes[2] if len(partes) > 2 and partes[2] else None
-        valores_referencia = partes[3] if len(partes) > 3 and partes[3] else None
-        resultados.append(
-            ResultadoLaboratorio(
-                seccion=seccion_actual,
-                prueba=partes[0],
-                resultado=partes[1],
-                unidades=unidades,
-                valores_referencia=valores_referencia,
+
+        # Formato legado (fixtures sintéticas): filas separadas por "|".
+        if "|" in linea_limpia:
+            if seccion_actual is None:
+                continue
+            partes = [parte.strip() for parte in linea_limpia.split("|")]
+            if len(partes) < 2:
+                continue
+            unidades = partes[2] if len(partes) > 2 and partes[2] else None
+            valores_referencia = partes[3] if len(partes) > 3 and partes[3] else None
+            resultados.append(
+                ResultadoLaboratorio(
+                    seccion=seccion_actual,
+                    prueba=partes[0],
+                    resultado=partes[1],
+                    unidades=unidades,
+                    valores_referencia=valores_referencia,
+                )
             )
-        )
+            continue
+
+        # Formato real: columnas separadas por 2+ espacios, sin "|".
+        tokens = [token for token in re.split(r"\s{2,}", linea_limpia) if token]
+        if len(tokens) >= 2 and _PATRON_VALOR_FILA.match(tokens[1]):
+            if seccion_actual is not None:
+                unidades, valores_referencia = _clasificar_columnas_extra(tokens[2:])
+                resultados.append(
+                    ResultadoLaboratorio(
+                        seccion=seccion_actual,
+                        prueba=tokens[0],
+                        resultado=tokens[1],
+                        unidades=unidades,
+                        valores_referencia=valores_referencia,
+                    )
+                )
+            continue
+
+        if seccion_actual is not None and _es_subencabezado_seccion(linea_limpia, candidata):
+            seccion_actual = candidata
+            continue
+
     return tuple(resultados)
 
 

@@ -170,6 +170,33 @@ def test_parsea_cuerpo_de_medidas_formato_dos_columnas_sin_pipes() -> None:
     assert medidas["WW"].unidad is None
 
 
+def test_trigger_de_medidas_reconoce_encabezado_real_de_dos_veces_medidas() -> None:
+    """Fix post-PR9 #6 (trigger de MEDIDAS, ver
+    `sdd/pdf-pii-anonymization/apply-progress`): el documento real NUNCA
+    trae una línea exactamente igual a "MEDIDAS" a secas -- la única línea
+    que marca el inicio de la tabla es el encabezado repetido
+    "MEDIDAS VALOR VALOR NORMAL MEDIDAS VALOR VALOR NORMAL". Sin reconocer
+    esa línea como trigger, el modo tabla nunca se activa y las medidas
+    quedan en 0 filas.
+    """
+    pagina = (
+        _HEADER_MINIMO
+        + "\n"
+        + "MEDIDAS    VALOR       VALOR NORMAL            MEDIDAS    VALOR     VALOR NORMAL\n"
+        + "           XX           10 mm        < 20 mm                YY        5 mm      < 9 mm\n"
+    )
+    texto = TextoExtraido(paginas=(pagina,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    medidas = {m.nombre: m for m in resultado.contenido.medidas}
+    assert set(medidas) == {"XX", "YY"}
+    assert medidas["XX"].valor == "10"
+    assert medidas["XX"].unidad == "mm"
+    assert medidas["YY"].valor == "5"
+    assert medidas["YY"].unidad == "mm"
+
+
 def test_secciones_anidadas_con_subsecciones_y_dos_puntos() -> None:
     """Fix post-PR9 #4: `MOTILIDAD SEGMENTARIA:` (con dos puntos) matchea
     igual que la variante sin dos puntos; `VALVULAS CARDIACAS` y

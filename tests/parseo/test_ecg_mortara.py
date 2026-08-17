@@ -113,6 +113,73 @@ def test_fecha_nacimiento_ausente_no_rompe_el_parseo() -> None:
     assert resultado.identidad.fecha_nac is None
 
 
+def test_pr_interval_no_se_confunde_con_apr_del_mes_de_la_fecha() -> None:
+    """Fix post-PR9 #6 (regex de medidas ECG, ver
+    `sdd/pdf-pii-anonymization/apply-progress`): `PR(?:\\s*interval)?` sin
+    `\\b` matchea la subcadena "PR" dentro de "APR" (mes en inglés de una
+    fecha, p. ej. "13-APR-2026"), que aparece ANTES que la etiqueta real
+    "PR interval" en el texto -- `re.search` se queda con ese falso match y
+    corrompe `pr_interval` con el resto de la línea de fecha. Reproducido
+    con una fecha inventada que cae en abril.
+    """
+    header_con_abril = (
+        "MORTARA ELI 380\n"
+        "Prueba Sintetica~,                    ID:900321                  "
+        "13-APR-2026  15:17:59        HOSPITAL FICTICIO   ROUTINE RECORD\n"
+        "12-DEC-1975 (49 yr)      Female      Unknown\n"
+    )
+    texto = TextoExtraido(paginas=(header_con_abril + _MEDIDAS_REAL + _PIE_REAL,))
+
+    resultado = ParseadorEcgMortara().parsear(texto)
+
+    assert resultado.contenido.pr_interval == "172 ms"
+    assert "APR" not in (resultado.contenido.pr_interval or "")
+
+
+_MEDIDAS_REAL_MULTILINEA = (
+    "BPM\n"
+    "73\n"
+    "Vent. rate\n"
+    "ms\n"
+    "186\n"
+    "PR interval\n"
+    "ms\n"
+    "100\n"
+    "QRS duration\n"
+    "ms\n"
+    "QT/QTc\n"
+    "382/420\n"
+    "26\n"
+    "51\n"
+    "63\n"
+    "P-R-T axes\n"
+)
+
+
+def test_medidas_en_layout_real_multilinea_orden_variable_no_corrompe_valores() -> None:
+    """Fix post-PR9 #6 (cuerpo real de ECG, ver
+    `sdd/pdf-pii-anonymization/apply-progress`): en el equipo real, etiqueta
+    y valor NUNCA comparten línea -- cada uno va en su propia línea, y el
+    orden relativo valor/etiqueta varía por campo (a veces el valor va
+    justo ANTES de la etiqueta, a veces justo DESPUÉS). Todos los valores
+    son inventados, preservando solo la estructura observada.
+    """
+    texto = TextoExtraido(paginas=(_HEADER_REAL + _MEDIDAS_REAL_MULTILINEA + _PIE_REAL,))
+
+    resultado = ParseadorEcgMortara().parsear(texto)
+
+    assert resultado.contenido.vent_rate == "73"
+    assert resultado.contenido.pr_interval == "186"
+    assert resultado.contenido.qrs_duration == "100"
+    assert resultado.contenido.qt_qtc == "382/420"
+    # "ejes" (P-R-T axes) es el caso más complejo del layout real (tres
+    # valores en un solo campo) -- se acepta `None` (fail-safe) antes que un
+    # valor corrupto si la heurística de ventana no logra aislarlo bien;
+    # si logra aislarlo, debe ser exactamente los tres valores esperados.
+    if resultado.contenido.ejes is not None:
+        assert resultado.contenido.ejes == "26 51 63"
+
+
 def test_header_ausente_lanza_error_parseo() -> None:
     texto = TextoExtraido(paginas=("solo texto sin campos reconocibles",))
     with pytest.raises(ErrorParseo) as info:

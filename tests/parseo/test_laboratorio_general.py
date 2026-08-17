@@ -129,6 +129,54 @@ def test_header_real_con_espacio_antes_de_dos_puntos_y_etiquetas_alternativas() 
     assert resultado.adicionales["hora_extraccion"] == "08:30"
 
 
+def test_cuerpo_real_espaciado_sin_pipes_extrae_filas_con_seccion_y_subseccion() -> None:
+    """Fix post-PR9 #6 (cuerpo real de laboratorio, ver
+    `sdd/pdf-pii-anonymization/apply-progress`): el documento real NO usa
+    `|` como separador -- las columnas van separadas por 2+ espacios, la
+    sección aparece dos veces ("-NOMBRE-" y luego "NOMBRE" sin guiones), hay
+    sub-bloques (p. ej. "SUBBLOQUE" dentro de la sección) que también deben
+    marcar `seccion` para las filas siguientes, y hay ruido (encabezado de
+    columna repetido, número de página, notas con ":") que no debe romper
+    el parseo ni generar filas espurias. Todos los valores son inventados.
+    """
+    cuerpo = (
+        "        Pruebas               Resultado   Fecha y Resultado     Unidades              Valores de Referencia\n"
+        "                                   Actual           Anterior\n"
+        "\n"
+        "                                   -HEMATOLOGIA-\n"
+        "\n"
+        "HEMATOLOGIA\n"
+        "PruebaUno                   11                          unidadx                  0 - 20\n"
+        "\n"
+        "SUBBLOQUE\n"
+        "\n"
+        "PruebaDos                         22                  unidady                    10 - 30\n"
+        "\n"
+        "PruebaTres                                    33.5\n"
+        "                                                                                                         Nota: texto\n"
+        "                                                                                             explicativo largo que\n"
+        "                                                                                                           no es una fila.\n"
+        "1  de  3\n"
+    )
+    texto = TextoExtraido(paginas=(_HEADER + cuerpo,))
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    filas = {r.prueba: r for r in resultado.contenido.resultados}
+    assert set(filas) == {"PruebaUno", "PruebaDos", "PruebaTres"}
+    assert filas["PruebaUno"].seccion == "HEMATOLOGIA"
+    assert filas["PruebaUno"].resultado == "11"
+    assert filas["PruebaUno"].unidades == "unidadx"
+    assert filas["PruebaUno"].valores_referencia == "0 - 20"
+    assert filas["PruebaDos"].seccion == "SUBBLOQUE"
+    assert filas["PruebaDos"].unidades == "unidady"
+    assert filas["PruebaDos"].valores_referencia == "10 - 30"
+    assert filas["PruebaTres"].seccion == "SUBBLOQUE"
+    assert filas["PruebaTres"].resultado == "33.5"
+    assert filas["PruebaTres"].unidades is None
+    assert filas["PruebaTres"].valores_referencia is None
+
+
 def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
     """Fix post-PR9: el parser lee `paginas_ordenadas` (orden geométrico,
     `sort=True`), no `paginas` (orden de dibujado) -- ver

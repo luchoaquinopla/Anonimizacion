@@ -272,12 +272,22 @@ def _parsear_cuerpo(
             candidata = linea_limpia.upper()
             candidata_normalizada = candidata.rstrip(":").strip()
 
-            if candidata_normalizada == _SECCION_MEDIDAS or candidata_normalizada in _SECCIONES_TEXTO:
+            # Fix post-PR9 #6 (trigger de MEDIDAS, ver
+            # `sdd/pdf-pii-anonymization/apply-progress`): el documento real
+            # NUNCA trae una línea igual a "MEDIDAS" a secas -- la única
+            # línea que marca el inicio de la tabla es el encabezado
+            # repetido "MEDIDAS VALOR VALOR NORMAL MEDIDAS VALOR VALOR
+            # NORMAL". Se reconoce como trigger cualquier línea cuyo primer
+            # token sea "MEDIDAS" (no solo la igualdad exacta), sin afectar
+            # el resto del manejo de estado (`_SECCION_MEDIDAS` sigue siendo
+            # el nombre de la sección una vez identificada).
+            es_trigger_medidas = candidata_normalizada == _SECCION_MEDIDAS or (
+                candidata_normalizada.startswith(f"{_SECCION_MEDIDAS} ")
+            )
+            if es_trigger_medidas or candidata_normalizada in _SECCIONES_TEXTO:
                 cerrar_seccion_texto()
-                seccion_actual = candidata_normalizada
-                seccion_padre = (
-                    candidata_normalizada if candidata_normalizada != _SECCION_MEDIDAS else None
-                )
+                seccion_actual = _SECCION_MEDIDAS if es_trigger_medidas else candidata_normalizada
+                seccion_padre = None if es_trigger_medidas else candidata_normalizada
                 continue
 
             if seccion_padre is not None and candidata_normalizada in _SUBSECCIONES.get(

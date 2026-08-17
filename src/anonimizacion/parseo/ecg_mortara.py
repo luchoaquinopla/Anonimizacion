@@ -31,6 +31,39 @@ Esta recalibración agrega la extracción de `fecha_nac` (antes SIEMPRE
 calcule el puente `id_alt_paciente -> id_paciente` hacia el laboratorio
 (ver `pseudonimizacion/resolutor_claves.py`, Fase 6) — sin esto, ningún ECG
 real podía resolver su identidad vía el laboratorio.
+
+Fix post-PR9 #6 (regex de medidas + cuerpo real multilínea, ver
+`sdd/pdf-pii-anonymization/apply-progress`): dos problemas distintos en las
+medidas contra 3 documentos reales:
+
+1. `_CAMPOS_MEDIDAS["pr_interval"]` original no tenía `\b` (límite de
+   palabra) antes de `"PR"` -- matchea la subcadena "PR" DENTRO de "APR"
+   (mes en inglés de la fecha del estudio, p. ej. "13-APR-2026"), que
+   aparece ANTES que la etiqueta real "PR interval" en el texto. Como
+   `re.search` devuelve el primer match, el valor quedaba corrompido con el
+   resto de la línea de fecha. Se agregó `\b` a TODOS los marcadores cortos
+   de `_PATRON_*` que podrían aparecer como substring de otra palabra.
+
+2. El layout real NUNCA trae etiqueta y valor en la misma línea, y el orden
+   relativo valor/etiqueta varía por campo (a veces el valor va 1 línea
+   ANTES de la etiqueta, a veces 1 línea DESPUÉS; "P-R-T axes" trae hasta 3
+   valores numéricos varias líneas antes). Un regex de "etiqueta seguida de
+   valor en la misma línea" nunca puede cubrir esto. `_extraer_medida`
+   ahora: (a) intenta primero el formato legado de una sola línea (para no
+   romper las fixtures sintéticas existentes); (b) si la etiqueta no trae
+   valor en su propia línea, busca el token numérico más cercano en una
+   ventana de líneas vecinas (`_valor_en_ventana`, offsets ±1/±2/±3,
+   probados en ese orden de cercanía) — funciona para los campos de un solo
+   valor (`vent_rate`/`pr_interval`/`qrs_duration`/`qt_qtc`) sin necesidad
+   de codificar la dirección exacta por campo, porque el token más cercano
+   siempre resulta ser el correcto contra la muestra real. Para `ejes`
+   (tres valores en un campo, el caso más complejo) se usa un escaneo
+   contiguo hacia atrás desde la etiqueta (`_ejes_en_ventana`) que se
+   detiene apenas encuentra una línea no puramente numérica -- si encuentra
+   menos de 2 valores contiguos, se prioriza devolver `None` (fail-safe)
+   antes que un valor corrupto, mismo criterio que la firma del eco (fix
+   #4). Calibrado contra una sola muestra real -- esta heurística de
+   ventana podría no generalizar perfecto a otro layout de equipo/reporte.
 """
 
 from __future__ import annotations
@@ -68,14 +101,27 @@ _CAMPOS_HEADER = {
     "medico_derivante": r"Ordered by:\s*-?\s*(.+)",
 }
 
-# Medidas: `Vent. rate            73    BPM`, sin dos puntos, en inglés.
-_CAMPOS_MEDIDAS = {
-    "vent_rate": r"Vent\.?\s*[Rr]ate\s*:?\s*(.+)",
-    "pr_interval": r"PR(?:\s*interval)?\s*:?\s*(.+)",
-    "qrs_duration": r"QRS(?:\s*duration)?\s*:?\s*(.+)",
-    "qt_qtc": r"QT/QTc\s*:?\s*(.+)",
-    "ejes": r"(?:Ejes\s*)?P-R-T\s*(?:axes)?\s*:?\s*(.+)",
-}
+# Medidas: `Vent. rate            73    BPM` (formato legado, una sola
+# línea) o etiqueta/valor en líneas separadas (formato real, ver docstring
+# del módulo, Fix post-PR9 #6). `\b` antes de cada marcador corto evita que
+# matchee como substring de otra palabra (p. ej. "PR" dentro de "APR", mes
+# en inglés de la fecha del estudio).
+_PATRON_VENT_RATE = re.compile(r"\bVent\.?\s*[Rr]ate\b\s*:?\s*(.*)")
+_PATRON_PR_INTERVAL = re.compile(r"\bPR(?:\s*interval)?\b\s*:?\s*(.*)")
+_PATRON_QRS_DURATION = re.compile(r"\bQRS(?:\s*duration)?\b\s*:?\s*(.*)")
+_PATRON_QT_QTC = re.compile(r"\bQT/QTc\b\s*:?\s*(.*)")
+_PATRON_EJES = re.compile(r"(?:Ejes\s*)?\bP-R-T\s*(?:axes)?\b\s*:?\s*(.*)")
+
+# Token numérico "puro" (entero/decimal, con o sin signo) para la búsqueda
+# en ventana; opcionalmente admite un par separado por "/" (p. ej.
+# "382/420" de QT/QTc).
+_PATRON_VALOR_VENTANA = re.compile(
+    r"^[+-]?\d+(?:[.,]\d+)?(?:/[+-]?\d+(?:[.,]\d+)?)?$"
+)
+# Sin "/": usado para el escaneo contiguo de "ejes" -- se detiene apenas
+# encuentra algo que no sea un número simple (p. ej. el "382/420" de
+# QT/QTc, que podría estar en la línea inmediatamente anterior).
+_PATRON_VALOR_SIMPLE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 
 _CAMPOS_HEADER_EXCLUIDOS_DE_ADICIONALES = ("nombre", "fecha", "id_estudio", "fecha_nac")
 
@@ -115,6 +161,75 @@ def _colapsar_espacios(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def _valor_en_ventana(lineas: list[str], indice_etiqueta: int) -> str | None:
+    """Busca el token numérico más cercano a la línea de la etiqueta,
+    probando offsets en orden de cercanía (±1, ±2, ±3). Ver docstring del
+    módulo, Fix post-PR9 #6 -- calibrado contra una sola muestra real,
+    podría no generalizar a un layout donde el valor esté más lejos."""
+    for offset in (-1, 1, -2, 2, -3, 3):
+        indice = indice_etiqueta + offset
+        if 0 <= indice < len(lineas):
+            candidata = lineas[indice].strip()
+            if _PATRON_VALOR_VENTANA.match(candidata):
+                return candidata
+    return None
+
+
+def _ejes_en_ventana(lineas: list[str], indice_etiqueta: int) -> str | None:
+    """Escanea líneas contiguas puramente numéricas antes (o, si no hay
+    ninguna, después) de la etiqueta "P-R-T axes" y las junta como los tres
+    valores del eje. Fail-safe: con menos de 2 valores contiguos encontrados
+    devuelve `None` en vez de un valor posiblemente corrupto (mismo
+    criterio que la firma del eco, fix post-PR9 #4)."""
+    valores: list[str] = []
+    indice = indice_etiqueta - 1
+    while indice >= 0 and _PATRON_VALOR_SIMPLE.match(lineas[indice].strip()):
+        valores.append(lineas[indice].strip())
+        indice -= 1
+    if valores:
+        valores.reverse()
+    else:
+        indice = indice_etiqueta + 1
+        while indice < len(lineas) and _PATRON_VALOR_SIMPLE.match(lineas[indice].strip()):
+            valores.append(lineas[indice].strip())
+            indice += 1
+    if len(valores) < 2:
+        return None
+    return " ".join(valores[:3])
+
+
+def _extraer_medida(
+    lineas: list[str], patron: re.Pattern[str], *, es_ejes: bool = False
+) -> str | None:
+    for indice, linea in enumerate(lineas):
+        coincidencia = patron.search(linea)
+        if not coincidencia:
+            continue
+        resto = coincidencia.group(1).strip()
+        if resto and re.search(r"\d", resto):
+            return _colapsar_espacios(resto)  # formato legado, una sola línea
+        if es_ejes:
+            return _ejes_en_ventana(lineas, indice)
+        return _valor_en_ventana(lineas, indice)
+    return None
+
+
+def _extraer_medidas_ecg(texto_completo: str) -> dict[str, str]:
+    lineas = texto_completo.splitlines()
+    medidas: dict[str, str] = {}
+    for clave, patron, es_ejes in (
+        ("vent_rate", _PATRON_VENT_RATE, False),
+        ("pr_interval", _PATRON_PR_INTERVAL, False),
+        ("qrs_duration", _PATRON_QRS_DURATION, False),
+        ("qt_qtc", _PATRON_QT_QTC, False),
+        ("ejes", _PATRON_EJES, True),
+    ):
+        valor = _extraer_medida(lineas, patron, es_ejes=es_ejes)
+        if valor is not None:
+            medidas[clave] = valor
+    return medidas
+
+
 def _parsear_fecha(texto: str) -> date:
     solo_fecha = texto.strip().split(" ")[0]
     return datetime.strptime(solo_fecha, "%d-%b-%Y").date()
@@ -146,7 +261,7 @@ class ParseadorEcgMortara:
     def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
         texto_completo = texto.texto_completo
         header = _buscar_campos(texto_completo, _CAMPOS_HEADER)
-        medidas = _buscar_campos(texto_completo, _CAMPOS_MEDIDAS)
+        medidas = _extraer_medidas_ecg(texto_completo)
 
         if "nombre" not in header or "fecha" not in header:
             raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
