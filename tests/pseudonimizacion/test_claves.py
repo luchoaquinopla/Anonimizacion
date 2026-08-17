@@ -82,6 +82,63 @@ def test_generar_id_alt_paciente_distinta_fecha_distinta_clave() -> None:
     assert id_1 != id_2
 
 
+def test_generar_id_alt_paciente_mismo_paciente_distinto_formato_de_nombre_da_misma_clave() -> None:
+    # Fix post-merge: mismo paciente (fecha_nac idéntica) escrito distinto en
+    # laboratorio ("Apellido , Nombre SegundoNombre") vs ECG ("Apellido Nombre")
+    # -- datos 100% inventados, análogos al caso real reportado por el usuario.
+    id_lab = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Alberto", "1961-09-29")
+    id_ecg = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez Martin", "1961-09-29")
+
+    assert id_lab == id_ecg
+
+
+def test_generar_id_alt_paciente_distinto_segundo_nombre_colisiona_ahora_tradeoff_aceptado() -> None:
+    # Trade-off EXPLÍCITO y ACEPTADO con el usuario: dos personas distintas con
+    # mismo apellido + mismo primer nombre + misma fecha_nac ahora COLISIONAN
+    # (antes no colisionaban porque el segundo nombre completo distinguía).
+    # Se documenta acá para que no quede escondido -- es el costo aceptado a
+    # cambio de resolver el puente real lab<->ECG.
+    id_persona_1 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Alberto", "1961-09-29")
+    id_persona_2 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Eduardo", "1961-09-29")
+
+    assert id_persona_1 == id_persona_2
+
+
+def test_generar_id_alt_paciente_formato_con_coma_y_sin_coma_siguen_siendo_deterministas() -> None:
+    id_1 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Alberto", "1961-09-29")
+    id_2 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Alberto", "1961-09-29")
+
+    assert id_1 == id_2
+
+
+def test_generar_id_alt_paciente_nombre_de_una_sola_palabra_no_rompe() -> None:
+    # caso borde: nombre sin segundo token (ni apellido separado) -- no debería
+    # lanzar excepción, solo producir una clave determinista (aunque poco
+    # específica, ya que no hay primer_nombre que extraer).
+    id_1 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez", "1961-09-29")
+    id_2 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez", "1961-09-29")
+
+    assert id_1 == id_2
+    assert id_1 != generar_id_alt_paciente(PEPPER_TEST, "Fernandez", "1961-09-29")
+
+
+def test_generar_id_alt_paciente_nombre_vacio_no_rompe() -> None:
+    # caso borde: nombre vacío -- no debería lanzar excepción (aunque el
+    # documento real probablemente nunca llega hasta acá con nombre vacío,
+    # `IdentidadCruda` no lo prohíbe explícitamente a este nivel).
+    id_1 = generar_id_alt_paciente(PEPPER_TEST, "", "1961-09-29")
+    id_2 = generar_id_alt_paciente(PEPPER_TEST, "", "1961-09-29")
+
+    assert id_1 == id_2
+
+
+def test_generar_id_alt_paciente_distinto_apellido_distinta_clave_aunque_mismo_primer_nombre() -> None:
+    id_1 = generar_id_alt_paciente(PEPPER_TEST, "Gonzalez , Martin Alberto", "1961-09-29")
+    id_2 = generar_id_alt_paciente(PEPPER_TEST, "Fernandez , Martin Alberto", "1961-09-29")
+
+    assert id_1 != id_2
+
+
 def test_generar_id_alt_paciente_no_coincide_con_id_paciente_del_mismo_dni() -> None:
     # aunque compartan pepper, son namespaces distintos: nunca deben colisionar
     # por construcción (mensajes con prefijos distintos)
