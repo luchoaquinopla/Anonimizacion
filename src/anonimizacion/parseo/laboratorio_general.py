@@ -80,6 +80,26 @@ def _parsear_fecha(texto: str) -> date:
     return datetime.strptime(texto.strip(), "%d/%m/%Y").date()
 
 
+def _parsear_fecha_nacimiento(texto: str) -> str | None:
+    """Normaliza `F.Nacimiento` a ISO 8601 (`YYYY-MM-DD`).
+
+    Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
+    "Fix: recalibración parser ECG contra layout real Mortara"): el puente
+    `id_alt_paciente -> id_paciente` (`pseudonimizacion/claves.py`,
+    `generar_id_alt_paciente`) usa el string de fecha de nacimiento tal cual
+    dentro del mensaje HMAC. El laboratorio trae `DD/MM/YYYY` pero el ECG
+    (`parseo/ecg_mortara.py`) trae `DD-MON-YYYY` — sin normalizar ambos a la
+    misma representación canónica, el mismo paciente real produciría dos
+    `id_alt_paciente` distintos y el puente nunca resolvería. Si no se puede
+    parsear, se descarta (no participa del puente) en vez de propagar un
+    formato crudo inconsistente.
+    """
+    try:
+        return datetime.strptime(texto.strip(), "%d/%m/%Y").date().isoformat()
+    except ValueError:
+        return None
+
+
 def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
     resultados: list[ResultadoLaboratorio] = []
     seccion_actual: str | None = None
@@ -143,10 +163,14 @@ class ParseadorLaboratorioGeneral:
                 codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
             ) from _exc
 
+        fecha_nac_normalizada = (
+            _parsear_fecha_nacimiento(header["fecha_nac"]) if header.get("fecha_nac") else None
+        )
+
         identidad = IdentidadCruda(
             nombre=SecretStr(header["nombre"]),
             dni=SecretStr(header["dni"]) if header.get("dni") else None,
-            fecha_nac=SecretStr(header["fecha_nac"]) if header.get("fecha_nac") else None,
+            fecha_nac=SecretStr(fecha_nac_normalizada) if fecha_nac_normalizada else None,
             ids_internos=(
                 (SecretStr(header["numero_peticion"]),)
                 if header.get("numero_peticion")

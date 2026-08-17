@@ -73,6 +73,26 @@ def test_numero_peticion_inconsistente_entre_paginas_lanza_error_parseo() -> Non
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
 
 
+def test_fecha_nacimiento_se_normaliza_a_iso_8601() -> None:
+    """Fix post-PR9: `fecha_nac` se normaliza a ISO para que el puente
+    `id_alt_paciente` (`pseudonimizacion/claves.py`) coincida con el ECG,
+    que usa un formato de fecha distinto (`DD-MON-YYYY`, ver
+    `parseo/ecg_mortara.py`).
+    """
+    texto = TextoExtraido(paginas=(_HEADER + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",))
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+    assert resultado.identidad.fecha_nac.get_secret_value() == "1980-05-01"
+
+
+def test_fecha_nacimiento_no_parseable_queda_en_none_sin_romper_el_parseo() -> None:
+    header_fecha_nac_invalida = _HEADER.replace("F.Nacimiento: 01/05/1980", "F.Nacimiento: no-disponible")
+    texto = TextoExtraido(
+        paginas=(header_fecha_nac_invalida + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+    assert resultado.identidad.fecha_nac is None
+
+
 def test_header_ausente_lanza_error_parseo() -> None:
     texto = TextoExtraido(paginas=("HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",))
     with pytest.raises(ErrorParseo) as info:

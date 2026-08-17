@@ -58,7 +58,7 @@ def test_registro_de_laboratorio_no_tiene_pii_segun_motor_real(tmp_path, motor: 
         documentos.texto_laboratorio(
             nombre=_NOMBRE_PACIENTE,
             dni=_DNI_PACIENTE,
-            fecha_nac="1979-09-09",
+            fecha_nac="09/09/1979",
             numero_peticion="PET-11-3",
             fecha="10/01/2024",
             medico_derivante=_NOMBRE_MEDICO,
@@ -83,7 +83,14 @@ def test_registro_de_ecg_no_tiene_pii_segun_motor_real(tmp_path, motor: MotorPii
     documento = _parsear(
         tmp_path,
         "ecg-11-3",
-        documentos.texto_ecg(nombre=_NOMBRE_PACIENTE, id_estudio="ECG-11-3", fecha="10/01/2024", medico_derivante=_NOMBRE_MEDICO),
+        documentos.texto_ecg(
+            nombre=_NOMBRE_PACIENTE,
+            id_estudio="ECG-11-3",
+            fecha="10-JAN-2024",
+            fecha_nac="09-SEP-1979",
+            edad_anios=44,
+            medico_derivante=_NOMBRE_MEDICO,
+        ),
     )
 
     registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, motor_pii=motor)

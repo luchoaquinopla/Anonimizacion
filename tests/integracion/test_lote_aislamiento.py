@@ -43,7 +43,7 @@ def test_un_documento_con_layout_no_reconocido_en_lote_no_aborta_el_resto(tmp_pa
         documentos.texto_laboratorio(
             nombre="Pedro Sintetico Uno",
             dni="20111222",
-            fecha_nac="1975-02-02",
+            fecha_nac="02/02/1975",
             numero_peticion="PET-A1",
             fecha="10/01/2024",
         ),
@@ -55,7 +55,7 @@ def test_un_documento_con_layout_no_reconocido_en_lote_no_aborta_el_resto(tmp_pa
         documentos.texto_laboratorio(
             nombre="Sofia Sintetica Dos",
             dni="20333444",
-            fecha_nac="1988-08-08",
+            fecha_nac="08/08/1988",
             numero_peticion="PET-A2",
             fecha="11/01/2024",
         ),

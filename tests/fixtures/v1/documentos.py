@@ -74,27 +74,38 @@ def texto_ecg(
     nombre: str,
     id_estudio: str,
     fecha: str,
-    medico_derivante: str = "Dr. Prueba Ecg",
+    hora: str = "09:00:00",
+    fecha_nac: str,
+    edad_anios: int,
+    sexo: str = "Male",
+    medico_derivante: str = "Dr Prueba Ecg",
     institucion: str = "Clinica Sintetica",
 ) -> list[str]:
-    """Layout de ECG Mortara: `identidad.dni`/`fecha_nac` SIEMPRE quedan en `None`
+    """Layout REAL de ECG Mortara (posicional, sin etiquetas `Campo: valor`
+    salvo unos pocos campos de pie) -- ver docstring de `parseo/ecg_mortara.py`
+    para el detalle de la recalibración post-PR9 contra el layout real.
 
-    (ver `parseo/ecg_mortara.py`, hardcodeado -- el header real de ECG nunca
-    trae fecha de nacimiento, ver spec `document-parsing`). Ver el reporte
-    final de PR9 para el gap que esto deja abierto en `pseudonymous-linkage`.
+    `fecha`/`fecha_nac` en formato `DD-MON-YYYY` (mes en inglés, 3 letras
+    mayúsculas), igual que el equipo real -- NO `DD/MM/YYYY`.
     """
     pagina = (
         "MORTARA ELI 350\n"
-        f"Nombre: {nombre}\n"
-        f"ID Estudio: {id_estudio}\n"
-        f"Fecha: {fecha} 09:00\n"
-        f"Institucion: {institucion}\n"
-        f"Medico derivante: {medico_derivante}\n"
-        "Vent Rate: 72\n"
-        "PR: 160\n"
-        "QRS: 90\n"
-        "QT/QTc: 400/420\n"
-        "Ejes P-R-T: P60 R30 T40\n"
+        f"{nombre}~,                    ID:{id_estudio}                  "
+        f"{fecha}  {hora}        {institucion}   ROUTINE RECORD\n"
+        f"{fecha_nac} ({edad_anios} yr)      {sexo}      Unknown\n"
+        "Room:\n"
+        "Loc:1\n"
+        "                    Vent. rate            72    BPM\n"
+        "                    PR interval          160    ms\n"
+        "                    QRS duration          90    ms\n"
+        "                    QT/QTc            400/420    ms\n"
+        "                    P-R-T axes         60  30    40\n"
+        "\n"
+        "           Technician:\n"
+        "           Test ind:\n"
+        "Med:\n"
+        "\n"
+        f"Ordered by:  - {medico_derivante}                          Unconfirmed\n"
     )
     return [pagina]
 
