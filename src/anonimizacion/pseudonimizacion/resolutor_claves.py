@@ -25,12 +25,29 @@ Flujo real:
 
 `ResolutorClaves` es la tabla de resolución en memoria para esta fase (PR5).
 En Fase 7 (`salida/`, ver tasks.md 7.1) se respalda con la tabla Postgres
-`vinculo_paciente(id_alt_paciente, id_paciente)` (design.md, decisión Q1);
-esta clase queda como la interfaz que esa fase implementa contra una tabla
-real, sin cambiar el contrato de `resolver_claves`.
+`vinculo_paciente(id_alt_paciente, id_paciente)` (design.md, decisión Q1) --
+`EscritorPostgres` (`salida/destinos/postgres.py`) implementa esa tabla real
+con `registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`.
+
+Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
+persistencia del puente id_alt_paciente en Postgres entre corridas"):
+durante un largo tiempo `EscritorPostgres` implementó ese respaldo, pero
+NADA en el flujo real (`EjecutorPipeline`, `scripts/procesar_carpeta.py`) lo
+usaba -- el ejecutor siempre recibía un `ResolutorClaves()` en memoria,
+vacío en cada corrida del programa. `ResolutorClavesPostgres` (más abajo) es
+el adaptador que cierra ese gap: implementa el MISMO contrato
+(`registrar_puente`/`resolver`/`es_ambiguo`) que `ResolutorClaves`, pero
+delegando cada llamada directo a un `EscritorPostgres` inyectado -- sin
+caché propia, cada llamada golpea la tabla `vinculo_paciente` (trabajo por
+lote, no algo sensible a latencia). `resolver_claves` (la función libre de
+este módulo) acepta cualquier objeto que cumpla `ResolutorClavesProtocol`,
+así que funciona igual de bien con cualquiera de las dos implementaciones
+sin necesitar saber cuál es.
 """
 
 from __future__ import annotations
+
+from typing import Protocol
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import ClavesPaciente, IdentidadCruda
@@ -39,6 +56,22 @@ from anonimizacion.pseudonimizacion.claves import (
     generar_id_alt_paciente,
     generar_id_paciente,
 )
+
+
+class ResolutorClavesProtocol(Protocol):
+    """Contrato duck-typed que `resolver_claves` necesita del puente `id_alt_paciente -> id_paciente`.
+
+    Implementado por `ResolutorClaves` (en memoria, ver más abajo) y por
+    `ResolutorClavesPostgres` (persistente, ver más abajo) -- misma firma,
+    dos backends distintos, sin que `resolver_claves` tenga que conocer cuál
+    de los dos recibió.
+    """
+
+    def registrar_puente(self, id_alt_paciente: str, id_paciente: str) -> None: ...
+
+    def resolver(self, id_alt_paciente: str) -> str | None: ...
+
+    def es_ambiguo(self, id_alt_paciente: str) -> bool: ...
 
 
 class ResolutorClaves:
@@ -103,10 +136,57 @@ class ResolutorClaves:
         return id_alt_paciente in self._ambiguos
 
 
+class ResolutorClavesPostgres:
+    """Puente `id_alt_paciente -> id_paciente` persistente (fix post-merge, ver docstring del módulo).
+
+    Implementa `ResolutorClavesProtocol` (mismas firmas que `ResolutorClaves`)
+    delegando cada llamada directo a un `EscritorPostgres` inyectado
+    (`registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`, `salida/destinos/
+    postgres.py`). Deliberadamente SIN caché en memoria propia: cada llamada
+    habla directo con la tabla `vinculo_paciente` -- esto es trabajo por
+    lote, no algo sensible a latencia, y evita tener que mantener
+    sincronizadas dos copias del mismo estado (una en este objeto, otra en
+    la tabla real).
+
+    La semántica de ambigüedad de homónimos (ver docstring de
+    `ResolutorClaves`) ya la implementa `EscritorPostgres.registrar_vinculo`
+    contra la tabla real -- esta clase es un adaptador fino, no reimplementa
+    esa lógica.
+
+    No se tipa el parámetro `escritor` contra `EscritorPostgres` para evitar
+    un import de `salida.destinos.postgres` al cargar este módulo (capa
+    `pseudonimizacion` por debajo de `salida` en la dependencia del
+    pipeline) -- basta con que cumpla `registrar_vinculo`/`resolver_vinculo`/
+    `es_ambiguo`.
+    """
+
+    def __init__(self, escritor: _EscritorVinculoProtocol) -> None:
+        self._escritor = escritor
+
+    def registrar_puente(self, id_alt_paciente: str, id_paciente: str) -> None:
+        self._escritor.registrar_vinculo(id_alt_paciente, id_paciente)
+
+    def resolver(self, id_alt_paciente: str) -> str | None:
+        return self._escritor.resolver_vinculo(id_alt_paciente)
+
+    def es_ambiguo(self, id_alt_paciente: str) -> bool:
+        return self._escritor.es_ambiguo(id_alt_paciente)
+
+
+class _EscritorVinculoProtocol(Protocol):
+    """Lo único que `ResolutorClavesPostgres` necesita de `EscritorPostgres` (evita el import cruzado, ver arriba)."""
+
+    def registrar_vinculo(self, id_alt_paciente: str, id_paciente: str) -> None: ...
+
+    def resolver_vinculo(self, id_alt_paciente: str) -> str | None: ...
+
+    def es_ambiguo(self, id_alt_paciente: str) -> bool: ...
+
+
 def resolver_claves(
     identidad: IdentidadCruda,
     pepper: bytes,
-    resolutor: ResolutorClaves,
+    resolutor: ResolutorClavesProtocol,
     *,
     id_documento: str,
     etapa: str,

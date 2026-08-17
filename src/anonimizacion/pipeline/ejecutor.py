@@ -53,7 +53,7 @@ from anonimizacion.parseo.base import ParseadorDocumento
 from anonimizacion.parseo.registro import obtener_parseador as _obtener_parseador_real
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pii.politica import clasificar as _clasificar_real
-from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
+from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
 from anonimizacion.pseudonimizacion.resolutor_claves import resolver_claves as _resolver_claves_real
 from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, ResultadoVinculacion
 from anonimizacion.pseudonimizacion.vinculacion import vincular_episodios as _vincular_episodios_real
@@ -145,12 +145,23 @@ def _ahora() -> datetime:
 
 
 class EjecutorPipeline:
-    """Orquesta el pipeline completo sobre un lote, aislando el fallo por documento."""
+    """Orquesta el pipeline completo sobre un lote, aislando el fallo por documento.
+
+    `resolutor` (fix post-merge, ver `sdd/pdf-pii-anonymization/apply-progress`,
+    sección "Fix: persistencia del puente id_alt_paciente en Postgres entre
+    corridas"): tipado contra `ResolutorClavesProtocol`, no contra la clase
+    concreta `ResolutorClaves` -- acepta indistintamente un `ResolutorClaves`
+    en memoria (uso en tests, o un lote único procesado de punta a punta en
+    la misma corrida) o un `ResolutorClavesPostgres` (uso real en producción,
+    ver `scripts/procesar_carpeta.py`: el puente sobrevive entre corridas
+    separadas del programa porque vive en la tabla `vinculo_paciente`, no en
+    memoria).
+    """
 
     def __init__(
         self,
         *,
-        resolutor: ResolutorClaves,
+        resolutor: ResolutorClavesProtocol,
         motor: MotorPii,
         pepper: bytes,
         destino: DestinoEscritura,

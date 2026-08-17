@@ -177,6 +177,58 @@ def test_cuerpo_real_espaciado_sin_pipes_extrae_filas_con_seccion_y_subseccion()
     assert filas["PruebaTres"].valores_referencia is None
 
 
+def test_nombre_de_prueba_partido_en_dos_lineas_por_parentesis_se_reconstruye() -> None:
+    """Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
+    "Fix: persistencia del puente id_alt_paciente en Postgres entre
+    corridas" -- gap conocido documentado en Fix#6, ahora resuelto): en el
+    documento real, un nombre de prueba largo queda partido en DOS líneas
+    cuando no entra en una sola línea del PDF -- la primera línea trae el
+    inicio del nombre + un paréntesis SIN cerrar + el valor + la unidad; la
+    segunda línea, corta, trae solo el cierre del paréntesis + el resto del
+    nombre. Todos los valores son inventados.
+    """
+    cuerpo = (
+        "HEMATOLOGIA\n"
+        "Prueba Muy Larga Con Nombre (ALGO-EXTRA    102                         unidad/rara\n"
+        " 2021)\n"
+        "PruebaSiguiente                   15                  unidadz                    1 - 5\n"
+    )
+    texto = TextoExtraido(paginas=(_HEADER + cuerpo,))
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    filas = {r.prueba: r for r in resultado.contenido.resultados}
+    assert "Prueba Muy Larga Con Nombre (ALGO-EXTRA 2021)" in filas
+    fila = filas["Prueba Muy Larga Con Nombre (ALGO-EXTRA 2021)"]
+    assert fila.resultado == "102"
+    assert fila.unidades == "unidad/rara"
+    assert fila.seccion == "HEMATOLOGIA"
+    # la fila siguiente no se pierde ni se corrompe por la reconstrucción del nombre partido
+    assert "PruebaSiguiente" in filas
+    assert filas["PruebaSiguiente"].resultado == "15"
+    assert filas["PruebaSiguiente"].valores_referencia == "1 - 5"
+
+
+def test_nombre_de_prueba_con_parentesis_balanceado_no_dispara_reconstruccion() -> None:
+    """Caso negativo: un nombre de prueba con paréntesis YA balanceado en una
+    sola línea no debe intentar fusionarse con la línea siguiente (evita
+    falsos positivos del fix anterior)."""
+    cuerpo = (
+        "HEMATOLOGIA\n"
+        "Prueba Con Parentesis (OK)    50                         unidadw\n"
+        "PruebaSiguiente                   15                  unidadz                    1 - 5\n"
+    )
+    texto = TextoExtraido(paginas=(_HEADER + cuerpo,))
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    filas = {r.prueba: r for r in resultado.contenido.resultados}
+    assert "Prueba Con Parentesis (OK)" in filas
+    assert filas["Prueba Con Parentesis (OK)"].resultado == "50"
+    assert "PruebaSiguiente" in filas
+    assert filas["PruebaSiguiente"].resultado == "15"
+
+
 def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
     """Fix post-PR9: el parser lee `paginas_ordenadas` (orden geométrico,
     `sort=True`), no `paginas` (orden de dibujado) -- ver

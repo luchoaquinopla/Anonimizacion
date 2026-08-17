@@ -69,12 +69,25 @@ fixtures sintéticas existentes (se intenta primero). Además:
   repetido por página (`_es_encabezado_tabla_repetido`, detecta "RESULTADO"
   + "UNIDADES"/"REFERENCIA" en la misma línea), número de página, notas con
   `:`.
-- Gap conocido, no cubierto: un nombre de prueba partido en dos líneas
-  (p. ej. `"Filtrado Glomerular Estimado (CKD-EPI    102 ... mL/min/1.73m²"`
-  seguido de una línea de continuación `" 2021)"`) se extrae con el nombre
-  truncado/incompleto en vez de reconstruirse — se prioriza no romper el
-  resto de filas (formato de una sola línea, la gran mayoría) antes que
-  cubrir este caso avanzado. Calibrado contra una sola muestra real.
+
+Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
+"Fix: persistencia del puente id_alt_paciente en Postgres entre corridas"):
+resuelve el gap anterior de "nombre de prueba partido en dos líneas" (p. ej.
+`"Filtrado Glomerular Estimado (CKD-EPI    102 ... mL/min/1.73m²"` seguido
+de una línea de continuación `" 2021)"`). `_extraer_resultados` ahora recorre
+las líneas por índice (no con un `for` simple) para poder mirar la línea
+SIGUIENTE cuando reconoce una fila válida: si la columna de nombre
+(`tokens[0]`) trae un paréntesis sin cerrar (`_completar_nombre_partido`), y
+la línea siguiente (a) NO es en sí misma otra fila válida (no tiene un
+segundo token numérico tras separar por 2+ espacios, `_es_linea_continuacion_de_nombre`)
+y (b) al concatenarla balancea los paréntesis, se fusiona como el resto del
+nombre y esa línea se consume (no se vuelve a procesar como ruido). Si no se
+cumplen esas condiciones, el nombre queda como estaba (sin forzar una fusión
+insegura) — heurística deliberadamente conservadora: solo actúa cuando hay
+un paréntesis desbalanceado de por medio, así que no puede afectar ninguna
+fila de una sola línea (la gran mayoría) que no tenga ese patrón. Calibrado
+contra una sola muestra real — igual que el resto de heurísticas de este
+módulo, podría no generalizar a una variante de formato no vista.
 """
 
 from __future__ import annotations
@@ -222,28 +235,72 @@ def _clasificar_columnas_extra(tokens: list[str]) -> tuple[str | None, str | Non
     return unidades, valores_referencia
 
 
+def _es_linea_continuacion_de_nombre(linea_limpia: str) -> bool:
+    """True si `linea_limpia` es candidata a ser el CIERRE de un nombre de
+    prueba partido en dos líneas: trae un paréntesis de cierre y NO es, en sí
+    misma, otra fila válida (no tiene un segundo token numérico tras separar
+    por 2+ espacios) -- evita confundir la línea siguiente REAL de una fila
+    con el cierre de un nombre partido."""
+    if ")" not in linea_limpia:
+        return False
+    tokens = [token for token in re.split(r"\s{2,}", linea_limpia) if token]
+    return not (len(tokens) >= 2 and _PATRON_VALOR_FILA.match(tokens[1]))
+
+
+def _completar_nombre_partido(nombre_prueba: str, lineas: list[str], indice: int) -> tuple[str, int]:
+    """Reconstruye un nombre de prueba partido en dos líneas por un paréntesis sin cerrar.
+
+    Si `nombre_prueba` (la columna de nombre de la fila en `lineas[indice]`)
+    trae un paréntesis SIN cerrar y la línea siguiente lo balancea, devuelve
+    `(nombre_completo, 1)` -- el `1` le indica al llamador que consuma esa
+    línea siguiente en vez de procesarla de nuevo. Si no aplica el patrón
+    (paréntesis ya balanceado, no hay línea siguiente, la siguiente es en sí
+    misma otra fila, o concatenar no balancea los paréntesis), devuelve
+    `(nombre_prueba, 0)` sin cambios -- deliberadamente conservador, prefiere
+    dejar el nombre truncado (comportamiento anterior) antes que fusionar de
+    forma insegura."""
+    if nombre_prueba.count("(") <= nombre_prueba.count(")"):
+        return nombre_prueba, 0
+    if indice + 1 >= len(lineas):
+        return nombre_prueba, 0
+    siguiente_limpia = lineas[indice + 1].strip()
+    if not siguiente_limpia or not _es_linea_continuacion_de_nombre(siguiente_limpia):
+        return nombre_prueba, 0
+    nombre_completo = f"{nombre_prueba} {siguiente_limpia}"
+    if nombre_completo.count("(") != nombre_completo.count(")"):
+        return nombre_prueba, 0  # no se balanceó -- no forzar la fusión
+    return nombre_completo, 1
+
+
 def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
     resultados: list[ResultadoLaboratorio] = []
     seccion_actual: str | None = None
-    for linea in pagina.splitlines():
-        linea_limpia = linea.strip()
+    lineas = pagina.splitlines()
+    indice = 0
+    while indice < len(lineas):
+        linea_limpia = lineas[indice].strip()
         if not linea_limpia:
+            indice += 1
             continue
         candidata = _normalizar_encabezado_seccion(linea_limpia)
 
         if _es_encabezado_tabla_repetido(candidata):
+            indice += 1
             continue
 
         if candidata in _SECCIONES:
             seccion_actual = candidata
+            indice += 1
             continue
 
         # Formato legado (fixtures sintéticas): filas separadas por "|".
         if "|" in linea_limpia:
             if seccion_actual is None:
+                indice += 1
                 continue
             partes = [parte.strip() for parte in linea_limpia.split("|")]
             if len(partes) < 2:
+                indice += 1
                 continue
             unidades = partes[2] if len(partes) > 2 and partes[2] else None
             valores_referencia = partes[3] if len(partes) > 3 and partes[3] else None
@@ -256,27 +313,35 @@ def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
                     valores_referencia=valores_referencia,
                 )
             )
+            indice += 1
             continue
 
         # Formato real: columnas separadas por 2+ espacios, sin "|".
         tokens = [token for token in re.split(r"\s{2,}", linea_limpia) if token]
         if len(tokens) >= 2 and _PATRON_VALOR_FILA.match(tokens[1]):
             if seccion_actual is not None:
+                nombre_prueba, lineas_consumidas = _completar_nombre_partido(tokens[0], lineas, indice)
                 unidades, valores_referencia = _clasificar_columnas_extra(tokens[2:])
                 resultados.append(
                     ResultadoLaboratorio(
                         seccion=seccion_actual,
-                        prueba=tokens[0],
+                        prueba=nombre_prueba,
                         resultado=tokens[1],
                         unidades=unidades,
                         valores_referencia=valores_referencia,
                     )
                 )
+                indice += 1 + lineas_consumidas
+                continue
+            indice += 1
             continue
 
         if seccion_actual is not None and _es_subencabezado_seccion(linea_limpia, candidata):
             seccion_actual = candidata
+            indice += 1
             continue
+
+        indice += 1
 
     return tuple(resultados)
 

@@ -15,15 +15,16 @@ Simplificaciones deliberadas de este script (no del pipeline en si):
 - Solo escribe a Postgres, no exporta a Parquet en el mismo paso (serian
   dos destinos distintos; EjecutorPipeline hoy toma uno solo -- exportar a
   Parquet despues es una consulta aparte contra lo ya escrito en Postgres).
-- `ResolutorClaves` (el puente id_alt_paciente->id_paciente) se crea VACIO
-  en cada corrida del script: no lee ni persiste el puente real de la tabla
-  `vinculo_paciente` entre corridas separadas (ver nota en
-  `salida/destinos/postgres.py::EscritorPostgres.registrar_vinculo`/
-  `resolver_vinculo`, que hoy el ejecutor no usa). Esto significa que si
-  subis el laboratorio de un paciente en una corrida y el ECG del mismo
-  paciente en OTRA corrida posterior, el ECG no lo va a poder vincular --
-  funciona bien si subis todos los documentos de un mismo lote juntos, en
-  la misma corrida (que es el caso de uso principal de este script).
+
+Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, seccion
+"Fix: persistencia del puente id_alt_paciente en Postgres entre corridas"):
+este script usaba `ResolutorClaves()` (puente en memoria, vacio en cada
+corrida) -- el laboratorio de un paciente subido en una corrida y el ECG del
+mismo paciente subido en OTRA corrida posterior nunca se vinculaban, aunque
+el laboratorio ya estuviera en la base. Ahora usa `ResolutorClavesPostgres`
+(`pseudonimizacion/resolutor_claves.py`), que delega contra la tabla real
+`vinculo_paciente` via `EscritorPostgres` -- el puente persiste entre
+corridas separadas del script, no solo dentro de un mismo lote.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from anonimizacion.ingesta.fuente import FuenteArtefacto
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ExitoDocumento, FalloDocumento, ItemLote
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
-from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
+from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostgres
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
 from anonimizacion.salida.modelos_orm import Base
@@ -69,7 +70,10 @@ def main() -> int:
 
     destino = EscritorPostgres(engine)
     cuarentena = EscritorCuarentena(engine)
-    resolutor = ResolutorClaves()
+    # puente id_alt_paciente -> id_paciente persistente contra `vinculo_paciente`
+    # (ver docstring del módulo, fix post-merge): sobrevive entre corridas
+    # separadas del script, a diferencia de `ResolutorClaves()` en memoria.
+    resolutor = ResolutorClavesPostgres(destino)
 
     ejecutor = EjecutorPipeline(
         resolutor=resolutor,

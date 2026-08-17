@@ -15,12 +15,19 @@ Escenario real que estos tests cubren:
 from __future__ import annotations
 
 import pytest
+import sqlalchemy as sa
 from pydantic import SecretStr
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import IdentidadCruda
 from anonimizacion.pseudonimizacion.claves import generar_id_alt_paciente, generar_id_paciente
-from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves, resolver_claves
+from anonimizacion.pseudonimizacion.resolutor_claves import (
+    ResolutorClaves,
+    ResolutorClavesPostgres,
+    resolver_claves,
+)
+from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.modelos_orm import Base
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 
@@ -244,3 +251,75 @@ def test_resolver_claves_lanza_clave_pii_ambigua_no_no_resuelta(
 
     assert excinfo.value.codigo == CodigoErrorDocumento.CLAVE_PII_AMBIGUA
     assert excinfo.value.codigo != CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA
+
+
+# --- ResolutorClavesPostgres: mismo contrato, respaldado por Postgres ------
+#
+# Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
+# "Fix: persistencia del puente id_alt_paciente en Postgres entre
+# corridas"): `ResolutorClaves` (arriba) es SOLO en memoria -- se pierde al
+# terminar el proceso. `ResolutorClavesPostgres` implementa el MISMO
+# contrato (`registrar_puente`/`resolver`/`es_ambiguo`) delegando cada
+# llamada directo a `EscritorPostgres.registrar_vinculo`/`resolver_vinculo`/
+# `es_ambiguo` -- sin caché propia, así que el estado sobrevive a la
+# instancia (y por lo tanto a una corrida separada del programa que reabra
+# el mismo engine/base).
+
+
+@pytest.fixture()
+def escritor_postgres() -> EscritorPostgres:
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    return EscritorPostgres(motor)
+
+
+def test_resolutor_postgres_registra_y_resuelve_delegando_en_escritor(
+    escritor_postgres: EscritorPostgres,
+) -> None:
+    resolutor_pg = ResolutorClavesPostgres(escritor_postgres)
+    resolutor_pg.registrar_puente("alt-1", "pid-1")
+
+    assert resolutor_pg.resolver("alt-1") == "pid-1"
+    assert resolutor_pg.es_ambiguo("alt-1") is False
+
+
+def test_resolutor_postgres_homonimos_marca_ambiguo_igual_que_el_de_memoria(
+    escritor_postgres: EscritorPostgres,
+) -> None:
+    resolutor_pg = ResolutorClavesPostgres(escritor_postgres)
+    resolutor_pg.registrar_puente("alt-1", "pid-A")
+    resolutor_pg.registrar_puente("alt-1", "pid-B")  # homónimo: mismo alt, distinto paciente
+
+    assert resolutor_pg.resolver("alt-1") is None
+    assert resolutor_pg.es_ambiguo("alt-1") is True
+
+
+def test_resolutor_postgres_usado_con_resolver_claves_end_to_end(
+    escritor_postgres: EscritorPostgres,
+) -> None:
+    resolutor_pg = ResolutorClavesPostgres(escritor_postgres)
+
+    identidad_lab = IdentidadCruda(
+        nombre=SecretStr("Juan Perez"), dni=SecretStr("12345678"), fecha_nac=SecretStr("1980-01-01")
+    )
+    resolver_claves(identidad_lab, PEPPER_TEST, resolutor_pg, id_documento="lab-1", etapa="pseudonimizacion")
+
+    identidad_ecg = IdentidadCruda(nombre=SecretStr("Juan Perez"), fecha_nac=SecretStr("1980-01-01"))
+    claves_ecg = resolver_claves(
+        identidad_ecg, PEPPER_TEST, resolutor_pg, id_documento="ecg-1", etapa="pseudonimizacion"
+    )
+
+    assert claves_ecg.id_paciente == generar_id_paciente(PEPPER_TEST, "12345678")
+
+
+def test_resolutor_postgres_nueva_instancia_ve_el_puente_ya_persistido(
+    escritor_postgres: EscritorPostgres,
+) -> None:
+    # simula una corrida SEPARADA del programa: instancia NUEVA de
+    # ResolutorClavesPostgres sobre el MISMO engine/base -- a diferencia de
+    # ResolutorClaves(), no arranca vacía.
+    resolutor_corrida_1 = ResolutorClavesPostgres(escritor_postgres)
+    resolutor_corrida_1.registrar_puente("alt-1", "pid-1")
+
+    resolutor_corrida_2 = ResolutorClavesPostgres(escritor_postgres)
+    assert resolutor_corrida_2.resolver("alt-1") == "pid-1"
