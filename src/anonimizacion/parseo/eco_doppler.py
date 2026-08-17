@@ -11,6 +11,16 @@ van a `medicion_eco` (tabla ancha), el texto libre a `texto_seccion_eco`.
 Mismo formato de trabajo que `laboratorio_general.py`: filas de medida con
 separador `|` (`nombre | valor | unidad`), pendiente de calibrar contra el
 corpus real (ver design.md, "Pendientes").
+
+Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
+extracción con sort=True + firmas ECG reales"): mismo fix que
+`laboratorio_general.py` -- el header se busca sobre
+`texto.texto_completo_ordenado` (orden geométrico, `sort=True`), no
+`texto.texto_completo` (orden de dibujado), y cada campo capturado se trunca
+en el primer separador de 2+ espacios (`_primer_segmento`) para no arrastrar
+un campo vecino que comparta la misma fila visual. El cuerpo (medidas +
+texto libre + firma) se sigue parseando línea por línea sobre
+`texto.paginas_ordenadas`, no `texto.paginas`, por la misma razón.
 """
 
 from __future__ import annotations
@@ -86,12 +96,23 @@ class ContenidoEco:
     firma: FirmaMedico | None
 
 
+def _primer_segmento(texto: str) -> str:
+    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte).
+
+    Misma convención que `parseo/ecg_mortara.py::_primer_segmento` y
+    `parseo/laboratorio_general.py::_primer_segmento`: con `sort=True`, dos
+    campos que comparten la misma fila visual pueden quedar en la misma
+    línea del texto extraído.
+    """
+    return re.split(r"\s{2,}", texto, maxsplit=1)[0].strip()
+
+
 def _buscar_campos(texto: str, patrones: dict[str, str]) -> dict[str, str]:
     campos: dict[str, str] = {}
     for clave, patron in patrones.items():
         coincidencia = re.search(patron, texto)
         if coincidencia:
-            campos[clave] = coincidencia.group(1).strip()
+            campos[clave] = _primer_segmento(coincidencia.group(1))
     return campos
 
 
@@ -159,7 +180,7 @@ class ParseadorEcoDoppler:
     tipo_documento = TipoDocumento.ECOCARDIOGRAMA
 
     def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
-        texto_completo = texto.texto_completo
+        texto_completo = texto.texto_completo_ordenado
         header = _buscar_campos(texto_completo, _CAMPOS_HEADER)
 
         if "nombre" not in header or "fecha" not in header:
@@ -189,7 +210,7 @@ class ParseadorEcoDoppler:
             if clave not in ("nombre", "dni", "fecha", "numero_estudio")
         }
 
-        medidas, secciones_texto, firma = _parsear_cuerpo(texto.paginas)
+        medidas, secciones_texto, firma = _parsear_cuerpo(texto.paginas_ordenadas)
 
         contenido = ContenidoEco(medidas=medidas, secciones_texto=secciones_texto, firma=firma)
 

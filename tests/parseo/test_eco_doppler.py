@@ -82,3 +82,23 @@ def test_header_ausente_lanza_error_parseo() -> None:
     with pytest.raises(ErrorParseo) as info:
         ParseadorEcoDoppler().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+
+
+def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
+    """Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
+    "Fix: extracción con sort=True + firmas ECG reales"): mismo fix que
+    `laboratorio_general.py` -- lee `paginas_ordenadas` y trunca en el
+    separador de 2+ espacios para no arrastrar el campo vecino de la misma
+    fila visual.
+    """
+    pagina_sin_ordenar = "Paciente:\nFecha:\nMEDIDAS\nAO | 28 | mm\nFernandez Marta\n20/03/2024\n"
+    pagina_ordenada = (
+        "Paciente: Fernandez Marta      Fecha: 20/03/2024\n"
+        "MEDIDAS\nAO | 28 | mm\n"
+    )
+    texto = TextoExtraido(paginas=(pagina_sin_ordenar,), paginas_ordenadas=(pagina_ordenada,))
+
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert resultado.identidad.nombre.get_secret_value() == "Fernandez Marta"
+    assert resultado.fecha_estudio.isoformat() == "2024-03-20"

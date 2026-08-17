@@ -15,6 +15,18 @@ design.md, "Pendientes"). Estos parsers asumen un separador `|` explícito
 por fila de resultado como formato de trabajo estable y sin ambigüedad de
 espacios; se recalibra contra PDFs reales sin cambiar la forma pública del
 parser (misma entrada `TextoExtraido`, misma salida `DocumentoParseado`).
+
+Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
+extracción con sort=True + firmas ECG reales"): este parser lee
+`texto.paginas_ordenadas` (orden geométrico, `sort=True`), no `texto.paginas`
+(orden de dibujado) -- el PDF real dibuja etiquetas y valores en pasadas
+separadas del content stream, y solo el orden geométrico los deja adyacentes
+como espera el regex "Etiqueta: valor". Como dos campos pueden compartir la
+misma fila visual (columna izquierda + columna derecha, p. ej. "Apellido y
+Nombre: X      Fecha: Y" en una sola línea), cada campo capturado se trunca
+en el primer separador de 2+ espacios (`_primer_segmento`, misma convención
+que `parseo/ecg_mortara.py`) para no arrastrar el campo siguiente como parte
+del valor.
 """
 
 from __future__ import annotations
@@ -67,12 +79,23 @@ class ContenidoLaboratorio:
     resultados: tuple[ResultadoLaboratorio, ...]
 
 
+def _primer_segmento(texto: str) -> str:
+    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte).
+
+    Con `sort=True`, dos campos que comparten la misma fila visual (columna
+    izquierda + columna derecha) pueden quedar en la misma línea del texto
+    extraído; 2+ espacios es el separador que el propio documento usa para
+    alinearlas. Misma convención que `parseo/ecg_mortara.py::_primer_segmento`.
+    """
+    return re.split(r"\s{2,}", texto, maxsplit=1)[0].strip()
+
+
 def _extraer_campos_header(pagina: str) -> dict[str, str]:
     campos: dict[str, str] = {}
     for clave, patron in _CAMPOS_HEADER.items():
         coincidencia = re.search(patron, pagina)
         if coincidencia:
-            campos[clave] = coincidencia.group(1).strip()
+            campos[clave] = _primer_segmento(coincidencia.group(1))
     return campos
 
 
@@ -139,7 +162,7 @@ class ParseadorLaboratorioGeneral:
         header: dict[str, str] | None = None
         resultados: list[ResultadoLaboratorio] = []
 
-        for pagina in texto.paginas:
+        for pagina in texto.paginas_ordenadas:
             campos_pagina = _extraer_campos_header(pagina)
             numero_peticion_pagina = campos_pagina.get("numero_peticion")
 

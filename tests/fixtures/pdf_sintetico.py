@@ -29,3 +29,35 @@ def crear_pdf_corrupto(ruta: Path) -> Path:
     """Escribe bytes que no son un PDF válido, simulando un archivo corrupto."""
     ruta.write_bytes(b"esto no es un pdf valido, solo bytes sinteticos de prueba")
     return ruta
+
+
+def crear_pdf_layout_columnas(
+    ruta: Path,
+    filas: list[tuple[str, str]],
+    *,
+    y_inicio: float = 100,
+    alto_fila: float = 20,
+) -> Path:
+    """Crea un PDF de una página con `filas` de (etiqueta, valor) en dos columnas.
+
+    Replica el artefacto de generación real observado contra los PDFs de
+    muestra (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
+    extracción con sort=True"): el content stream dibuja PRIMERO todas las
+    etiquetas de la columna izquierda y DESPUÉS todos los valores de la
+    columna derecha, aunque geométricamente cada etiqueta y su valor
+    comparten la misma fila (misma altura `y`). El orden de dibujado (el que
+    devuelve `page.get_text()` sin `sort=True`) NO es el orden de lectura
+    visual: etiqueta y valor quedan muy separados entre sí. Con
+    `page.get_text(sort=True)` (orden geométrico) quedan adyacentes en la
+    misma línea, como espera un lector humano.
+    """
+    documento = pymupdf.open()
+    pagina = documento.new_page()
+    x_etiqueta, x_valor = 72, 250
+    for indice, (etiqueta, _valor) in enumerate(filas):
+        pagina.insert_text((x_etiqueta, y_inicio + indice * alto_fila), etiqueta, fontsize=11)
+    for indice, (_etiqueta, valor) in enumerate(filas):
+        pagina.insert_text((x_valor, y_inicio + indice * alto_fila), valor, fontsize=11)
+    documento.save(ruta)
+    documento.close()
+    return ruta

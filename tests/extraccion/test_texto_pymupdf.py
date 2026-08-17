@@ -14,7 +14,11 @@ import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido, extraer_texto
-from tests.fixtures.pdf_sintetico import crear_pdf_con_texto, crear_pdf_corrupto
+from tests.fixtures.pdf_sintetico import (
+    crear_pdf_con_texto,
+    crear_pdf_corrupto,
+    crear_pdf_layout_columnas,
+)
 
 
 def test_extraer_texto_lab_multi_pagina_devuelve_texto_por_pagina(tmp_path: Path) -> None:
@@ -70,3 +74,50 @@ def test_extraer_texto_archivo_inexistente_falla_explicito(tmp_path: Path) -> No
         extraer_texto(tmp_path / "no_existe.pdf")
 
     assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+
+
+def test_extraer_texto_paginas_ordenadas_agrupa_etiqueta_y_valor_en_la_misma_linea(
+    tmp_path: Path,
+) -> None:
+    # replica el layout real de laboratorio: etiquetas dibujadas primero,
+    # valores dibujados despues, pero geometricamente en la misma fila
+    ruta = crear_pdf_layout_columnas(
+        tmp_path / "columnas.pdf",
+        filas=[
+            ("Apellido y Nombre:", "PEREZ JUAN"),
+            ("Fecha:", "01/01/2026"),
+            ("Edad:", "64"),
+        ],
+    )
+
+    resultado = extraer_texto(ruta)
+
+    # sin ordenar (orden de dibujado): etiquetas agrupadas, lejos de sus valores
+    sin_ordenar = resultado.paginas[0]
+    assert sin_ordenar.find("Apellido y Nombre:") < sin_ordenar.find("Fecha:")
+    assert sin_ordenar.find("Fecha:") < sin_ordenar.find("PEREZ JUAN")
+
+    # ordenada geometricamente: etiqueta y su valor quedan en la misma linea
+    assert len(resultado.paginas_ordenadas) == 1
+    linea_nombre = next(
+        linea
+        for linea in resultado.paginas_ordenadas[0].splitlines()
+        if "Apellido y Nombre" in linea
+    )
+    assert "PEREZ JUAN" in linea_nombre
+
+    linea_fecha = next(
+        linea for linea in resultado.paginas_ordenadas[0].splitlines() if "Fecha:" in linea
+    )
+    assert "01/01/2026" in linea_fecha
+
+
+def test_extraer_texto_completo_ordenado_concatena_paginas_ordenadas(tmp_path: Path) -> None:
+    ruta = crear_pdf_con_texto(
+        tmp_path / "lab.pdf",
+        paginas=["HEMATOLOGIA\nHematocrito 42%", "QUIMICA CLINICA\nGlucosa 90 mg/dL"],
+    )
+
+    resultado = extraer_texto(ruta)
+
+    assert resultado.texto_completo_ordenado == "\n".join(resultado.paginas_ordenadas)

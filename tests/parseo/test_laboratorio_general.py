@@ -98,3 +98,30 @@ def test_header_ausente_lanza_error_parseo() -> None:
     with pytest.raises(ErrorParseo) as info:
         ParseadorLaboratorioGeneral().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+
+
+def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
+    """Fix post-PR9: el parser lee `paginas_ordenadas` (orden geométrico,
+    `sort=True`), no `paginas` (orden de dibujado) -- ver
+    `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: extracción con
+    sort=True". Contra el PDF real, dos campos pueden compartir la misma
+    fila visual (columna izquierda + columna derecha): sin truncar en el
+    separador de columnas (2+ espacios, misma convención que
+    `parseo/ecg_mortara.py::_primer_segmento`), el regex `.+` de "Apellido y
+    Nombre:" capturaría también " Fecha: 10/01/2024" como parte del nombre.
+    """
+    pagina_sin_ordenar = (
+        "Apellido y Nombre:\nFecha:\nNº Petición:\nEdad:\nHEMATOLOGIA\n"
+        "Hemoglobina | 14.5 | g/dL | 12.0-16.0\nPerez Juan\n10/01/2024\n987654\n44\n"
+    )
+    pagina_ordenada = (
+        "Apellido y Nombre: Perez Juan      Fecha: 10/01/2024\n"
+        "Nº Petición: 987654      Edad: 44\n"
+        "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n"
+    )
+    texto = TextoExtraido(paginas=(pagina_sin_ordenar,), paginas_ordenadas=(pagina_ordenada,))
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert resultado.identidad.nombre.get_secret_value() == "Perez Juan"
+    assert resultado.fecha_estudio.isoformat() == "2024-01-10"
