@@ -43,10 +43,12 @@ def verificar_cobertura(
 
     destinos_por_clave = {_clave(referencia): referencia for referencia in destinos}
     for hallazgo in hallazgos:
-        if _clave(hallazgo) not in destinos_por_clave:
+        referencia = destinos_por_clave.get(_clave(hallazgo))
+        if referencia is None or referencia.pagina != hallazgo.pagina:
             raise ErrorParseo(CodigoErrorDocumento.COBERTURA_INCOMPLETA, EtapaDocumento.RECONCILIACION, hallazgo.id_campo, hallazgo.pagina)
 
     hallazgos_por_clave = {_clave(hallazgo): hallazgo for hallazgo in hallazgos}
     for referencia in destinos:
-        if _clave(referencia) not in hallazgos_por_clave:
+        hallazgo = hallazgos_por_clave.get(_clave(referencia))
+        if hallazgo is None or hallazgo.pagina != referencia.pagina:
             raise ErrorParseo(CodigoErrorDocumento.COBERTURA_INCOMPLETA, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)

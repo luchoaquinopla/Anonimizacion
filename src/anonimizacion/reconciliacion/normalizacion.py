@@ -10,8 +10,8 @@ _NUMERO = re.compile(r"\d+(?:[,.]\d+)?")
 
 
 def normalizar_texto(valor: str) -> str:
-    """Colapsa espacios y mayúsculas sin modificar el contenido textual."""
-    return _ESPACIOS.sub(" ", valor).strip().casefold()
+    """Colapsa espacios, separadores estructurales y mayúsculas."""
+    return _ESPACIOS.sub(" ", valor.replace("|", " ")).strip().casefold()
 
 
 def normalizar_numero(valor: str, *, decimales_permitidos: int | None = None) -> str:
