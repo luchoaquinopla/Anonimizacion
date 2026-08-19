@@ -2,100 +2,85 @@
 
 ## Propósito
 
-Garantizar que el registro estructurado de ECG, laboratorio o ecocardiograma coincida fielmente con su contenido fuente antes de detectar PII, anonimizar o persistir datos.
+Garantizar fidelidad y completitud entre un PDF de ECG, laboratorio o eco y su registro estructurado antes de detectar PII, anonimizar o persistir. La comprobación modelo→PDF por sí sola es insuficiente: también se debe detectar contenido clínico reconocido que el modelo omitió.
 
 ## Requisitos
 
 ### Requirement: Reconciliación previa obligatoria
 
-El sistema MUST ejecutar la reconciliación después del parseo y antes de la detección de PII, pseudonimización y cualquier persistencia de salida.
+El sistema MUST reconciliar después del parseo y antes de detección de PII, pseudonimización y persistencia clínica. Solo un documento aprobado MAY continuar.
 
 #### Scenario: Registro aprobado
+- GIVEN un documento cuya igualdad y cobertura están aprobadas
+- WHEN termina la reconciliación
+- THEN el pipeline MUST habilitar la detección de PII
 
-- GIVEN un PDF reconocido y un registro parseado con evidencia suficiente
-- WHEN todos los campos requeridos se reconcilian
-- THEN el pipeline MUST habilitar la etapa de detección de PII
-- AND la persistencia posterior MAY continuar
-
-#### Scenario: Registro no aprobado
-
-- GIVEN un resultado de reconciliación fallido
+#### Scenario: Registro rechazado
+- GIVEN un fallo de igualdad o cobertura
 - WHEN el pipeline procesa el documento
-- THEN MUST NOT detectar PII, pseudonimizar ni persistir su salida clínica
+- THEN MUST NOT detectar PII ni persistir salida clínica
 
-### Requirement: Igualdad por campo
+### Requirement: Igualdad y procedencia por campo
 
-El sistema MUST comparar cada campo requerido del registro tipado contra la evidencia procedente del texto del PDF, según reglas declaradas para ECG, laboratorio y eco. La igualdad MUST preservar el significado del valor.
+El sistema MUST comprobar que cada valor estructurado requerido tenga una evidencia única, identificada y semánticamente igual en el PDF. Solo MUST aceptar normalizaciones explícitas; MUST NOT modificar unidad, signo, precisión ni asociación campo-valor.
 
-#### Scenario: Coincidencia exacta
-
-- GIVEN un campo requerido y evidencia con la misma representación normalizada
-- WHEN se reconcilia el campo
-- THEN el campo MUST aprobarse
-
-#### Scenario: Cambio semántico
-
-- GIVEN un campo tipado cuyo valor difiere de su evidencia
-- WHEN se reconcilia el campo
-- THEN el documento MUST fallar con código de discrepancia
-
-### Requirement: Normalizaciones permitidas
-
-El sistema MUST aceptar únicamente equivalencias de formato explícitamente definidas por campo y tipo documental; MUST NOT aplicar transformaciones que cambien significado clínico, unidad, signo, precisión o asociación del campo.
-
-#### Scenario: Equivalencia explícita
-
-- GIVEN dos representaciones equivalentes bajo la regla del campo
+#### Scenario: Valor respaldado
+- GIVEN un valor estructurado y su evidencia única normalizada
 - WHEN se reconcilian
 - THEN el campo MUST aprobarse
 
-#### Scenario: Conversión no autorizada
+#### Scenario: Evidencia ausente, ambigua o discrepante
+- GIVEN un valor sin evidencia, con múltiples candidatas o diferente de ella
+- WHEN se reconcilia
+- THEN el documento MUST fallar con el código correspondiente
 
-- GIVEN una diferencia no cubierta por una regla explícita
-- WHEN se reconcilia el campo
-- THEN el documento MUST fallar como discrepancia
+### Requirement: Inventario independiente de cobertura
 
-### Requirement: Ausencia y ambigüedad
+El sistema MUST derivar por tipo documental un inventario independiente de campos clínicos reconocibles desde el PDF, sin depender de los valores ya emitidos por el parser. El inventario MUST distinguir campos obligatorios, colecciones y texto no clínico permitido.
 
-El sistema MUST rechazar el documento si falta un campo requerido, falta su evidencia, hay más de una evidencia candidata sin regla que la desambigüe, o la procedencia no identifica su fuente.
+#### Scenario: ECG completo
+- GIVEN un ECG con etiquetas y medidas reconocibles
+- WHEN se compara inventario y modelo
+- THEN cada medida reconocida MUST corresponder a un campo estructurado una sola vez
 
-#### Scenario: Campo o evidencia ausente
+#### Scenario: Medida ECG omitida
+- GIVEN una medida reconocible en el PDF que no está en el modelo
+- WHEN se valida cobertura
+- THEN el documento MUST fallar por cobertura incompleta
 
-- GIVEN un campo requerido o su evidencia inexistente
-- WHEN se reconcilia el documento
-- THEN MUST fallar con código de ausencia
+### Requirement: Cobertura uno-a-uno de colecciones
 
-#### Scenario: Evidencia ambigua
+El sistema MUST exigir correspondencia uno-a-uno entre evidencia clínica inventariada y valor estructurado. Para colecciones MUST validar cardinalidad y ordinal, de modo que filas o secciones repetidas no se oculten por coincidir en nombre o valor.
 
-- GIVEN múltiples candidatas para un mismo campo sin selección determinística
-- WHEN se reconcilia el documento
-- THEN MUST fallar con código de ambigüedad
+#### Scenario: Fila de laboratorio omitida
+- GIVEN un laboratorio con analitos reconocibles y una fila no emitida
+- WHEN se valida la colección
+- THEN MUST fallar por cobertura incompleta indicando el ordinal seguro
 
-### Requirement: Cuarentena segura y trazabilidad
+#### Scenario: Sección de eco duplicada u omitida
+- GIVEN un eco con medidas o secciones reconocibles
+- WHEN su cardinalidad u orden no coincide con el modelo
+- THEN MUST fallar por cobertura incompleta o ambigüedad
 
-Ante cualquier fallo, el sistema MUST derivar el documento a cuarentena como error no reintentable y conservar solo identificador técnico, tipo documental, etapa, código, identificador de campo y localización no sensible. MUST NOT almacenar, registrar ni exponer PII, texto fuente ni valores clínicos crudos; la evidencia verificable MUST usar exclusivamente metadatos permitidos y huellas HMAC.
+### Requirement: Whitelist de texto no clínico
 
-#### Scenario: Discrepancia aislada
+El sistema MUST ignorar únicamente texto declarado en una whitelist explícita por tipo documental, como encabezados visuales o boilerplate. Todo texto clínico reconocible que no tenga destino estructurado MUST causar fallo; texto desconocido MUST NOT ignorarse implícitamente.
 
-- GIVEN una discrepancia de reconciliación
-- WHEN se registra la cuarentena
-- THEN MUST incluir etapa, código y campo
-- AND MUST excluir PII y valores o texto crudos
+#### Scenario: Texto permitido
+- GIVEN texto de formato incluido en la whitelist
+- WHEN se crea el inventario
+- THEN MUST NOT requerir valor estructurado
 
-#### Scenario: Auditoría permitida
+#### Scenario: Texto clínico sin destino
+- GIVEN texto clínico reconocible fuera de la whitelist
+- WHEN se valida cobertura
+- THEN MUST fallar por cobertura incompleta
 
-- GIVEN un documento en cuarentena
-- WHEN un proceso autorizado consulta su metadato de reconciliación
-- THEN MAY verificar la huella y localización no sensible
-- AND MUST NOT recuperar contenido clínico ni PII desde esa traza
+### Requirement: Cuarentena segura y pruebas
 
-### Requirement: Cobertura verificable
+Ante fallo, el sistema MUST enviar el documento a cuarentena no reintentable con solo identificador técnico, tipo, etapa, código, campo y localización no sensible. MUST NOT guardar PII, texto ni valores clínicos crudos. Las pruebas sintéticas MUST cubrir igualdad, cobertura completa, omisiones y cardinalidad para ECG, laboratorio y eco.
 
-El sistema MUST contar con pruebas sintéticas para ECG, laboratorio y eco que cubran coincidencia, normalización permitida, ausencia, discrepancia y ambigüedad. Las pruebas MUST NOT usar PDFs reales ni PII real.
-
-#### Scenario: Suite por tipo documental
-
-- GIVEN fixtures sintéticas de los tres tipos documentales
-- WHEN se ejecuta la suite de reconciliación
-- THEN MUST validar cada resultado esperado sin acceder a PDFs reales
-
+#### Scenario: Cuarentena por cobertura incompleta
+- GIVEN un campo, fila o sección omitida
+- WHEN falla la reconciliación
+- THEN cuarentena MUST excluir contenido sensible

@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| Estimated changed lines | 850–1,150 |
+| Estimated changed lines | 1,500–1,950; 700–950 restantes |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | PR 1 → contratos; PR 2 → estrategias; PR 3 → integración/cuarentena |
+| Suggested split | PR 5 → cobertura base+ECG; PR 6 → laboratorio; PR 7 → eco; PR 8 → pipeline |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | feature-branch-chain |
 
@@ -20,9 +20,10 @@ Chain strategy: feature-branch-chain
 
 | Unit | Goal | Likely PR | Notes |
 |---|---|---|---|
-| 1 | Contratos, errores y normalización | PR 1 | Tests unitarios incluidos; rollback aislado. |
-| 2 | Reglas y referencias de los tres parsers | PR 2 | Depende de PR 1; tests sintéticos por Strategy. |
-| 3 | Pipeline, cuarentena y migración | PR 3 | Depende de PR 2; pruebas de integración y persistencia. |
+| 1 | Contrato y cobertura ECG | PR 5 | Base `feat/pdf-extraction-reconciliation`; tests. |
+| 2 | Inventario y cobertura de laboratorio | PR 6 | Base rama PR 5; cardinalidad/ordinal. |
+| 3 | Inventario y cobertura de eco | PR 7 | Base rama PR 6; medidas y secciones. |
+| 4 | Bloqueo, cuarentena e integración | PR 8 | Base rama PR 7; suite completa. |
 
 ## Phase 1: Contratos y normalización
 
@@ -39,9 +40,22 @@ Chain strategy: feature-branch-chain
 - [x] 2.4 RED/GREEN: cubrir eco en `tests/reconciliacion/test_eco_doppler.py`, `reconciliacion/eco_doppler.py` y `parseo/eco_doppler.py`, incluidas medidas, texto y firma.
 - [x] 2.5 REFACTOR: crear `reconciliacion/registro.py` y actualizar `parseo/registro.py`; rechazar referencias sin destino y no persistir HMAC.
 
-## Phase 3: Integración segura
+## Phase 3: Cobertura base y ECG (PR 5)
 
-- [ ] 3.1 RED: ampliar `tests/pipeline/test_{etapas,ejecutor}.py`: aprobado llega a PII; rechazo no llama PII, claves, vínculo ni salida.
-- [ ] 3.2 GREEN: modificar `pipeline/{etapas,ejecutor}.py` para reconciliar tras parseo; errores no reintentables deben aislarse antes de `resueltos`.
-- [ ] 3.3 RED/GREEN: ampliar `tests/salida/test_{cuarentena,migraciones}.py`, `salida/{cuarentena,modelos_orm}.py` y migración Alembic con whitelist `campo`/`pagina` sin evidencia, valor, PII ni huella.
-- [ ] 3.4 Verificar `tests/integracion/test_lote_aislamiento.py` con un sintético rechazado y dos aprobados; ejecutar `pytest` por unidad y la suite completa.
+- [ ] 3.1 RED: añadir pruebas de `HallazgoCobertura`, claves duplicadas/desordenadas y whitelist en `tests/reconciliacion/test_inventario.py`.
+- [ ] 3.2 GREEN: ampliar `reconciliacion/{base,inventario,_comun}.py` con contrato seguro, cruce modelo↔inventario y códigos de cobertura.
+- [ ] 3.3 RED/GREEN: inventariar headers/medidas ECG en `reconciliacion/ecg_mortara.py`; una omitida debe fallar sin valor.
+
+## Phase 4: Colecciones de laboratorio y eco (PR 6–7)
+
+- [ ] 4.1 RED/GREEN: inventariar filas clínicas por sección/ordinal en `reconciliacion/laboratorio_general.py`; probar repetida, omitida y boilerplate permitido.
+- [ ] 4.2 REFACTOR: emitir ordinales coherentes desde `parseo/laboratorio_general.py`, sin reutilizar el resultado parseado como inventario.
+- [ ] 4.3 RED/GREEN: inventariar medidas y secciones por página/ordinal en `reconciliacion/eco_doppler.py`; probar duplicación y omisión.
+- [ ] 4.4 REFACTOR: alinear referencias de `parseo/eco_doppler.py` y validar asociación selector-etiqueta-valor, no mera presencia.
+
+## Phase 5: Integración segura (PR 8)
+
+- [ ] 5.1 RED: ampliar `tests/pipeline/test_{etapas,ejecutor}.py`: cobertura fallida no invoca PII, claves, vínculo ni salida.
+- [ ] 5.2 GREEN: ejecutar inventario y reconciliación tras `parsear` en `pipeline/{etapas,ejecutor}.py`; aislar como no reintentable.
+- [ ] 5.3 RED/GREEN: verificar `salida/cuarentena.py` y `tests/salida/test_cuarentena.py`: solo metadata segura.
+- [ ] 5.4 Verificar omisiones sintéticas ECG/laboratorio/eco en `tests/integracion/test_lote_aislamiento.py`; ejecutar `pytest` y suite completa.
