@@ -47,6 +47,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
@@ -385,6 +386,22 @@ class ParseadorEcoDoppler:
         medidas, secciones_texto, firma = _parsear_cuerpo(texto.paginas_ordenadas)
 
         contenido = ContenidoEco(medidas=medidas, secciones_texto=secciones_texto, firma=firma)
+        fuentes = (
+            ReferenciaCampo("eco.nombre", 1, "eco.nombre"),
+            ReferenciaCampo("eco.fecha_estudio", 1, "eco.fecha_estudio"),
+            *((ReferenciaCampo("eco.numero_estudio", 1, "eco.numero_estudio"),) if identidad.ids_internos else ()),
+            *((ReferenciaCampo("eco.dni", 1, "eco.dni"),) if identidad.dni else ()),
+            *((ReferenciaCampo("eco.firma", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if contenido.firma.nombre in pagina), 1), "eco.firma"),) if contenido.firma else ()),
+        ) + (
+            tuple(
+                ReferenciaCampo("eco.medida", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if medida.valor in pagina), 1), "eco.medida", ordinal)
+                for ordinal, medida in enumerate(contenido.medidas)
+            )
+            + tuple(
+                ReferenciaCampo("eco.seccion", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if seccion.texto in pagina), 1), "eco.seccion", ordinal)
+                for ordinal, seccion in enumerate(contenido.secciones_texto)
+            )
+        )
 
         return DocumentoParseado(
             tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
@@ -393,4 +410,5 @@ class ParseadorEcoDoppler:
             fecha_estudio=fecha_estudio,
             contenido=contenido,
             adicionales=adicionales,
+            fuentes=fuentes,
         )
