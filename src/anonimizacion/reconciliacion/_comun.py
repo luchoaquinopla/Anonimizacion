@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo, EtapaDocumento
 from anonimizacion.dominio.modelos import DocumentoParseado
@@ -15,11 +15,17 @@ from .inventario import verificar_cobertura
 
 
 def reconciliar_referencias(
-    documento: DocumentoParseado, texto: TextoExtraido, valores: Mapping[tuple[str, int], str]
+    documento: DocumentoParseado,
+    texto: TextoExtraido,
+    valores: Mapping[tuple[str, int], str],
+    *,
+    ids_con_asociacion_estructurada: Collection[str] = (),
 ) -> None:
-    """Verifica una evidencia por referencia sin conservar su contenido."""
+    """Verifica evidencia simple; colecciones usan su asociación estructurada."""
     referencias_vistas: set[tuple[str, int]] = set()
     for referencia in documento.fuentes:
+        if referencia.id_campo in ids_con_asociacion_estructurada:
+            continue
         clave = (referencia.id_campo, referencia.ordinal)
         if clave in referencias_vistas or clave not in valores:
             raise ErrorParseo(CodigoErrorDocumento.EVIDENCIA_AUSENTE, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
