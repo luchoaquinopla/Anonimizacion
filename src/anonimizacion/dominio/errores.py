@@ -51,6 +51,8 @@ class CodigoErrorDocumento(str, Enum):
     EVIDENCIA_AUSENTE = "evidencia_ausente"
     EVIDENCIA_AMBIGUA = "evidencia_ambigua"
     VALOR_DISCREPANTE = "valor_discrepante"
+    COBERTURA_INCOMPLETA = "cobertura_incompleta"
+    COBERTURA_AMBIGUA = "cobertura_ambigua"
 
 
 @dataclass(frozen=True)

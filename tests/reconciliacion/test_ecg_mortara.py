@@ -39,4 +39,4 @@ def test_rechaza_evidencia_ambigua_ecg() -> None:
 def test_reconcilia_fecha_nacimiento_ecg() -> None:
     fuente = ReferenciaCampo("ecg.fecha_nacimiento", 1, "ecg.fecha_nacimiento")
     documento = DocumentoParseado(TipoDocumento.ECG, 1, IdentidadCruda(nombre=SecretStr("Persona"), fecha_nac=SecretStr("1975-12-12")), date(2025, 6, 5), ContenidoEcg(None, None, None, None, None), fuentes=(fuente,))
-    ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido(("12-DEC-1975",)))
+    ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido(("12-DEC-1975 (49 yr)",)))
