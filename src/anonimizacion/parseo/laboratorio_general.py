@@ -102,6 +102,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
@@ -404,6 +405,15 @@ class ParseadorLaboratorioGeneral:
             numero_peticion=header.get("numero_peticion", ""),
             resultados=tuple(resultados),
         )
+        fuentes = tuple(
+            ReferenciaCampo(
+                "laboratorio.resultado",
+                next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if resultado.resultado in pagina), 1),
+                "laboratorio.resultado",
+                ordinal,
+            )
+            for ordinal, resultado in enumerate(contenido.resultados)
+        )
 
         return DocumentoParseado(
             tipo_documento=TipoDocumento.LABORATORIO,
@@ -412,4 +422,5 @@ class ParseadorLaboratorioGeneral:
             fecha_estudio=fecha_estudio,
             contenido=contenido,
             adicionales=adicionales,
+            fuentes=fuentes,
         )

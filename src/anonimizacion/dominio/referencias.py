@@ -23,6 +23,7 @@ REFERENCIAS_PERMITIDAS: dict[str, frozenset[str]] = {
     "eco.nombre": frozenset({"eco.nombre"}),
     "eco.dni": frozenset({"eco.dni"}),
     "eco.fecha_estudio": frozenset({"eco.fecha_estudio"}),
+    "eco.numero_estudio": frozenset({"eco.numero_estudio"}),
     "eco.medida": frozenset({"eco.medida"}),
     "eco.seccion": frozenset({"eco.seccion"}),
     "eco.firma": frozenset({"eco.firma"}),
