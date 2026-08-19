@@ -215,6 +215,28 @@ def test_error_deterministico_no_se_reintenta() -> None:
     assert cuarentena.registrados == [resultados[0].error]
 
 
+def test_fallo_propaga_campo_y_pagina_seguros_a_cuarentena() -> None:
+    def extraer(artefacto):
+        raise ErrorParseo(
+            codigo=CodigoErrorDocumento.EVIDENCIA_AUSENTE,
+            etapa="reconciliacion",
+            campo="ecg.vent_rate",
+            pagina=1,
+        )
+
+    ejecutor, _escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=extraer,
+        resolver_claves=lambda *a, **k: ClavesPaciente(id_paciente="x", id_alt_paciente=None, version_clave=1),
+    )
+
+    resultados = ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=_artefacto("uno"))])
+
+    error = resultados[0].error
+    assert error.campo == "ecg.vent_rate"
+    assert error.pagina == 1
+    assert cuarentena.registrados == [error]
+
+
 def test_error_transitorio_se_reintenta_y_puede_tener_exito() -> None:
     # spec batch-processing, escenario "reintento exitoso tras fallo transitorio"
     intentos = {"n": 0}

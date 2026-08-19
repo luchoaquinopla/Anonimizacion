@@ -13,6 +13,7 @@ from anonimizacion.dominio.modelos import (
     RegistroAnonimizado,
 )
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 NOMBRE_FICTICIO = "Juana Pérez de Prueba"
 DNI_FICTICIO = "11222333"
@@ -60,6 +61,31 @@ def test_documento_parseado_agrupa_tipo_identidad_y_fuentes() -> None:
     assert documento.tipo_documento == TipoDocumento.LABORATORIO
     assert documento.adicionales == {}
     assert documento.fuentes == ()
+
+
+def test_documento_parseado_conserva_solo_referencias_de_fuente() -> None:
+    referencia = ReferenciaCampo(id_campo="ecg.vent_rate", pagina=1, selector="ecg.vent_rate")
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=NOMBRE_FICTICIO),
+        fecha_estudio=date(2024, 1, 15),
+        contenido={},
+        fuentes=(referencia,),
+    )
+    assert documento.fuentes == (referencia,)
+
+
+def test_documento_parseado_rechaza_fuentes_que_no_son_referencias() -> None:
+    with pytest.raises(TypeError):
+        DocumentoParseado(
+            tipo_documento=TipoDocumento.ECG,
+            version_esquema=1,
+            identidad=IdentidadCruda(nombre=NOMBRE_FICTICIO),
+            fecha_estudio=date(2024, 1, 15),
+            contenido={},
+            fuentes=("ecg.vent_rate",),  # type: ignore[arg-type]
+        )
 
 
 def test_identidad_cruda_ids_internos_no_se_puede_mutar_por_contenido() -> None:

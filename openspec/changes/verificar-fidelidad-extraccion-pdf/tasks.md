@@ -26,10 +26,10 @@ Chain strategy: pending
 
 ## Phase 1: Contratos y normalización
 
-- [ ] 1.1 RED: crear `tests/reconciliacion/test_normalizacion.py` para igualdad, coma/punto, espacios, fecha ISO y rechazos de unidad, signo o precisión.
-- [ ] 1.2 GREEN: crear `src/anonimizacion/reconciliacion/{__init__,base,normalizacion}.py` con `ReferenciaCampo`, reglas puras y `ReconciliadorDocumento`.
-- [ ] 1.3 RED/GREEN: ampliar `tests/dominio/test_{modelos,errores}.py` y `src/anonimizacion/dominio/{modelos,errores}.py` con `fuentes`, etapa y códigos seguros.
-- [ ] 1.4 REFACTOR: validar que referencias y excepciones no admitan texto, PII, valores ni huellas persistibles.
+- [x] 1.1 RED: crear `tests/reconciliacion/test_normalizacion.py` para igualdad, coma/punto, espacios, fecha ISO y rechazos de unidad, signo o precisión.
+- [x] 1.2 GREEN: crear `src/anonimizacion/reconciliacion/{__init__,base,normalizacion}.py` con `ReferenciaCampo`, reglas puras y `ReconciliadorDocumento`.
+- [x] 1.3 RED/GREEN: ampliar `tests/dominio/test_{modelos,errores}.py` y `src/anonimizacion/dominio/{modelos,errores}.py` con `fuentes`, etapa y códigos seguros.
+- [x] 1.4 REFACTOR: validar que referencias y excepciones no admitan texto, PII, valores ni huellas persistibles.
 
 ## Phase 2: Estrategias y procedencia
 

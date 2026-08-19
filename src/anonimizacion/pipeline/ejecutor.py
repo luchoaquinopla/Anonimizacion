@@ -320,7 +320,13 @@ class EjecutorPipeline:
         )
 
     def _a_fallo(self, id_documento: str, excepcion: ErrorParseo) -> FalloDocumento:
-        error = ErrorDocumento(id_documento=id_documento, etapa=excepcion.etapa, codigo=excepcion.codigo)
+        error = ErrorDocumento(
+            id_documento=id_documento,
+            etapa=excepcion.etapa,
+            codigo=excepcion.codigo,
+            campo=excepcion.campo,
+            pagina=excepcion.pagina,
+        )
         try:
             self._cuarentena.registrar(error)
         except Exception:

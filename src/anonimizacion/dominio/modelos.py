@@ -10,11 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .tipos_documento import TipoDocumento
+
+if TYPE_CHECKING:
+    from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 
 class IdentidadCruda(BaseModel):
@@ -43,7 +46,15 @@ class DocumentoParseado:
     fecha_estudio: date
     contenido: Any  # ContenidoEcg | ContenidoLaboratorio | ContenidoEco (Fase 4)
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    fuentes: tuple[Any, ...] = field(default_factory=tuple)  # ReferenciaFuente (Fase 2)
+    fuentes: tuple[ReferenciaCampo, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        from anonimizacion.reconciliacion.base import ReferenciaCampo
+
+        if not isinstance(self.fuentes, tuple) or not all(
+            isinstance(fuente, ReferenciaCampo) for fuente in self.fuentes
+        ):
+            raise TypeError("fuentes debe contener solo ReferenciaCampo")
 
 
 @dataclass(frozen=True)
