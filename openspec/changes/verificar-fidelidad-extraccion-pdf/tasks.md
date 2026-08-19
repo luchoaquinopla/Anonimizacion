@@ -50,8 +50,8 @@ Chain strategy: feature-branch-chain
 
 - [x] 4.1 RED/GREEN: inventariar filas clínicas por sección/ordinal en `reconciliacion/laboratorio_general.py`; probar repetida, omitida y boilerplate permitido.
 - [x] 4.2 REFACTOR: emitir ordinales coherentes desde `parseo/laboratorio_general.py`, sin reutilizar el resultado parseado como inventario.
-- [ ] 4.3 RED/GREEN: inventariar medidas y secciones por página/ordinal en `reconciliacion/eco_doppler.py`; probar duplicación y omisión.
-- [ ] 4.4 REFACTOR: alinear referencias de `parseo/eco_doppler.py` y validar asociación selector-etiqueta-valor, no mera presencia.
+- [x] 4.3 RED/GREEN: inventariar medidas y secciones por página/ordinal en `reconciliacion/eco_doppler.py`; probar duplicación y omisión.
+- [x] 4.4 REFACTOR: alinear referencias de `parseo/eco_doppler.py` y validar asociación selector-etiqueta-valor, no mera presencia.
 
 ## Phase 5: Integración segura (PR 8)
 
