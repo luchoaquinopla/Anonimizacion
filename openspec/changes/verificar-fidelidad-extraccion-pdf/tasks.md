@@ -42,9 +42,9 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Cobertura base y ECG (PR 5)
 
-- [ ] 3.1 RED: añadir pruebas de `HallazgoCobertura`, claves duplicadas/desordenadas y whitelist en `tests/reconciliacion/test_inventario.py`.
-- [ ] 3.2 GREEN: ampliar `reconciliacion/{base,inventario,_comun}.py` con contrato seguro, cruce modelo↔inventario y códigos de cobertura.
-- [ ] 3.3 RED/GREEN: inventariar headers/medidas ECG en `reconciliacion/ecg_mortara.py`; una omitida debe fallar sin valor.
+- [x] 3.1 RED: añadir pruebas de `HallazgoCobertura`, claves duplicadas/desordenadas y whitelist en `tests/reconciliacion/test_inventario.py`.
+- [x] 3.2 GREEN: ampliar `reconciliacion/{base,inventario,_comun}.py` con contrato seguro, cruce modelo↔inventario y códigos de cobertura.
+- [x] 3.3 RED/GREEN: inventariar headers/medidas ECG en `reconciliacion/ecg_mortara.py`; una omitida debe fallar sin valor.
 
 ## Phase 4: Colecciones de laboratorio y eco (PR 6–7)
 

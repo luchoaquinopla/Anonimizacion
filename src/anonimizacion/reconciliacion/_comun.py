@@ -10,6 +10,8 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 
 from .normalizacion import normalizar_texto
+from .base import HallazgoCobertura, ReferenciaCampo
+from .inventario import verificar_cobertura
 
 
 def reconciliar_referencias(
@@ -34,3 +36,10 @@ def reconciliar_referencias(
         if not any(caracter.isdigit() for caracter in pagina):
             codigo = CodigoErrorDocumento.EVIDENCIA_AUSENTE
         raise ErrorParseo(codigo, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
+
+
+def reconciliar_cobertura(
+    documento: DocumentoParseado, inventario: tuple[HallazgoCobertura, ...]
+) -> None:
+    """Comprueba PDF→modelo después de validar la evidencia modelo→PDF."""
+    verificar_cobertura(inventario, documento.fuentes)
