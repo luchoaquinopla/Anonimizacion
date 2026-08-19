@@ -1,0 +1,41 @@
+"""Contratos seguros de procedencia y reconciliación."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from anonimizacion.dominio.modelos import DocumentoParseado
+from anonimizacion.dominio.referencias import REFERENCIAS_PERMITIDAS, validar_campo_reconciliacion
+from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+
+@dataclass(frozen=True)
+class ReferenciaCampo:
+    """Localización no sensible de un campo dentro del texto extraído."""
+
+    id_campo: str
+    pagina: int
+    selector: str
+    ordinal: int = 0
+
+    def __post_init__(self) -> None:
+        validar_campo_reconciliacion(self.id_campo)
+        selectores = REFERENCIAS_PERMITIDAS[self.id_campo]
+        if self.selector not in selectores:
+            raise ValueError("selector inválido")
+        if self.pagina < 1:
+            raise ValueError("pagina debe comenzar en 1")
+        if self.ordinal < 0:
+            raise ValueError("ordinal no puede ser negativo")
+
+
+@runtime_checkable
+class ReconciliadorDocumento(Protocol):
+    """Strategy que aprueba un documento o lanza `ErrorParseo`."""
+
+    tipo_documento: TipoDocumento
+
+    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
+        """Comprueba la procedencia y fidelidad del documento parseado."""
+        ...
