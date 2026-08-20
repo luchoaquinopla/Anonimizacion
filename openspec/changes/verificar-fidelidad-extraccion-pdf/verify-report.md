@@ -1,76 +1,94 @@
-# Verification Report — verificar-fidelidad-extraccion-pdf
+# Informe de verificación SDD
 
-**Modo de persistencia:** hybrid  
-**Rama verificada:** `feat/pdf-extraction-reconciliation` (`404802a`)  
-**Fecha:** 2026-08-19  
-**Veredicto:** **FAIL**
+**Cambio:** `verificar-fidelidad-extraccion-pdf`  
+**Modo:** TDD estricto  
+**Persistencia:** hybrid  
+**Rama verificada:** `feat/pdf-extraction-reconciliation` en `78c98c2`  
+**Fecha:** 2026-08-19
 
-## Evidencia de ejecución
+## Completitud
 
-| Comando | Resultado |
-|---|---|
-| `pytest tests/reconciliacion tests/pipeline tests/salida/test_cuarentena.py tests/integracion/test_lote_aislamiento.py -q` | ✅ 85 passed |
-| `pytest -q` | ✅ 330 passed |
-| `pytest -q --cov=anonimizacion --cov-report=term-missing` | ✅ 330 passed; 97% global |
-| `git diff --check main...HEAD` | ✅ Sin errores |
-| `ruff check ...` | ➖ No disponible en el entorno |
+| Métrica | Valor |
+|---|---:|
+| Tareas totales | 17 |
+| Tareas completas declaradas | 17 |
+| Tareas incompletas | 0 |
 
-## Matriz de cumplimiento
+## Ejecución
 
-| Requisito | Evidencia | Estado |
+**Pruebas:** `pytest -q` → **339 passed** en 11.13 s.  
+**Cobertura:** `pytest --cov=anonimizacion --cov-report=term-missing -q` → **339 passed**, cobertura total **97%**. Los módulos de reconciliación modificados están entre 89% y 100%; no hay módulo modificado debajo de 80%.  
+**Chequeo de diff:** `git diff --check main...HEAD` encontró espacios finales preexistentes en el informe de verificación anterior (tres líneas); no afecta el código, pero debe limpiarse antes del merge final.
+
+## Matriz de cumplimiento de especificación
+
+| Requisito | Escenario | Evidencia de prueba | Resultado |
+|---|---|---|---|
+| Reconciliación previa | Aprobado habilita PII | `tests/pipeline/test_ejecutor.py` | ✅ COMPLIANT |
+| Reconciliación previa | Rechazado bloquea PII y salida | `tests/integracion/test_lote_aislamiento.py` | ✅ COMPLIANT |
+| Igualdad/procedencia | Valor respaldado | pruebas ECG, laboratorio y eco en `tests/reconciliacion/` | ✅ COMPLIANT |
+| Igualdad/procedencia | Ausente, ambiguo o discrepante | `test_ecg_mortara.py`, `test_laboratorio_general.py`, `test_eco_doppler.py` | ✅ COMPLIANT |
+| Inventario independiente | ECG completo | `test_ecg_mortara.py` | ✅ COMPLIANT |
+| Inventario independiente | Medida ECG omitida | `test_ecg_mortara.py` | ✅ COMPLIANT |
+| Colecciones 1:1 | Fila de laboratorio omitida | `test_laboratorio_general.py` | ✅ COMPLIANT |
+| Colecciones 1:1 | Eco duplicado u omitido | `test_eco_doppler.py` | ✅ COMPLIANT |
+| Whitelist | Texto permitido / clínico sin destino | inventariadores por Strategy | ⚠️ PARTIAL: la cobertura de patrones reconocidos está probada; no hay prueba directa del contrato de whitelist para un texto desconocido. |
+| Cuarentena segura | Cobertura incompleta no persiste contenido sensible | `tests/integracion/test_lote_aislamiento.py`, `tests/salida/test_cuarentena.py` | ✅ COMPLIANT |
+| Asociación selector→etiqueta→valor | ECG cruzado | `test_rechaza_medidas_ecg_asignadas_a_etiquetas_cruzadas` | ✅ COMPLIANT |
+| Asociación selector→etiqueta→valor | Eco, incluidas medidas | No existe prueba de medida Eco cruzada; `eco.medida` usa selector genérico y valida presencia, no un selector etiqueta-específico. | ❌ UNTESTED |
+
+**Resumen:** 10/12 escenarios conformes, 1 parcial, 1 sin prueba ni cumplimiento demostrable.
+
+## Coherencia de diseño
+
+| Decisión | Estado | Evidencia |
 |---|---|---|
-| Reconciliación antes de PII, pseudonimización y salida | `EjecutorPipeline._resolver_documento` invoca el reconciliador inmediatamente después de `parsear`; test E2E de omisiones confirma que no hay vínculos ni salidas | ✅ |
-| Igualdad y procedencia semántica por campo | Hay validación de presencia/unicidad de valores y asociación estructurada para laboratorio, pero ECG y eco no consumen el selector para asociar etiqueta con valor | ❌ |
-| Inventario independiente PDF→modelo | Strategies separadas para ECG, laboratorio y eco; tests de omisiones | ✅ |
-| Cobertura 1:1 de colecciones | `verificar_cobertura` cruza `(id_campo, ordinal)`; laboratorio y eco verifican cardinalidad/ordinal | ✅ |
-| Whitelist explícita | Whitelists/patrones de ECG y encabezados de laboratorio, con pruebas focalizadas | ✅ |
-| Cuarentena segura y migración | `campo`/`pagina` permitidos, migración 0002 y prueba de columnas exactas | ✅ |
+| Reconciliar antes de PII | ✅ | `pipeline/ejecutor.py::_resolver_documento` invoca `reconciliar` antes de `clasificar_pii`. |
+| Cobertura PDF→modelo independiente | ✅ | Strategies inventarían `TextoExtraido` y `inventario.py` compara claves y cardinalidad. |
+| Cuarentena sin datos crudos | ✅ | `ErrorDocumento` y `EscritorCuarentena` solo trasladan documento, etapa, código, campo y página. |
+| Migración de metadata segura | ✅ | `0002_metadata_segura_cuarentena.py` agrega solo `campo` y `pagina`. |
+| Asociación selector→etiqueta→valor en ECG y Eco | ❌ | ECG ancla selectores específicos. Eco emite `ReferenciaCampo(..., selector="eco.medida")` para toda medida y `_asociacion_eco` para `eco.medida` busca solo el valor; no hay selector que identifique la etiqueta de la medida. |
+
+## Cumplimiento TDD estricto
+
+| Chequeo | Resultado | Detalle |
+|---|---|---|
+| Evidencia TDD reportada | ⚠️ | `apply-progress` contiene tabla, pero no usa los estados requeridos `✅ Written` / `✅ Passed` ni una lista verificable de archivos por tarea. |
+| RED confirmado | ❌ | No es posible cruzar cada tarea con un archivo de prueba y un estado RED conforme al protocolo. |
+| GREEN confirmado | ⚠️ | La suite actual pasa (339), pero la tabla no permite demostrarlo por cada tarea. |
+| Triangulación | ⚠️ | Hay múltiples casos para ECG/firma, pero falta el caso cruzado de medida Eco. |
+| Safety net | ⚠️ | La evidencia es narrativa y no permite verificar cada archivo modificado. |
+
+**Cumplimiento TDD:** no verificable según el protocolo estricto; el artefacto de aplicación debe corregirse para expresar evidencia por tarea de forma auditable.
+
+## Distribución de pruebas
+
+| Capa | Resultado |
+|---|---|
+| Unitarias | Reconciliación, normalización, inventario, parsers y dominio. |
+| Integración | Pipeline, aislamiento de lote y cuarentena. |
+| E2E | No hay suite browser/HTTP; no es necesaria para este pipeline de procesamiento local. |
+
+## Calidad de assertions
+
+No se detectaron tautologías, assertions sin ejecutar código de producción ni loops fantasma en los tests revisados. Las assertions verifican códigos, campos, páginas y efectos de bloqueo.
 
 ## Hallazgos
 
 ### CRITICAL
 
-1. **El selector no participa en la comprobación de igualdad de ECG ni eco.**
-   `ReferenciaCampo.selector` solo se valida al construirse en `reconciliacion/base.py`; no se consulta durante `reconciliar_referencias` en `reconciliacion/_comun.py`. Esa función cuenta el valor normalizado en toda la página, sin comprobar la relación selector/etiqueta→valor.
-   Consecuencia: si el parser asigna a `PR interval` un valor que aparece una sola vez pero pertenece a `QRS duration` (o análogo en eco), la reconciliación puede aprobarlo. Esto incumple el requisito de que no se modifique la asociación campo–valor y la decisión de diseño de validar asociación selector-etiqueta-valor.
-   No hay prueba de regresión que simule esta asociación cruzada para ECG o eco.
+1. **La asociación de medidas Eco no cumple selector→etiqueta→valor.** `parseo/eco_doppler.py` asigna a todas las medidas el selector genérico `eco.medida`; `_asociacion_eco` valida solo que el valor aparezca en la página. Falta una prueba de asignación cruzada de dos medidas Eco y un selector/evidencia que ancle cada nombre de medida a su valor. Por lo tanto, no está demostrado que un valor repetido o cruzado pertenezca a la etiqueta estructurada correcta.
+2. **La evidencia TDD obligatoria no es verificable bajo modo estricto.** `apply-progress` no aporta los estados y archivos exigidos para RED/GREEN por tarea. La suite verde no sustituye esa trazabilidad de proceso.
 
 ### WARNING
 
-1. **La evidencia TDD de apply-progress no sigue el formato estricto solicitado.** Contiene una tabla y los archivos/pruebas existen y pasan, pero sus columnas RED/GREEN no expresan los estados explícitos `✅ Written` / `✅ Passed`. La auditoría puede corroborar 8 archivos de reconciliación y 53 pruebas unitarias focalizadas, pero no verificar formalmente cada ciclo RED desde el artefacto.
+1. Falta una prueba directa de whitelist para texto desconocido/no clínico frente a texto clínico reconocido sin destino.
+2. `git diff --check main...HEAD` informa tres espacios finales en el informe anterior.
 
 ### SUGGESTION
 
-1. Agregar `ruff` al entorno de desarrollo/CI para que el lint sea reproducible. La cobertura de archivos modificados es alta (reconciliación 89–100%, parsers 91–96%, ejecutor 97%), pero no reemplaza esa comprobación.
+1. Cuando se corrija la medida Eco, agregar también casos con dos columnas y mismo valor numérico para etiquetas distintas.
 
-## TDD Compliance
+## Veredicto
 
-| Check | Result | Details |
-|---|---|---|
-| TDD Evidence reported | ✅ | Existe en apply-progress |
-| All tasks have tests | ✅ | Pruebas focalizadas para contratos, ECG, laboratorio, eco, pipeline y cuarentena |
-| RED confirmed | ⚠️ | Archivos existen; formato de evidencia RED no es estricto |
-| GREEN confirmed | ✅ | 85 focalizadas y 330 completas pasan |
-| Triangulation adequate | ✅ | Igualdad, omisión, duplicación, cardinalidad y bloqueo E2E |
-| Safety Net | ⚠️ | Evidencia narrativa, no tabla por archivo |
-
-**Assertion quality:** ✅ No se detectaron tautologías, aserciones vacías ni bucles fantasma en los tests de reconciliación.
-
-## Distribución de pruebas
-
-| Layer | Tests | Files |
-|---|---:|---:|
-| Unit | 53 | 8 |
-| Integration | 2 escenarios E2E | 1 |
-| Pipeline/persistencia | 30 focalizadas | 4 |
-
-## Cobertura de archivos modificados
-
-- Reconciliación: 89–100% por archivo; `base.py` 89%, laboratorio 93%.
-- Parsers modificados: ECG 91%, laboratorio 92%, eco 96%.
-- Pipeline: `ejecutor.py` 97%, `etapas.py` 100%.
-- Cuarentena/ORM: 100%.
-
-## Conclusión
-
-La cobertura bidireccional y el bloqueo temprano están implementados y probados, pero el objetivo central de fidelidad no se cumple completamente mientras la asociación selector→campo→valor no se verifique en ECG y eco. Corregir este hallazgo crítico y añadir regresiones antes de archivar o abrir el PR final hacia `main`.
+**FAIL** — La suite completa pasa, pero la garantía crítica de asociación etiqueta→valor para medidas Eco y la evidencia exigida por TDD estricto no están demostradas. No abrir ni aceptar el PR final hacia `main` hasta resolver ambos puntos y repetir esta verificación.
