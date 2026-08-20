@@ -1,9 +1,9 @@
 # Informe de verificación SDD
 
-**Cambio:** `verificar-fidelidad-extraccion-pdf`  
-**Modo:** TDD estricto  
-**Persistencia:** hybrid  
-**Rama / commit:** `feat/pdf-extraction-reconciliation` / `e299c00`  
+**Cambio:** `verificar-fidelidad-extraccion-pdf`
+**Modo:** TDD estricto
+**Persistencia:** hybrid
+**Rama / commit:** `feat/pdf-extraction-reconciliation` / `e299c00`
 **Fecha:** 2026-08-19
 
 ## Completitud
@@ -16,8 +16,8 @@
 
 ## Ejecución de pruebas
 
-**Chequeo de diff:** `git diff --check main...HEAD` → ✅ sin errores.  
-**Pruebas:** `pytest -q` → ✅ **344 passed** en 9.90 s.  
+**Chequeo de diff:** `git diff --check main...HEAD` → ✅ sin errores.
+**Pruebas:** `pytest -q` → ✅ **344 passed** en 9.90 s.
 **Cobertura:** `pytest --cov=anonimizacion --cov-report=term-missing -q` → ✅ **344 passed**, **97%** total.
 
 ## Matriz de cumplimiento de especificación
@@ -77,8 +77,8 @@ Los módulos cambiados de reconciliación están entre **88% y 100%**: `base.py`
 
 ## Calidad de assertions y métricas
 
-**Assertions:** ✅ No se encontraron tautologías, assertions sin código de producción ni loops fantasma en los tests relevantes.  
-**Linter:** ➖ No configurado.  
+**Assertions:** ✅ No se encontraron tautologías, assertions sin código de producción ni loops fantasma en los tests relevantes.
+**Linter:** ➖ No configurado.
 **Type checker:** ➖ No configurado.
 
 ## Hallazgos
@@ -98,4 +98,4 @@ Ninguna.
 ## Veredicto
 
 **FAIL** — La implementación y los 12 escenarios de especificación pasan, pero no puede aprobarse la verificación SDD definitiva mientras falte evidencia TDD auditable para las tareas 1.1–4.3.
- 
+
