@@ -55,7 +55,7 @@ Chain strategy: feature-branch-chain
 
 ## Phase 5: Integración segura (PR 8)
 
-- [ ] 5.1 RED: ampliar `tests/pipeline/test_{etapas,ejecutor}.py`: cobertura fallida no invoca PII, claves, vínculo ni salida.
-- [ ] 5.2 GREEN: ejecutar inventario y reconciliación tras `parsear` en `pipeline/{etapas,ejecutor}.py`; aislar como no reintentable.
-- [ ] 5.3 RED/GREEN: verificar `salida/cuarentena.py` y `tests/salida/test_cuarentena.py`: solo metadata segura.
-- [ ] 5.4 Verificar omisiones sintéticas ECG/laboratorio/eco en `tests/integracion/test_lote_aislamiento.py`; ejecutar `pytest` y suite completa.
+- [x] 5.1 RED: ampliar `tests/pipeline/test_{etapas,ejecutor}.py`: cobertura fallida no invoca PII, claves, vínculo ni salida.
+- [x] 5.2 GREEN: ejecutar inventario y reconciliación tras `parsear` en `pipeline/{etapas,ejecutor}.py`; aislar como no reintentable.
+- [x] 5.3 RED/GREEN: verificar `salida/cuarentena.py` y `tests/salida/test_cuarentena.py`: solo metadata segura.
+- [x] 5.4 Verificar omisiones sintéticas ECG/laboratorio/eco en `tests/integracion/test_lote_aislamiento.py`; ejecutar `pytest` y suite completa.

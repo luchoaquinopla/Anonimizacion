@@ -12,16 +12,27 @@ conectado, no solo con las etapas fakeadas.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import sqlalchemy as sa
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
+from anonimizacion.parseo.registro import obtener_parseador
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
-from anonimizacion.salida.modelos_orm import Base, Cuarentena, ResultadoLaboratorio
+from anonimizacion.salida.modelos_orm import (
+    Base,
+    Cuarentena,
+    MedicionEcg,
+    MedicionEco,
+    ResultadoLaboratorio,
+    TextoSeccionEco,
+    VinculoPaciente,
+)
 
 from ..fixtures.v1 import documentos
 
@@ -96,3 +107,100 @@ def test_un_documento_con_layout_no_reconocido_en_lote_no_aborta_el_resto(tmp_pa
 
     # los 2 documentos restantes se procesaron y emitieron normalmente
     assert len(filas_lab) == 4  # 2 resultados por lab x 2 labs exitosos
+
+
+def test_omisiones_sinteticas_de_cada_tipo_van_a_cuarentena_antes_de_pii_y_salida(tmp_path, motor: MotorPii) -> None:
+    """El parser falso omite un dato tras usar el parser real; el PDF conserva la evidencia."""
+    artefactos = [
+        documentos.escribir_pdf(
+            tmp_path,
+            "ecg-omitido",
+            documentos.texto_ecg(
+                nombre="Ecg Sintetico",
+                id_estudio="ECG-1",
+                fecha="10-JAN-2024",
+                fecha_nac="02-FEB-1975",
+                edad_anios=48,
+            ),
+        ),
+        documentos.escribir_pdf(
+            tmp_path,
+            "lab-omitido",
+            documentos.texto_laboratorio(
+                nombre="Laboratorio Sintetico",
+                dni="20111222",
+                fecha_nac="02/02/1975",
+                numero_peticion="PET-1",
+                fecha="10/01/2024",
+            ),
+        ),
+        documentos.escribir_pdf(
+            tmp_path,
+            "eco-omitido",
+            documentos.texto_eco(
+                nombre="Eco Sintetico",
+                dni="20333444",
+                numero_estudio="ECO-1",
+                fecha="10/01/2024",
+            ),
+        ),
+    ]
+
+    class _ParseadorQueOmiteCampo:
+        def __init__(self, tipo):
+            self._tipo = tipo
+            self._real = obtener_parseador(tipo)
+
+        def parsear(self, texto):
+            documento = self._real.parsear(texto)
+            if self._tipo.value == "ecg":
+                return replace(
+                    documento,
+                    contenido=replace(documento.contenido, vent_rate=None),
+                    fuentes=tuple(f for f in documento.fuentes if f.id_campo != "ecg.vent_rate"),
+                )
+            if self._tipo.value == "laboratorio":
+                return replace(
+                    documento,
+                    contenido=replace(documento.contenido, resultados=documento.contenido.resultados[:1]),
+                    fuentes=tuple(
+                        f
+                        for f in documento.fuentes
+                        if not (f.id_campo == "laboratorio.resultado" and f.ordinal > 0)
+                    ),
+                )
+            return replace(
+                documento,
+                contenido=replace(documento.contenido, medidas=documento.contenido.medidas[:1]),
+                fuentes=tuple(
+                    f
+                    for f in documento.fuentes
+                    if not (f.id_campo == "eco.medida" and f.ordinal > 0)
+                ),
+            )
+
+    engine = _engine_sqlite()
+    ejecutor = EjecutorPipeline(
+        resolutor=ResolutorClaves(),
+        motor=motor,
+        pepper=PEPPER,
+        destino=EscritorPostgres(engine),
+        cuarentena=EscritorCuarentena(engine),
+        obtener_parseador=lambda tipo: _ParseadorQueOmiteCampo(tipo),
+    )
+
+    resultados = ejecutor.procesar_lote(
+        [ItemLote(id_documento=f"doc-{indice}", artefacto=artefacto) for indice, artefacto in enumerate(artefactos)]
+    )
+
+    assert all(isinstance(resultado, FalloDocumento) for resultado in resultados)
+    assert {resultado.error.codigo for resultado in resultados} == {CodigoErrorDocumento.COBERTURA_INCOMPLETA}
+    assert {resultado.error.etapa for resultado in resultados} == {"reconciliacion"}
+
+    with sa.orm.Session(engine) as sesion:
+        assert len(sesion.scalars(sa.select(Cuarentena)).all()) == 3
+        assert sesion.scalars(sa.select(VinculoPaciente)).all() == []
+        assert sesion.scalars(sa.select(ResultadoLaboratorio)).all() == []
+        assert sesion.scalars(sa.select(MedicionEcg)).all() == []
+        assert sesion.scalars(sa.select(MedicionEco)).all() == []
+        assert sesion.scalars(sa.select(TextoSeccionEco)).all() == []

@@ -37,6 +37,16 @@ def test_laboratorio_reconcilia_con_texto_ordenado() -> None:
     ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
 
 
+def test_laboratorio_asocia_resultado_sin_confundirlo_con_subcadena_del_numero_de_peticion() -> None:
+    filas = (ResultadoLaboratorio("HEMATOLOGIA", "Glucosa", "90", "mg/dL", "70-110"),)
+    fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado"),)
+    texto = TextoExtraido((
+        "No Peticion: 900\nHEMATOLOGIA\nGlucosa | 90 | mg/dL | 70-110",
+    ))
+
+    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+
 def test_inventario_laboratorio_enumera_filas_por_seccion_y_ordinal() -> None:
     texto = TextoExtraido((
         "HEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16\n"

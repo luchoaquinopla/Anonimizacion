@@ -147,10 +147,12 @@ class ReconciliadorLaboratorioGeneral:
             for ordinal, fila in enumerate(self._filas_inventariadas(texto))
         )
 
-    def _verificar_asociacion_filas(self, documento: DocumentoParseado, contenido: ContenidoLaboratorio, texto: TextoExtraido) -> None:
+    def _verificar_asociacion_filas(
+        self, documento: DocumentoParseado, contenido: ContenidoLaboratorio, texto: TextoExtraido
+    ) -> bool:
         filas_pdf = self._filas_inventariadas(texto)
         if not filas_pdf:
-            return
+            return False
         if len(filas_pdf) != len(contenido.resultados):
             pagina = filas_pdf[min(len(contenido.resultados), len(filas_pdf) - 1)].pagina if filas_pdf else 1
             raise ErrorParseo(
@@ -189,6 +191,7 @@ class ReconciliadorLaboratorioGeneral:
                     "laboratorio.resultado",
                     fila_pdf.pagina,
                 )
+        return True
 
     def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
         contenido = documento.contenido
@@ -196,7 +199,13 @@ class ReconciliadorLaboratorioGeneral:
             raise TypeError("contenido laboratorio inválido")
         valores = {("laboratorio.resultado", indice): fila.resultado for indice, fila in enumerate(contenido.resultados)}
         inventario = self.inventariar(texto)
+        tiene_asociacion_estructurada = False
         if inventario:
             reconciliar_cobertura(documento, inventario)
-            self._verificar_asociacion_filas(documento, contenido, texto)
-        reconciliar_referencias(documento, texto, valores)
+            tiene_asociacion_estructurada = self._verificar_asociacion_filas(documento, contenido, texto)
+        reconciliar_referencias(
+            documento,
+            texto,
+            valores,
+            ids_con_asociacion_estructurada={"laboratorio.resultado"} if tiene_asociacion_estructurada else (),
+        )

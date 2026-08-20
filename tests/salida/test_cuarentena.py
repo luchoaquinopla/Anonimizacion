@@ -50,3 +50,37 @@ def test_registrar_varios_errores_los_acumula() -> None:
 
     assert len(filas) == 2
     assert {fila.id_documento for fila in filas} == {"doc-1", "doc-2"}
+
+
+def test_registrar_persiste_solo_metadata_segura_de_reconciliacion() -> None:
+    motor = _motor()
+    escritor = EscritorCuarentena(motor)
+    escritor.registrar(
+        ErrorDocumento(
+            "doc-1",
+            "reconciliacion",
+            CodigoErrorDocumento.COBERTURA_INCOMPLETA,
+            campo="ecg.vent_rate",
+            pagina=2,
+        )
+    )
+
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.scalars(sa.select(Cuarentena)).one()
+
+    assert (fila.id_documento, fila.etapa, fila.codigo, fila.campo, fila.pagina) == (
+        "doc-1",
+        "reconciliacion",
+        "cobertura_incompleta",
+        "ecg.vent_rate",
+        2,
+    )
+    assert set(Cuarentena.__table__.columns.keys()) == {
+        "id",
+        "id_documento",
+        "etapa",
+        "codigo",
+        "campo",
+        "pagina",
+        "creado_en",
+    }
