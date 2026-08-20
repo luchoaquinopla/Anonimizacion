@@ -355,8 +355,9 @@ class ParseadorLaboratorioGeneral:
     def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
         header: dict[str, str] | None = None
         resultados: list[ResultadoLaboratorio] = []
+        paginas_resultados: list[int] = []
 
-        for pagina in texto.paginas_ordenadas:
+        for numero_pagina, pagina in enumerate(texto.paginas_ordenadas, start=1):
             campos_pagina = _extraer_campos_header(pagina)
             numero_peticion_pagina = campos_pagina.get("numero_peticion")
 
@@ -368,7 +369,9 @@ class ParseadorLaboratorioGeneral:
                         codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
                     )
 
-            resultados.extend(_extraer_resultados(pagina))
+            resultados_pagina = _extraer_resultados(pagina)
+            resultados.extend(resultados_pagina)
+            paginas_resultados.extend([numero_pagina] * len(resultados_pagina))
 
         if header is None or "nombre" not in header or "fecha" not in header:
             raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
@@ -408,7 +411,7 @@ class ParseadorLaboratorioGeneral:
         fuentes = tuple(
             ReferenciaCampo(
                 "laboratorio.resultado",
-                next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if resultado.resultado in pagina), 1),
+                paginas_resultados[ordinal],
                 "laboratorio.resultado",
                 ordinal,
             )

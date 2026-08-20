@@ -82,5 +82,20 @@ def test_registrar_persiste_solo_metadata_segura_de_reconciliacion() -> None:
         "codigo",
         "campo",
         "pagina",
+        "tipo_documento",
         "creado_en",
     }
+
+
+def test_registrar_persiste_tipo_documento_seguro() -> None:
+    from anonimizacion.dominio.tipos_documento import TipoDocumento
+
+    motor = _motor()
+    EscritorCuarentena(motor).registrar(
+        ErrorDocumento("doc-1", "parseo", CodigoErrorDocumento.PARSEO_INCOMPLETO, tipo_documento=TipoDocumento.LABORATORIO)
+    )
+
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.scalars(sa.select(Cuarentena)).one()
+
+    assert fila.tipo_documento == "laboratorio"

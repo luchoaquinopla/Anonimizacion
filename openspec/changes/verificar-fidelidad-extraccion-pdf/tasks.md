@@ -66,10 +66,10 @@ Chain strategy: feature-branch-chain
 
 ## Phase 6: Procedencia multipágina y cuarentena segura (PR 11 correctivo)
 
-- [ ] 6.1 RED: en `tests/{parseo,reconciliacion}/test_laboratorio_general.py`, crear dos páginas con el mismo resultado y exigir que cada fila conserve la página donde se encontró, sin búsqueda global posterior.
-- [ ] 6.2 GREEN/REFACTOR: en `src/anonimizacion/parseo/laboratorio_general.py` y `reconciliacion/laboratorio_general.py`, propagar la página desde la fila detectada hasta `ReferenciaCampo` e inventario.
-- [ ] 6.3 RED: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, repetir medidas, texto y firma en páginas distintas; exigir que referencias e inventario mantengan la página de origen.
-- [ ] 6.4 GREEN/REFACTOR: en `src/anonimizacion/{parseo,reconciliacion}/eco_doppler.py`, fijar la página al detectar cada medida, sección y firma; no reconstruirla por coincidencia global.
-- [ ] 6.5 RED/GREEN: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, distinguir subsección `PADRE - HIJA` de dos líneas consecutivas; ajustar inventario/parser sin fusionar texto clínico no equivalente.
-- [ ] 6.6 RED/GREEN: en `tests/{dominio,salida,pipeline}/test_{errores,cuarentena,ejecutor}.py` y `tests/salida/test_migraciones.py`, exigir `tipo_documento` seguro en `ErrorDocumento`, cuarentena y ORM; agregar migración posterior a `0002` sin PII.
-- [ ] 6.7 REFACTOR/VERIFICAR: ejecutar `pytest -q`, migraciones y `git diff --check`; registrar RED→GREEN por tarea en `apply-progress.md` y publicar PR 11 contra `feat/pdf-extraction-reconciliation`.
+- [x] 6.1 RED: en `tests/{parseo,reconciliacion}/test_laboratorio_general.py`, crear dos páginas con el mismo resultado y exigir que cada fila conserve la página donde se encontró, sin búsqueda global posterior.
+- [x] 6.2 GREEN/REFACTOR: en `src/anonimizacion/parseo/laboratorio_general.py` y `reconciliacion/laboratorio_general.py`, propagar la página desde la fila detectada hasta `ReferenciaCampo` e inventario.
+- [x] 6.3 RED: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, repetir medidas, texto y firma en páginas distintas; exigir que referencias e inventario mantengan la página de origen.
+- [x] 6.4 GREEN/REFACTOR: en `src/anonimizacion/{parseo,reconciliacion}/eco_doppler.py`, fijar la página al detectar cada medida, sección y firma; no reconstruirla por coincidencia global.
+- [x] 6.5 RED/GREEN: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, distinguir subsección `PADRE - HIJA` de dos líneas consecutivas; ajustar inventario/parser sin fusionar texto clínico no equivalente.
+- [x] 6.6 RED/GREEN: en `tests/{dominio,salida,pipeline}/test_{errores,cuarentena,ejecutor}.py` y `tests/salida/test_migraciones.py`, exigir `tipo_documento` seguro en `ErrorDocumento`, cuarentena y ORM; agregar migración posterior a `0002` sin PII.
+- [x] 6.7 REFACTOR/VERIFICAR: ejecutar `pytest -q`, migraciones y `git diff --check`; registrar RED→GREEN por tarea en `apply-progress.md` y publicar PR 11 contra `feat/pdf-extraction-reconciliation`.

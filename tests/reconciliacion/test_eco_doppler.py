@@ -225,6 +225,18 @@ def test_reconcilia_etiqueta_de_medida_con_espacio_y_puntuacion() -> None:
     ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("MEDIDAS\nP. Posterior 8 mm",)))
 
 
+def test_reconcilia_seccion_que_continua_en_la_pagina_siguiente() -> None:
+    from anonimizacion.parseo.eco_doppler import ParseadorEcoDoppler
+
+    texto = TextoExtraido((
+        "Paciente: Persona Sintetica\nFecha Estudio: 20/03/2025\nCONCLUSIONES\nPrimera parte.",
+        "Segunda parte.\nPERICARDIO\nSin derrame.",
+    ))
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
 def test_rechaza_nombre_eco_asignado_a_otro_lugar_del_documento() -> None:
     fuente = ReferenciaCampo("eco.nombre", 1, "eco.nombre")
     documento = _documento((fuente,))

@@ -111,9 +111,22 @@ def _asociacion_eco(referencia: object, esperado: str, pagina: str) -> bool:
                 return True
         return False
     if selector == "eco.seccion":
-        nombre, _, contenido = esperado.partition(" ")
         pagina_normalizada = normalizar_texto(pagina).replace(",", ".")
-        return bool(contenido and re.search(rf"(?<!\w){re.escape(nombre)}\s+{re.escape(contenido)}(?!\w)", pagina_normalizada))
+        if " - " not in esperado:
+            nombre, _, contenido = esperado.partition(" ")
+            return bool(contenido and re.search(rf"(?<!\w){re.escape(nombre)}\s+{re.escape(contenido)}(?!\w)", pagina_normalizada))
+        padre, resto = esperado.split(" - ", maxsplit=1)
+        hija = next((normalizar_texto(nombre) for nombre in _SUBSECCIONES if resto.startswith(f"{normalizar_texto(nombre)} ")), None)
+        if hija is None:
+            return False
+        contenido = resto[len(hija):].strip()
+        lineas = [normalizar_texto(linea).replace(",", ".") for linea in pagina.splitlines() if linea.strip()]
+        try:
+            indice_padre = lineas.index(padre)
+            indice_hija = lineas.index(hija, indice_padre + 1)
+        except ValueError:
+            return False
+        return bool(contenido and contenido in " ".join(lineas[indice_hija + 1:]))
     if selector == "eco.firma":
         return esperado in normalizar_texto(pagina).replace(",", ".")
     return False
@@ -163,6 +176,33 @@ def _firma_anclada(pagina: str, nombre: str, matricula: str) -> bool:
                 if _PATRON_NOMBRE_FIRMA.fullmatch(candidata):
                     return False
     return False
+
+
+def _seccion_anclada(seccion: object, pagina_origen: int, texto: TextoExtraido) -> bool:
+    """Valida el span consecutivo de una sección sin cruzar a otra sección."""
+    nombre = normalizar_texto(getattr(seccion, "nombre"))
+    contenido = normalizar_texto(getattr(seccion, "texto"))
+    etiquetas = [normalizar_texto(etiqueta) for etiqueta in nombre.split(" - ")]
+    lineas_span: list[str] = []
+    encontro_etiqueta = False
+
+    for indice_pagina, pagina in enumerate(texto.paginas_ordenadas[pagina_origen - 1:], start=pagina_origen):
+        lineas = [normalizar_texto(linea) for linea in pagina.splitlines() if linea.strip()]
+        inicio = 0
+        if indice_pagina == pagina_origen:
+            for etiqueta in etiquetas:
+                try:
+                    posicion = lineas.index(etiqueta, inicio)
+                except ValueError:
+                    return False
+                inicio = posicion + 1
+            encontro_etiqueta = True
+        for linea in lineas[inicio:]:
+            etiqueta = _normalizar_etiqueta(linea)
+            if etiqueta in _SECCIONES or etiqueta in _SUBSECCIONES:
+                return encontro_etiqueta and contenido in " ".join(lineas_span)
+            lineas_span.append(linea)
+    return encontro_etiqueta and contenido in " ".join(lineas_span)
 
 
 class ReconciliadorEcoDoppler:
@@ -241,6 +281,10 @@ class ReconciliadorEcoDoppler:
                 pagina = texto.paginas_ordenadas[referencia.pagina - 1]
                 if not _firma_anclada(pagina, contenido.firma.nombre, contenido.firma.matricula):
                     raise ErrorParseo(CodigoErrorDocumento.VALOR_DISCREPANTE, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
+            if referencia.id_campo == "eco.seccion":
+                seccion = contenido.secciones_texto[referencia.ordinal]
+                if not _seccion_anclada(seccion, referencia.pagina, texto):
+                    raise ErrorParseo(CodigoErrorDocumento.EVIDENCIA_AUSENTE, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
         valores = {
             ("eco.nombre", 0): documento.identidad.nombre.get_secret_value(),
             ("eco.fecha_estudio", 0): documento.fecha_estudio.strftime("%d/%m/%Y"),
@@ -250,5 +294,9 @@ class ReconciliadorEcoDoppler:
             **{("eco.medida", indice): f"{medida.nombre} {medida.valor}{(' ' + medida.unidad) if medida.unidad else ''}" for indice, medida in enumerate(contenido.medidas)},
             **{("eco.seccion", indice): f"{seccion.nombre} {seccion.texto}" for indice, seccion in enumerate(contenido.secciones_texto)},
         }
-        reconciliar_referencias(documento, texto, valores, validador_asociacion=_asociacion_eco)
+        reconciliar_referencias(
+            documento, texto, valores,
+            ids_con_asociacion_estructurada={"eco.seccion"},
+            validador_asociacion=_asociacion_eco,
+        )
         reconciliar_cobertura(documento, self.inventariar(texto))

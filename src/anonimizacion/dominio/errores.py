@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .referencias import validar_campo_reconciliacion
+from .tipos_documento import TipoDocumento
 
 
 class EtapaDocumento(str, Enum):
@@ -64,12 +65,15 @@ class ErrorDocumento:
     codigo: CodigoErrorDocumento
     campo: str | None = None
     pagina: int | None = None
+    tipo_documento: TipoDocumento | None = None
 
     def __post_init__(self) -> None:
         if self.campo is not None:
             validar_campo_reconciliacion(self.campo)
         if self.pagina is not None and self.pagina < 1:
             raise ValueError("pagina debe comenzar en 1")
+        if self.tipo_documento is not None and not isinstance(self.tipo_documento, TipoDocumento):
+            raise ValueError("tipo_documento debe pertenecer al catálogo")
 
 
 class ErrorParseo(Exception):
