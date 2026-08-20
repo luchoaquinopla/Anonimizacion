@@ -12,6 +12,7 @@ from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 
 from ._comun import reconciliar_cobertura, reconciliar_referencias
 from .base import HallazgoCobertura
+from .normalizacion import normalizar_texto
 
 
 _PATRONES_INVENTARIO = (
@@ -28,6 +29,80 @@ _PATRONES_INVENTARIO = (
 
 # Boilerplate fijo del fabricante; se consulta en memoria y nunca se persiste.
 _WHITELIST_ECG = frozenset({"pid / name mismatch"})
+
+_PATRONES_ASOCIACION = {
+    "ecg.vent_rate": re.compile(r"\bVent\.?\s*[Rr]ate\b\s*:?\s*(.*)"),
+    "ecg.pr_interval": re.compile(r"\bPR(?:\s*interval)?\b\s*:?\s*(.*)"),
+    "ecg.qrs_duration": re.compile(r"\bQRS(?:\s*duration)?\b\s*:?\s*(.*)"),
+    "ecg.qt_qtc": re.compile(r"\bQT/QTc\b\s*:?\s*(.*)"),
+}
+
+
+def _igual(valor: str, esperado: str) -> bool:
+    return normalizar_texto(valor).replace(",", ".") == esperado
+
+
+def _valor_cercano(lineas: list[str], indice: int) -> str | None:
+    for desplazamiento in (-1, 1, -2, 2, -3, 3):
+        candidata = indice + desplazamiento
+        if 0 <= candidata < len(lineas):
+            valor = normalizar_texto(lineas[candidata]).replace(",", ".")
+            if re.fullmatch(r"[+-]?\d+(?:\.\d+)?(?:/[+-]?\d+(?:\.\d+)?)?", valor):
+                return valor
+    return None
+
+
+def _asociacion_ecg(referencia: object, esperado: str, pagina: str) -> bool:
+    """Comprueba que el selector ECG ancle el valor a su etiqueta real."""
+    selector = getattr(referencia, "selector")
+    if selector == "ecg.nombre":
+        coincidencia = re.search(r"(?m)^([^\n~]+)~,", pagina)
+        return coincidencia is not None and _igual(coincidencia.group(1), esperado)
+    if selector == "ecg.id_estudio":
+        coincidencia = re.search(r"\bid:\s*(\S+)", pagina, re.IGNORECASE)
+        return coincidencia is not None and _igual(coincidencia.group(1), esperado)
+    if selector == "ecg.fecha_estudio":
+        coincidencia = re.search(r"\b(\d{2}-[a-z]{3}-\d{4})\s+\d{2}:\d{2}:\d{2}", pagina, re.IGNORECASE)
+        return coincidencia is not None and _igual(coincidencia.group(1), esperado)
+    if selector == "ecg.fecha_nacimiento":
+        coincidencia = re.search(r"(?m)^(\d{2}-[a-z]{3}-\d{4})\s*\(\d+\s*yr\)", pagina, re.IGNORECASE)
+        return coincidencia is not None and _igual(coincidencia.group(1), esperado)
+    if selector == "ecg.ejes":
+        lineas = pagina.splitlines()
+        for indice, linea in enumerate(lineas):
+            coincidencia = re.search(r"\bp-r-t\s*(?:axes)?\b\s*:?\s*(.*)", linea, re.IGNORECASE)
+            if coincidencia:
+                resto = normalizar_texto(coincidencia.group(1)).replace(",", ".")
+                if resto and re.fullmatch(r"[+-]?\d+(?:\.\d+)?(?:\s+[+-]?\d+(?:\.\d+)?){1,2}", resto):
+                    if _igual(resto, esperado):
+                        return True
+                valores: list[str] = []
+                cursor = indice - 1
+                while cursor >= 0 and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", lineas[cursor].strip()):
+                    valores.append(lineas[cursor].strip())
+                    cursor -= 1
+                if valores and _igual(" ".join(reversed(valores[:3])), esperado):
+                    return True
+                valores = []
+                cursor = indice + 1
+                while cursor < len(lineas) and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", lineas[cursor].strip()):
+                    valores.append(lineas[cursor].strip())
+                    cursor += 1
+                if valores and _igual(" ".join(valores[:3]), esperado):
+                    return True
+        return False
+    patron = _PATRONES_ASOCIACION.get(selector)
+    if patron is None:
+        return False
+    for indice, linea in enumerate(pagina.splitlines()):
+        coincidencia = patron.search(linea)
+        if coincidencia is None:
+            continue
+        resto = normalizar_texto(coincidencia.group(1)).replace(",", ".")
+        candidato = resto if resto and re.search(r"\d", resto) else _valor_cercano(pagina.splitlines(), indice)
+        if candidato is not None and _igual(candidato, esperado):
+            return True
+    return False
 
 
 class ReconciliadorEcgMortara:
@@ -66,5 +141,10 @@ class ReconciliadorEcgMortara:
             ("ecg.qt_qtc", 0): contenido.qt_qtc,
             ("ecg.ejes", 0): contenido.ejes,
         }
-        reconciliar_referencias(documento, texto, {clave: valor for clave, valor in valores.items() if valor is not None})
+        reconciliar_referencias(
+            documento,
+            texto,
+            {clave: valor for clave, valor in valores.items() if valor is not None},
+            validador_asociacion=_asociacion_ecg,
+        )
         reconciliar_cobertura(documento, self.inventariar(texto))

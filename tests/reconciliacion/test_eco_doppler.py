@@ -7,7 +7,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
-from anonimizacion.parseo.eco_doppler import ContenidoEco, MedidaEco, SeccionTextoEco
+from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.reconciliacion.base import ReferenciaCampo
 from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
 
@@ -166,3 +166,107 @@ def test_reconcilia_tabla_real_de_medidas_en_dos_columnas() -> None:
     documento = ParseadorEcoDoppler().parsear(texto)
 
     ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_rechaza_nombre_eco_asignado_a_otro_lugar_del_documento() -> None:
+    fuente = ReferenciaCampo("eco.nombre", 1, "eco.nombre")
+    documento = _documento((fuente,))
+
+    with pytest.raises(ErrorParseo) as error:
+        ReconciliadorEcoDoppler().reconciliar(
+            documento,
+            TextoExtraido(("Paciente: Otra Persona\nMEDIDAS\nPersona Sintetica",)),
+        )
+
+    assert error.value.codigo is CodigoErrorDocumento.VALOR_DISCREPANTE
+    assert error.value.campo == "eco.nombre"
+
+
+def test_aprueba_nombre_eco_en_su_header() -> None:
+    fuente = ReferenciaCampo("eco.nombre", 1, "eco.nombre")
+    documento = _documento((fuente,))
+
+    ReconciliadorEcoDoppler().reconciliar(
+        documento,
+        TextoExtraido(("Paciente: Persona Sintetica\nMEDIDAS",)),
+    )
+
+
+def test_rechaza_firma_esperada_disgregada_junto_a_otra_firma() -> None:
+    fuente = ReferenciaCampo("eco.firma", 1, "eco.firma")
+    documento_base = _documento((fuente,))
+    documento = DocumentoParseado(
+        documento_base.tipo_documento,
+        documento_base.version_esquema,
+        documento_base.identidad,
+        documento_base.fecha_estudio,
+        ContenidoEco((), (), FirmaMedico("Medico Esperado", "W 99")),
+        fuentes=(fuente,),
+    )
+
+    with pytest.raises(ErrorParseo) as error:
+        ReconciliadorEcoDoppler().reconciliar(
+            documento,
+            TextoExtraido(("Medico Esperado\nFirma: Otro Medico - MP 12\nTexto intermedio\nMatrícula W 99",)),
+        )
+
+    assert error.value.codigo is CodigoErrorDocumento.VALOR_DISCREPANTE
+    assert error.value.campo == "eco.firma"
+
+
+def test_aprueba_firma_real_en_lineas_separadas() -> None:
+    fuente = ReferenciaCampo("eco.firma", 1, "eco.firma")
+    documento_base = _documento((fuente,))
+    documento = DocumentoParseado(
+        documento_base.tipo_documento,
+        documento_base.version_esquema,
+        documento_base.identidad,
+        documento_base.fecha_estudio,
+        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 6707")),
+        fuentes=(fuente,),
+    )
+
+    ReconciliadorEcoDoppler().reconciliar(
+        documento,
+        TextoExtraido(("MEDICO SINTETICO\nMatrícula W 6707",)),
+    )
+
+
+def test_aprueba_firma_real_con_linea_intermedia_antes_de_la_matricula() -> None:
+    fuente = ReferenciaCampo("eco.firma", 1, "eco.firma")
+    documento_base = _documento((fuente,))
+    documento = DocumentoParseado(
+        documento_base.tipo_documento,
+        documento_base.version_esquema,
+        documento_base.identidad,
+        documento_base.fecha_estudio,
+        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 6707")),
+        fuentes=(fuente,),
+    )
+
+    ReconciliadorEcoDoppler().reconciliar(
+        documento,
+        TextoExtraido(("MEDICO SINTETICO\nEspecialista en cardiologia\nMatrícula W 6707",)),
+    )
+
+
+def test_rechaza_matricula_posterior_separada_por_firma_legada_de_otro_medico() -> None:
+    fuente = ReferenciaCampo("eco.firma", 1, "eco.firma")
+    documento_base = _documento((fuente,))
+    documento = DocumentoParseado(
+        documento_base.tipo_documento,
+        documento_base.version_esquema,
+        documento_base.identidad,
+        documento_base.fecha_estudio,
+        ContenidoEco((), (), FirmaMedico("Medico Esperado", "W 99")),
+        fuentes=(fuente,),
+    )
+
+    with pytest.raises(ErrorParseo) as error:
+        ReconciliadorEcoDoppler().reconciliar(
+            documento,
+            TextoExtraido(("Medico Esperado\nOtro Medico MP 12\nTexto intermedio\nMatrícula W 99",)),
+        )
+
+    assert error.value.codigo is CodigoErrorDocumento.VALOR_DISCREPANTE
+    assert error.value.campo == "eco.firma"
