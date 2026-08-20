@@ -11,6 +11,7 @@ from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.ecg_mortara import ParseadorEcgMortara
 from anonimizacion.reconciliacion.base import HallazgoCobertura, ReferenciaCampo
 from anonimizacion.reconciliacion.ecg_mortara import ReconciliadorEcgMortara
+from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
 from anonimizacion.reconciliacion.inventario import verificar_cobertura
 
 
@@ -38,6 +39,17 @@ def test_whitelist_ecg_ignora_solo_boilerplate_declarado() -> None:
 
     assert reconciliador.es_texto_permitido("PID / NAME MISMATCH")
     assert not reconciliador.es_texto_permitido("PR interval")
+
+
+def test_whitelist_eco_permite_boilerplate_no_clinico_y_rechaza_patron_clinico() -> None:
+    reconciliador = ReconciliadorEcoDoppler()
+
+    assert reconciliador.es_texto_permitido("DIAGNOSTICO POR IMAGENES")
+    assert not reconciliador.es_texto_permitido("AO | 28 | mm")
+    assert reconciliador.inventariar(TextoExtraido(("DIAGNOSTICO POR IMAGENES",))) == ()
+    assert [hallazgo.id_campo for hallazgo in reconciliador.inventariar(TextoExtraido(("MEDIDAS\nAO | 28 | mm",)))] == [
+        "eco.medida"
+    ]
 
 
 def test_rechaza_claves_de_inventario_duplicadas() -> None:

@@ -10,6 +10,7 @@ from anonimizacion.reconciliacion.normalizacion import (
     normalizar_texto,
 )
 from anonimizacion.reconciliacion.base import ReferenciaCampo
+from anonimizacion.dominio.referencias import selector_medida_eco
 
 
 @pytest.mark.parametrize(
@@ -78,3 +79,8 @@ def test_referencia_rechaza_identificadores_fuera_de_la_whitelist(
 ) -> None:
     with pytest.raises(ValueError):
         ReferenciaCampo(id_campo=id_campo, pagina=1, selector=selector)
+
+
+def test_selector_eco_usa_catalogo_clinico_y_opaca_etiquetas_arbitrarias() -> None:
+    assert selector_medida_eco("P. Posterior") == "eco.medida.p.posterior"
+    assert selector_medida_eco("JUAN PEREZ") == "eco.medida.no_catalogada"

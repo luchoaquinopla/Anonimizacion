@@ -9,6 +9,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo, Eta
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.eco_doppler import ContenidoEco
+from anonimizacion.dominio.referencias import selector_medida_eco
 
 from ._comun import reconciliar_cobertura, reconciliar_referencias
 from .base import HallazgoCobertura
@@ -39,6 +40,7 @@ _PATRON_MATRICULA = re.compile(r"(?i)^matr[ií]cula\s+[a-z]\s*\d+")
 _PATRON_NOMBRE_FIRMA = re.compile(r"^[A-ZÁÉÍÓÚÑ.]+(?:\s+[A-ZÁÉÍÓÚÑ.]+)+$")
 _PATRON_MEDIDA_PIPE = re.compile(r"^[A-ZÁÉÍÓÚÑ.][A-ZÁÉÍÓÚÑ. ]*\|\s*[^|]+\|\s*.*$", re.IGNORECASE)
 _PATRON_MEDIDA_SIMPLE = re.compile(r"^[A-ZÁÉÍÓÚÑ.][A-ZÁÉÍÓÚÑ. ]*\s+-?[\d.,]+(?:\s*\S+)?$", re.IGNORECASE)
+_WHITELIST_ECO = frozenset({"diagnostico por imagenes"})
 
 
 def _normalizar_etiqueta(linea: str) -> str:
@@ -84,8 +86,30 @@ def _asociacion_eco(referencia: object, esperado: str, pagina: str) -> bool:
     if patron_header is not None:
         coincidencia = re.search(patron_header, pagina, re.IGNORECASE)
         return coincidencia is not None and normalizar_texto(coincidencia.group(1)).replace(",", ".") == esperado
-    if selector == "eco.medida":
-        return re.search(rf"(?<!\w){re.escape(esperado)}(?!\w)", normalizar_texto(pagina).replace(",", ".")) is not None
+    if selector.startswith("eco.medida."):
+        partes = esperado.split()
+        corte = next(
+            (
+                indice
+                for indice in range(1, len(partes))
+                if selector_medida_eco(" ".join(partes[:indice])) == selector
+            ),
+            None,
+        )
+        if corte is None:
+            return False
+        etiqueta = " ".join(partes[:corte])
+        valor_esperado = " ".join(partes[corte:])
+        for linea_original in pagina.splitlines():
+            linea = normalizar_texto(linea_original).replace(",", ".")
+            if "|" in linea:
+                candidata = " ".join(parte.strip() for parte in linea.split("|") if parte.strip())
+                if candidata == esperado:
+                    return True
+                continue
+            if re.search(rf"(?:^|\s){re.escape(etiqueta)}\s+{re.escape(valor_esperado)}(?!\w)", linea):
+                return True
+        return False
     if selector == "eco.seccion":
         nombre, _, contenido = esperado.partition(" ")
         pagina_normalizada = normalizar_texto(pagina).replace(",", ".")
@@ -144,6 +168,10 @@ def _firma_anclada(pagina: str, nombre: str, matricula: str) -> bool:
 class ReconciliadorEcoDoppler:
     tipo_documento = TipoDocumento.ECOCARDIOGRAMA
 
+    def es_texto_permitido(self, texto: str) -> bool:
+        """Reconoce boilerplate Eco declarado, sin convertirlo en dato clínico."""
+        return normalizar_texto(texto) in _WHITELIST_ECO
+
     def inventariar(self, texto: TextoExtraido) -> tuple[HallazgoCobertura, ...]:
         """Reconoce destinos eco desde el PDF sin consultar el modelo parseado."""
         hallazgos: list[HallazgoCobertura] = []
@@ -163,6 +191,8 @@ class ReconciliadorEcoDoppler:
             for linea_cruda in pagina.splitlines():
                 linea = linea_cruda.strip()
                 if not linea:
+                    continue
+                if self.es_texto_permitido(linea):
                     continue
                 for id_campo, patron in _CAMPOS_HEADER.items():
                     if patron.search(linea):
