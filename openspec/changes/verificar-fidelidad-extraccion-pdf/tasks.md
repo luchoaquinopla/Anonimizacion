@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| Estimated changed lines | 1,620–2,150; 90–150 restantes |
-| 400-line budget risk | High (cambio total); Low (PR correctivo) |
+| Estimated changed lines | 1,620–2,150; 260–380 restantes |
+| 400-line budget risk | High (cambio total); Medium (PR correctivo) |
 | Chained PRs recommended | Yes |
-| Suggested split | PR 5 ECG → PR 6 laboratorio → PR 7 eco → PR 8 pipeline → PR 9 asociación → PR 10 corrección final |
+| Suggested split | PR 5 ECG → PR 6 laboratorio → PR 7 eco → PR 8 pipeline → PR 9 asociación → PR 10 corrección final → PR 11 procedencia multipágina |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | feature-branch-chain |
 
@@ -26,6 +26,7 @@ Chain strategy: feature-branch-chain
 | 4 | Integración y cuarentena | PR 8 | Base feature; completado. |
 | 5 | Asociación etiqueta→valor | PR 9 | Correctivo separado; base `feat/pdf-extraction-reconciliation`. |
 | 6 | Corrección final Eco y evidencia TDD | PR 10 | Base `feat/pdf-extraction-reconciliation`; cambio autocontenido y menor a 400 líneas. |
+| 7 | Procedencia real multipágina y tipo seguro | PR 11 | Base `feat/pdf-extraction-reconciliation`; correctivo TDD, 260–380 líneas. |
 
 ## Phase 1: Contratos y normalización
 
@@ -62,3 +63,13 @@ Chain strategy: feature-branch-chain
 - [x] 5.3 RED/GREEN: en `tests/reconciliacion/test_inventario.py`, verificar que texto desconocido/no clínico permitido no exige destino y que un patrón clínico reconocido sin destino falla; ajustar whitelist solo si el test lo exige.
 - [x] 5.4 REFACTOR: registrar por cada tarea RED→GREEN en `openspec/changes/verificar-fidelidad-extraccion-pdf/apply-progress.md`, con `✅ Written`, `✅ Passed`, archivos y comando de prueba.
 - [x] 5.5 VERIFICAR: eliminar espacios finales de `verify-report.md`, ejecutar `pytest -q`, `git diff --check main...HEAD` y cobertura; publicar PR 10 contra `feat/pdf-extraction-reconciliation`.
+
+## Phase 6: Procedencia multipágina y cuarentena segura (PR 11 correctivo)
+
+- [ ] 6.1 RED: en `tests/{parseo,reconciliacion}/test_laboratorio_general.py`, crear dos páginas con el mismo resultado y exigir que cada fila conserve la página donde se encontró, sin búsqueda global posterior.
+- [ ] 6.2 GREEN/REFACTOR: en `src/anonimizacion/parseo/laboratorio_general.py` y `reconciliacion/laboratorio_general.py`, propagar la página desde la fila detectada hasta `ReferenciaCampo` e inventario.
+- [ ] 6.3 RED: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, repetir medidas, texto y firma en páginas distintas; exigir que referencias e inventario mantengan la página de origen.
+- [ ] 6.4 GREEN/REFACTOR: en `src/anonimizacion/{parseo,reconciliacion}/eco_doppler.py`, fijar la página al detectar cada medida, sección y firma; no reconstruirla por coincidencia global.
+- [ ] 6.5 RED/GREEN: en `tests/{parseo,reconciliacion}/test_eco_doppler.py`, distinguir subsección `PADRE - HIJA` de dos líneas consecutivas; ajustar inventario/parser sin fusionar texto clínico no equivalente.
+- [ ] 6.6 RED/GREEN: en `tests/{dominio,salida,pipeline}/test_{errores,cuarentena,ejecutor}.py` y `tests/salida/test_migraciones.py`, exigir `tipo_documento` seguro en `ErrorDocumento`, cuarentena y ORM; agregar migración posterior a `0002` sin PII.
+- [ ] 6.7 REFACTOR/VERIFICAR: ejecutar `pytest -q`, migraciones y `git diff --check`; registrar RED→GREEN por tarea en `apply-progress.md` y publicar PR 11 contra `feat/pdf-extraction-reconciliation`.
