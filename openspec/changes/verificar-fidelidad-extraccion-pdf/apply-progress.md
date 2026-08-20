@@ -2,8 +2,8 @@
 
 **Modo:** TDD estricto
 **Persistencia:** hybrid
-**Rama verificada:** `feat/pdf-extraction-reconciliation` (`e299c00`)
-**Estado:** 21/21 tareas implementadas; trazabilidad histórica reconstruida el 2026-08-19.
+**Rama verificada:** `fix/reconciliacion-procedencia-multipagina`
+**Estado:** 28/28 tareas implementadas; PR 11 completado el 2026-08-19.
 
 ## Criterio de reconstrucción
 
@@ -47,6 +47,13 @@ Esta distinción es deliberada: no se inventan salidas de pytest ni se presenta 
 | 5.3 | `tests/reconciliacion/test_inventario.py` / `reconciliacion/eco_doppler.py` | misma suite focalizada ✅ 28 passed | ✅ Contemporánea: faltaba whitelist Eco; el test falló antes del ajuste, según registro del PR 10. | Boilerplate permitido y patrón clínico sin destino rechazado. | Whitelist local e inmutable. |
 | 5.4 | este archivo / — | Revisión documental de las 21 filas y C6 ✅ | ✅ Contemporánea para formato inicial; reconstrucción ampliada para 1.1–4.3. | Archivos, comandos y estado diferenciado por cada tarea. | Sin duplicar contenido clínico ni PII. |
 | 5.5 | `verify-report.md`, `tasks.md` / — | C6 ✅ 344 passed | ✅ Contemporánea: `git diff --check main...HEAD` detectó espacios finales previos; se registró su limpieza en PR 10. | Suite focalizada, suite completa y chequeo de formato. | Espacios finales eliminados del informe. |
+| 6.1 | `tests/parseo/test_laboratorio_general.py` / — | Safety net: 86 focalizadas ✅; GREEN: 81 focalizadas ✅ | ✅ Contemporánea: dos resultados idénticos en páginas 1/2 produjeron referencias `[1, 1]`. | Repetición de valor con secciones distintas y control de ambos ordinales. | Fixture sintética mínima. |
+| 6.2 | misma prueba / `parseo/laboratorio_general.py` | ✅ 81 focalizadas | ✅ Ver 6.1. | Cada resultado conserva el índice de la página durante el parseo. | Lista paralela de páginas, sin búsqueda global por substring. |
+| 6.3 | `tests/parseo/test_eco_doppler.py` / — | ✅ 81 focalizadas | ✅ Contemporánea: medida, texto y firma repetidos en dos páginas se asociaban a página 1. | Medidas iguales, texto repetido y firma final en segunda página. | Fixture sintética multipágina. |
+| 6.4 | misma prueba / `parseo/eco_doppler.py` | ✅ 81 focalizadas | ✅ Ver 6.3. | Pipe y tabla de dos columnas preservan página real. | `_CuerpoEco` conserva procedencia estructural. |
+| 6.5 | `tests/parseo/test_eco_doppler.py` / `reconciliacion/{_comun,eco_doppler}.py` | ✅ 81 focalizadas | ✅ Contemporánea: `PADRE - HIJA` no aparecía como substring y fallaba la reconciliación. | Sección plana existente y subsección en líneas consecutivas. | Asociación compuesta por padre, hija y contenido. |
+| 6.6 | `tests/{dominio,pipeline}/test_{errores,ejecutor}.py`, `tests/salida/test_cuarentena.py` / `dominio/errores.py`, `pipeline/ejecutor.py`, `salida/{cuarentena,modelos_orm}.py`, migración `0003_tipo_documento_cuarentena.py` | ✅ 21 dominio/pipeline; 81 focalizadas | ✅ Contemporánea: `ErrorDocumento` no aceptaba tipo y el catálogo no rechazaba strings arbitrarios. | Tipo válido, tipo inválido y propagación por fallo de reconciliación. | Enum cerrado y columna nullable sin PII. |
+| 6.7 | suite completa / todos los archivos PR 11 | ✅ `pytest -q`: 350 passed; `git diff --check`: limpio | ➖ Ver tareas anteriores. | Suite focalizada y completa. | Sin búsquedas globales de valor para procedencia. |
 
 ## Tareas completadas
 
@@ -55,10 +62,19 @@ Esta distinción es deliberada: no se inventan salidas de pytest ni se presenta 
 - [x] 3.1–3.5 Inventario independiente y bloqueo del pipeline.
 - [x] 4.1–4.3 Asociación exacta etiqueta→valor.
 - [x] 5.1–5.5 Corrección final Eco, whitelist y verificación.
+- [x] 6.1–6.7 Procedencia multipágina y tipo documental seguro.
 
 ## Resultado acumulado
 
 - Pruebas focalizadas de reconstrucción: C1–C5, todas verdes.
-- Suite completa: C6, **344 passed**.
+- Suite completa: **350 passed**.
 - No se modificó código de producción ni pruebas durante esta reconstrucción.
 - La evidencia de RED de tareas 1.1–4.3 es reconstruida y está marcada como tal; las tareas 5.1–5.5 preservan evidencia contemporánea.
+
+## Correcciones de revisión posteriores al PR 11
+
+| Hallazgo | RED | GREEN | Verificación |
+|---|---|---|---|
+| P1: sección Eco que cruza páginas | `test_seccion_que_cruza_paginas_conserva_la_pagina_de_inicio` falló: ambas secciones quedaron en página 2. | La política explícita es conservar la página de inicio de la sección; `pagina_inicio_seccion` se guarda al detectar el header/subsección. | `pytest -q tests/parseo/test_eco_doppler.py` ✅ 12 passed; suite completa ✅ 352 passed. |
+| P2: error posterior a reconciliación | `test_fallo_de_pii_propaga_tipo_documento_a_cuarentena` falló: `tipo_documento=None`. | El bloque que anota el tipo detectado ahora cubre parseo, reconciliación, PII y pseudonimización. | `pytest -q tests/pipeline/test_ejecutor.py` ✅ 12 passed; suite completa ✅ 352 passed. |
+| P1 final: span de sección Eco | `test_reconcilia_seccion_que_continua_en_la_pagina_siguiente` falló porque la reconciliación solo leía la página de origen. | La referencia conserva la página de inicio; la validación lee páginas consecutivas solo hasta el siguiente header clínico, sin mezclar otra sección. | `pytest -q tests/reconciliacion/test_eco_doppler.py tests/parseo/test_eco_doppler.py` ✅ 34 passed; suite completa ✅ 353 passed. |

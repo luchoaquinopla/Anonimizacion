@@ -23,6 +23,19 @@ def test_error_documento_solo_transporta_metadata() -> None:
     assert error.codigo == "parseo_incompleto"
 
 
+def test_error_documento_transporta_tipo_documento_seguro() -> None:
+    from anonimizacion.dominio.tipos_documento import TipoDocumento
+
+    error = ErrorDocumento("doc-001", "parseo", CodigoErrorDocumento.PARSEO_INCOMPLETO, tipo_documento=TipoDocumento.LABORATORIO)
+
+    assert error.tipo_documento is TipoDocumento.LABORATORIO
+
+
+def test_error_documento_rechaza_tipo_documento_fuera_del_catalogo() -> None:
+    with pytest.raises(ValueError):
+        ErrorDocumento("doc-001", "parseo", CodigoErrorDocumento.PARSEO_INCOMPLETO, tipo_documento="valor-no-seguro")  # type: ignore[arg-type]
+
+
 def test_error_documento_es_inmutable() -> None:
     error = ErrorDocumento(
         id_documento="doc-001", etapa="parseo", codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO

@@ -187,6 +187,23 @@ def test_fallo_de_reconciliacion_bloquea_pii_claves_vinculo_y_salida() -> None:
     assert escritor.escritos == []
     assert len(cuarentena.registrados) == 1
     assert resultados[0].error.codigo == CodigoErrorDocumento.COBERTURA_INCOMPLETA
+    assert resultados[0].error.tipo_documento is TipoDocumento.LABORATORIO
+
+
+def test_fallo_de_pii_propaga_tipo_documento_a_cuarentena() -> None:
+    def falla_pii(documento, motor):
+        raise ErrorParseo(CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa="deteccion_pii")
+
+    ejecutor, _escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("ok"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+        clasificar_pii=falla_pii,
+    )
+
+    resultados = ejecutor.procesar_lote([ItemLote(id_documento="doc-pii", artefacto=_artefacto("pii"))])
+
+    assert resultados[0].error.tipo_documento is TipoDocumento.LABORATORIO
+    assert cuarentena.registrados == [resultados[0].error]
 
 
 def test_un_documento_con_layout_no_reconocido_no_aborta_el_resto_del_lote() -> None:

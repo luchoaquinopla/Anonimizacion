@@ -156,6 +156,16 @@ class ContenidoEco:
     firma: FirmaMedico | None
 
 
+@dataclass(frozen=True)
+class _CuerpoEco:
+    medidas: tuple[MedidaEco, ...]
+    paginas_medidas: tuple[int, ...]
+    secciones: tuple[SeccionTextoEco, ...]
+    paginas_secciones: tuple[int, ...]
+    firma: FirmaMedico | None
+    pagina_firma: int | None
+
+
 def _primer_segmento(texto: str) -> str:
     """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte).
 
@@ -234,24 +244,31 @@ def _parsear_fila_medidas_dos_columnas(linea: str) -> list[MedidaEco]:
 
 def _parsear_cuerpo(
     paginas: tuple[str, ...],
-) -> tuple[tuple[MedidaEco, ...], tuple[SeccionTextoEco, ...], FirmaMedico | None]:
+) -> _CuerpoEco:
     medidas: list[MedidaEco] = []
+    paginas_medidas: list[int] = []
     secciones: list[SeccionTextoEco] = []
+    paginas_secciones: list[int] = []
     firma: FirmaMedico | None = None
+    pagina_firma: int | None = None
 
     seccion_actual: str | None = None
     seccion_padre: str | None = None
+    pagina_inicio_seccion: int | None = None
     buffer_texto: list[str] = []
     candidato_nombre_firma: str | None = None
+
+    pagina_actual = 1
 
     def cerrar_seccion_texto() -> None:
         if seccion_actual is not None and seccion_actual != _SECCION_MEDIDAS and buffer_texto:
             secciones.append(
                 SeccionTextoEco(nombre=seccion_actual, texto=" ".join(buffer_texto).strip())
             )
+            paginas_secciones.append(pagina_inicio_seccion or pagina_actual)
         buffer_texto.clear()
 
-    for pagina in paginas:
+    for pagina_actual, pagina in enumerate(paginas, start=1):
         for linea in pagina.splitlines():
             linea_limpia = linea.strip()
             if not linea_limpia:
@@ -266,6 +283,7 @@ def _parsear_cuerpo(
                     nombre=coincidencia_firma.group("nombre").strip(),
                     matricula=coincidencia_firma.group("matricula").strip(),
                 )
+                pagina_firma = pagina_actual
                 seccion_actual = None
                 seccion_padre = None
                 candidato_nombre_firma = None
@@ -290,6 +308,7 @@ def _parsear_cuerpo(
                 cerrar_seccion_texto()
                 seccion_actual = _SECCION_MEDIDAS if es_trigger_medidas else candidata_normalizada
                 seccion_padre = None if es_trigger_medidas else candidata_normalizada
+                pagina_inicio_seccion = pagina_actual
                 continue
 
             if seccion_padre is not None and candidata_normalizada in _SUBSECCIONES.get(
@@ -297,6 +316,7 @@ def _parsear_cuerpo(
             ):
                 cerrar_seccion_texto()
                 seccion_actual = f"{seccion_padre} - {candidata_normalizada}"
+                pagina_inicio_seccion = pagina_actual
                 continue
 
             # Formato real (sin etiqueta "Firma:"): línea de matrícula, en
@@ -313,6 +333,7 @@ def _parsear_cuerpo(
                     firma = FirmaMedico(
                         nombre=candidato_nombre_firma, matricula=f"{letra} {numero}"
                     )
+                    pagina_firma = pagina_actual
                 seccion_actual = None
                 seccion_padre = None
                 candidato_nombre_firma = None
@@ -339,13 +360,18 @@ def _parsear_cuerpo(
                         continue
                     unidad = partes[2] if len(partes) > 2 and partes[2] else None
                     medidas.append(MedidaEco(nombre=partes[0], valor=partes[1], unidad=unidad))
+                    paginas_medidas.append(pagina_actual)
                 else:
-                    medidas.extend(_parsear_fila_medidas_dos_columnas(linea_limpia))
+                    medidas_linea = _parsear_fila_medidas_dos_columnas(linea_limpia)
+                    medidas.extend(medidas_linea)
+                    paginas_medidas.extend([pagina_actual] * len(medidas_linea))
             elif seccion_actual is not None:
                 buffer_texto.append(linea_limpia)
 
     cerrar_seccion_texto()
-    return tuple(medidas), tuple(secciones), firma
+    return _CuerpoEco(
+        tuple(medidas), tuple(paginas_medidas), tuple(secciones), tuple(paginas_secciones), firma, pagina_firma
+    )
 
 
 class ParseadorEcoDoppler:
@@ -384,7 +410,8 @@ class ParseadorEcoDoppler:
             if clave not in ("nombre", "dni", "fecha", "numero_estudio")
         }
 
-        medidas, secciones_texto, firma = _parsear_cuerpo(texto.paginas_ordenadas)
+        cuerpo = _parsear_cuerpo(texto.paginas_ordenadas)
+        medidas, secciones_texto, firma = cuerpo.medidas, cuerpo.secciones, cuerpo.firma
 
         contenido = ContenidoEco(medidas=medidas, secciones_texto=secciones_texto, firma=firma)
         fuentes = (
@@ -392,14 +419,14 @@ class ParseadorEcoDoppler:
             ReferenciaCampo("eco.fecha_estudio", 1, "eco.fecha_estudio"),
             *((ReferenciaCampo("eco.numero_estudio", 1, "eco.numero_estudio"),) if identidad.ids_internos else ()),
             *((ReferenciaCampo("eco.dni", 1, "eco.dni"),) if identidad.dni else ()),
-            *((ReferenciaCampo("eco.firma", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if contenido.firma.nombre in pagina), 1), "eco.firma"),) if contenido.firma else ()),
+            *((ReferenciaCampo("eco.firma", cuerpo.pagina_firma or 1, "eco.firma"),) if contenido.firma else ()),
         ) + (
             tuple(
-                ReferenciaCampo("eco.medida", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if medida.valor in pagina), 1), selector_medida_eco(medida.nombre), ordinal)
+                ReferenciaCampo("eco.medida", cuerpo.paginas_medidas[ordinal], selector_medida_eco(medida.nombre), ordinal)
                 for ordinal, medida in enumerate(contenido.medidas)
             )
             + tuple(
-                ReferenciaCampo("eco.seccion", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if seccion.texto in pagina), 1), "eco.seccion", ordinal)
+                ReferenciaCampo("eco.seccion", cuerpo.paginas_secciones[ordinal], "eco.seccion", ordinal)
                 for ordinal, seccion in enumerate(contenido.secciones_texto)
             )
         )

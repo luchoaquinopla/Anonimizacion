@@ -182,4 +182,5 @@ class Cuarentena(Base):
     codigo: Mapped[str] = mapped_column(String, nullable=False)
     campo: Mapped[str | None] = mapped_column(String, nullable=True)
     pagina: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tipo_documento: Mapped[str | None] = mapped_column(String, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
