@@ -1,9 +1,9 @@
 # Informe de verificación SDD
 
-**Cambio:** `verificar-fidelidad-extraccion-pdf`  
-**Modo:** TDD estricto  
-**Persistencia:** hybrid  
-**Rama verificada:** `feat/pdf-extraction-reconciliation` en `78c98c2`  
+**Cambio:** `verificar-fidelidad-extraccion-pdf`
+**Modo:** TDD estricto
+**Persistencia:** hybrid
+**Rama verificada:** `feat/pdf-extraction-reconciliation` en `78c98c2`
 **Fecha:** 2026-08-19
 
 ## Completitud
@@ -16,8 +16,8 @@
 
 ## Ejecución
 
-**Pruebas:** `pytest -q` → **339 passed** en 11.13 s.  
-**Cobertura:** `pytest --cov=anonimizacion --cov-report=term-missing -q` → **339 passed**, cobertura total **97%**. Los módulos de reconciliación modificados están entre 89% y 100%; no hay módulo modificado debajo de 80%.  
+**Pruebas:** `pytest -q` → **339 passed** en 11.13 s.
+**Cobertura:** `pytest --cov=anonimizacion --cov-report=term-missing -q` → **339 passed**, cobertura total **97%**. Los módulos de reconciliación modificados están entre 89% y 100%; no hay módulo modificado debajo de 80%.
 **Chequeo de diff:** `git diff --check main...HEAD` encontró espacios finales preexistentes en el informe de verificación anterior (tres líneas); no afecta el código, pero debe limpiarse antes del merge final.
 
 ## Matriz de cumplimiento de especificación

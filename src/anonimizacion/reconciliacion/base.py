@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from anonimizacion.dominio.modelos import DocumentoParseado
-from anonimizacion.dominio.referencias import REFERENCIAS_PERMITIDAS, validar_campo_reconciliacion
+from anonimizacion.dominio.referencias import validar_campo_reconciliacion, validar_selector_reconciliacion
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 
@@ -21,9 +21,7 @@ class ReferenciaCampo:
 
     def __post_init__(self) -> None:
         validar_campo_reconciliacion(self.id_campo)
-        selectores = REFERENCIAS_PERMITIDAS[self.id_campo]
-        if self.selector not in selectores:
-            raise ValueError("selector inválido")
+        validar_selector_reconciliacion(self.id_campo, self.selector)
         if self.pagina < 1:
             raise ValueError("pagina debe comenzar en 1")
         if self.ordinal < 0:

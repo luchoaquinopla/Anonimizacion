@@ -18,12 +18,12 @@ def _documento(fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
 
 
 def test_reconcilia_medida_y_texto_del_eco() -> None:
-    fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida", 0), ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0))
+    fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0), ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0))
     ReconciliadorEcoDoppler().reconciliar(_documento(fuentes), TextoExtraido(("AO 28 mm\nCONCLUSIONES\nEstudio normal.",)))
 
 
 def test_rechaza_referencia_eco_sin_destino() -> None:
-    fuente = ReferenciaCampo("eco.medida", 1, "eco.medida", 1)
+    fuente = ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 1)
     with pytest.raises(ErrorParseo) as error:
         ReconciliadorEcoDoppler().reconciliar(_documento((fuente,)), TextoExtraido(("AO 28 mm",)))
     assert error.value.codigo is CodigoErrorDocumento.EVIDENCIA_AUSENTE
@@ -67,7 +67,7 @@ def test_inventaria_headers_medidas_secciones_y_firma_en_paginas_reales() -> Non
 
 
 def test_rechaza_medida_omitida_del_modelo_aunque_el_valor_emitido_exista() -> None:
-    fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida", 0),)
+    fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),)
     documento = DocumentoParseado(
         TipoDocumento.ECOCARDIOGRAMA,
         1,
@@ -107,7 +107,7 @@ def test_rechaza_seccion_omitida_en_otra_pagina() -> None:
 
 
 def test_rechaza_referencia_de_eco_en_pagina_distinta_a_su_inventario() -> None:
-    fuentes = (ReferenciaCampo("eco.medida", 2, "eco.medida", 0),)
+    fuentes = (ReferenciaCampo("eco.medida", 2, "eco.medida.ao", 0),)
     documento = DocumentoParseado(
         TipoDocumento.ECOCARDIOGRAMA,
         1,
@@ -166,6 +166,63 @@ def test_reconcilia_tabla_real_de_medidas_en_dos_columnas() -> None:
     documento = ParseadorEcoDoppler().parsear(texto)
 
     ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_emite_selector_especifico_por_etiqueta_en_tabla_de_dos_columnas() -> None:
+    from anonimizacion.parseo.eco_doppler import ParseadorEcoDoppler
+
+    texto = TextoExtraido((
+        "Paciente: Persona Sintetica\n"
+        "Fecha Estudio: 20/03/2025\n"
+        "MEDIDAS    VALOR    VALOR NORMAL    MEDIDAS    VALOR    VALOR NORMAL\n"
+        "AO    10 mm    < 20 mm    AI    10 mm    < 20 mm",
+    ))
+
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    assert [referencia.selector for referencia in documento.fuentes if referencia.id_campo == "eco.medida"] == [
+        "eco.medida.ao",
+        "eco.medida.ai",
+    ]
+
+
+def test_rechaza_medidas_iguales_asignadas_a_selectores_cruzados_en_dos_columnas() -> None:
+    contenido = ContenidoEco((MedidaEco("AO", "10", "mm"), MedidaEco("AI", "10", "mm")), (), None)
+    documento = DocumentoParseado(
+        TipoDocumento.ECOCARDIOGRAMA,
+        1,
+        IdentidadCruda(nombre=SecretStr("Persona Sintetica")),
+        date(2025, 3, 20),
+        contenido,
+        fuentes=(
+            ReferenciaCampo("eco.medida", 1, "eco.medida.ai", 0),
+            ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 1),
+        ),
+    )
+    texto = TextoExtraido((
+        "MEDIDAS    VALOR    VALOR NORMAL    MEDIDAS    VALOR    VALOR NORMAL\n"
+        "AO    10 mm    < 20 mm    AI    10 mm    < 20 mm",
+    ))
+
+    with pytest.raises(ErrorParseo) as error:
+        ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+    assert error.value.codigo is CodigoErrorDocumento.VALOR_DISCREPANTE
+    assert error.value.campo == "eco.medida"
+
+
+def test_reconcilia_etiqueta_de_medida_con_espacio_y_puntuacion() -> None:
+    contenido = ContenidoEco((MedidaEco("P. Posterior", "8", "mm"),), (), None)
+    documento = DocumentoParseado(
+        TipoDocumento.ECOCARDIOGRAMA,
+        1,
+        IdentidadCruda(nombre=SecretStr("Persona Sintetica")),
+        date(2025, 3, 20),
+        contenido,
+        fuentes=(ReferenciaCampo("eco.medida", 1, "eco.medida.p.posterior", 0),),
+    )
+
+    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("MEDIDAS\nP. Posterior 8 mm",)))
 
 
 def test_rechaza_nombre_eco_asignado_a_otro_lugar_del_documento() -> None:

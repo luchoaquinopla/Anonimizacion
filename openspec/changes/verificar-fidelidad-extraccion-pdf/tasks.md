@@ -57,8 +57,8 @@ Chain strategy: feature-branch-chain
 
 ## Phase 5: Corrección final y evidencia auditable (PR 10)
 
-- [ ] 5.1 RED: en `tests/reconciliacion/test_eco_doppler.py`, añadir dos medidas Eco —incluida tabla de dos columnas y valor igual— con asignación cruzada; debe fallar por etiqueta→valor incorrecta.
-- [ ] 5.2 GREEN: en `src/anonimizacion/{parseo,reconciliacion}/eco_doppler.py`, emitir y consumir un selector específico por etiqueta de medida; prohibir la validación de valor aislado.
-- [ ] 5.3 RED/GREEN: en `tests/reconciliacion/test_inventario.py`, verificar que texto desconocido/no clínico permitido no exige destino y que un patrón clínico reconocido sin destino falla; ajustar whitelist solo si el test lo exige.
-- [ ] 5.4 REFACTOR: registrar por cada tarea RED→GREEN en `openspec/changes/verificar-fidelidad-extraccion-pdf/apply-progress.md`, con `✅ Written`, `✅ Passed`, archivos y comando de prueba.
-- [ ] 5.5 VERIFICAR: eliminar espacios finales de `verify-report.md`, ejecutar `pytest -q`, `git diff --check main...HEAD` y cobertura; publicar PR 10 contra `feat/pdf-extraction-reconciliation`.
+- [x] 5.1 RED: en `tests/reconciliacion/test_eco_doppler.py`, añadir dos medidas Eco —incluida tabla de dos columnas y valor igual— con asignación cruzada; debe fallar por etiqueta→valor incorrecta.
+- [x] 5.2 GREEN: en `src/anonimizacion/{parseo,reconciliacion}/eco_doppler.py`, emitir y consumir un selector específico por etiqueta de medida; prohibir la validación de valor aislado.
+- [x] 5.3 RED/GREEN: en `tests/reconciliacion/test_inventario.py`, verificar que texto desconocido/no clínico permitido no exige destino y que un patrón clínico reconocido sin destino falla; ajustar whitelist solo si el test lo exige.
+- [x] 5.4 REFACTOR: registrar por cada tarea RED→GREEN en `openspec/changes/verificar-fidelidad-extraccion-pdf/apply-progress.md`, con `✅ Written`, `✅ Passed`, archivos y comando de prueba.
+- [x] 5.5 VERIFICAR: eliminar espacios finales de `verify-report.md`, ejecutar `pytest -q`, `git diff --check main...HEAD` y cobertura; publicar PR 10 contra `feat/pdf-extraction-reconciliation`.

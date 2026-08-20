@@ -45,6 +45,7 @@ from pydantic import SecretStr
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
+from anonimizacion.dominio.referencias import selector_medida_eco
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.reconciliacion.base import ReferenciaCampo
@@ -394,7 +395,7 @@ class ParseadorEcoDoppler:
             *((ReferenciaCampo("eco.firma", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if contenido.firma.nombre in pagina), 1), "eco.firma"),) if contenido.firma else ()),
         ) + (
             tuple(
-                ReferenciaCampo("eco.medida", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if medida.valor in pagina), 1), "eco.medida", ordinal)
+                ReferenciaCampo("eco.medida", next((indice + 1 for indice, pagina in enumerate(texto.paginas_ordenadas) if medida.valor in pagina), 1), selector_medida_eco(medida.nombre), ordinal)
                 for ordinal, medida in enumerate(contenido.medidas)
             )
             + tuple(
