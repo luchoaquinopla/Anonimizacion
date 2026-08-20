@@ -36,6 +36,7 @@ _SUBSECCIONES = frozenset({
 _PATRON_FIRMA = re.compile(r"(?i)^firma:\s*.+-\s*mp\s*\S+")
 _PATRON_FIRMA_LEGADA = re.compile(r"(?i)^.+\s+mp\s+\S+$")
 _PATRON_MATRICULA = re.compile(r"(?i)^matr[ií]cula\s+[a-z]\s*\d+")
+_PATRON_NOMBRE_FIRMA = re.compile(r"^[A-ZÁÉÍÓÚÑ.]+(?:\s+[A-ZÁÉÍÓÚÑ.]+)+$")
 _PATRON_MEDIDA_PIPE = re.compile(r"^[A-ZÁÉÍÓÚÑ.][A-ZÁÉÍÓÚÑ. ]*\|\s*[^|]+\|\s*.*$", re.IGNORECASE)
 _PATRON_MEDIDA_SIMPLE = re.compile(r"^[A-ZÁÉÍÓÚÑ.][A-ZÁÉÍÓÚÑ. ]*\s+-?[\d.,]+(?:\s*\S+)?$", re.IGNORECASE)
 
@@ -68,6 +69,76 @@ def _cantidad_medidas_dos_columnas(linea: str) -> int:
         if indice < len(tokens) and not _es_nombre_medida(tokens[indice]):
             indice += 1
     return cantidad
+
+
+def _asociacion_eco(referencia: object, esperado: str, pagina: str) -> bool:
+    """Exige que el selector eco y su valor compartan la misma estructura."""
+    selector = getattr(referencia, "selector")
+    patrones_header = {
+        "eco.nombre": r"paciente:\s*(.+)",
+        "eco.dni": r"documento:\s*(.+)",
+        "eco.numero_estudio": r"n[ºo°]\s*estudio:\s*(.+)",
+        "eco.fecha_estudio": r"fecha estudio:\s*(\d{1,2}/\d{1,2}/\d{4})",
+    }
+    patron_header = patrones_header.get(selector)
+    if patron_header is not None:
+        coincidencia = re.search(patron_header, pagina, re.IGNORECASE)
+        return coincidencia is not None and normalizar_texto(coincidencia.group(1)).replace(",", ".") == esperado
+    if selector == "eco.medida":
+        return re.search(rf"(?<!\w){re.escape(esperado)}(?!\w)", normalizar_texto(pagina).replace(",", ".")) is not None
+    if selector == "eco.seccion":
+        nombre, _, contenido = esperado.partition(" ")
+        pagina_normalizada = normalizar_texto(pagina).replace(",", ".")
+        return bool(contenido and re.search(rf"(?<!\w){re.escape(nombre)}\s+{re.escape(contenido)}(?!\w)", pagina_normalizada))
+    if selector == "eco.firma":
+        return esperado in normalizar_texto(pagina).replace(",", ".")
+    return False
+
+
+def _normalizar_matricula(matricula: str) -> str:
+    """Equivale la abreviatura MP del formato legado, sin alterar matrículas."""
+    normalizada = normalizar_texto(matricula)
+    return re.sub(r"^mp\s*", "", normalizada)
+
+
+def _firma_anclada(pagina: str, nombre: str, matricula: str) -> bool:
+    """Verifica una única estructura de firma, no tokens dispersos en la página."""
+    nombre_esperado = normalizar_texto(nombre)
+    matricula_esperada = _normalizar_matricula(matricula)
+    lineas = [linea.strip() for linea in pagina.splitlines() if linea.strip()]
+
+    for indice, linea in enumerate(lineas):
+        coincidencia = re.fullmatch(r"firma:\s*(.+?)\s*-\s*(.+)", linea, re.IGNORECASE)
+        if coincidencia is not None:
+            if (
+                normalizar_texto(coincidencia.group(1)) == nombre_esperado
+                and _normalizar_matricula(coincidencia.group(2)) == matricula_esperada
+            ):
+                return True
+        coincidencia = re.fullmatch(r"(.+?)\s+mp\s+(\S+)", linea, re.IGNORECASE)
+        if coincidencia is not None:
+            if (
+                normalizar_texto(coincidencia.group(1)) == nombre_esperado
+                and _normalizar_matricula(f"MP {coincidencia.group(2)}") == matricula_esperada
+            ):
+                return True
+        coincidencia = re.fullmatch(r"matr[ií]cula\s+([a-z])\s*(\d+)", linea, re.IGNORECASE)
+        if coincidencia is not None:
+            matricula_real = f"{coincidencia.group(1)} {coincidencia.group(2)}"
+            if _normalizar_matricula(matricula_real) != matricula_esperada:
+                continue
+            for candidata in reversed(lineas[:indice]):
+                if (
+                    re.fullmatch(r"firma:\s*.+", candidata, re.IGNORECASE)
+                    or _PATRON_FIRMA_LEGADA.fullmatch(candidata)
+                    or re.fullmatch(r"matr[ií]cula\s+.+", candidata, re.IGNORECASE)
+                ):
+                    break
+                if normalizar_texto(candidata) == nombre_esperado:
+                    return True
+                if _PATRON_NOMBRE_FIRMA.fullmatch(candidata):
+                    return False
+    return False
 
 
 class ReconciliadorEcoDoppler:
@@ -137,8 +208,8 @@ class ReconciliadorEcoDoppler:
             raise TypeError("contenido eco inválido")
         for referencia in documento.fuentes:
             if referencia.id_campo == "eco.firma" and contenido.firma:
-                pagina = normalizar_texto(texto.paginas_ordenadas[referencia.pagina - 1])
-                if normalizar_texto(contenido.firma.nombre) not in pagina or normalizar_texto(contenido.firma.matricula) not in pagina:
+                pagina = texto.paginas_ordenadas[referencia.pagina - 1]
+                if not _firma_anclada(pagina, contenido.firma.nombre, contenido.firma.matricula):
                     raise ErrorParseo(CodigoErrorDocumento.VALOR_DISCREPANTE, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
         valores = {
             ("eco.nombre", 0): documento.identidad.nombre.get_secret_value(),
@@ -149,5 +220,5 @@ class ReconciliadorEcoDoppler:
             **{("eco.medida", indice): f"{medida.nombre} {medida.valor}{(' ' + medida.unidad) if medida.unidad else ''}" for indice, medida in enumerate(contenido.medidas)},
             **{("eco.seccion", indice): f"{seccion.nombre} {seccion.texto}" for indice, seccion in enumerate(contenido.secciones_texto)},
         }
-        reconciliar_referencias(documento, texto, valores)
+        reconciliar_referencias(documento, texto, valores, validador_asociacion=_asociacion_eco)
         reconciliar_cobertura(documento, self.inventariar(texto))

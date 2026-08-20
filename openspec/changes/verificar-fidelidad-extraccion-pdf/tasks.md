@@ -50,6 +50,6 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Asociación exacta campo–valor (PR 9 correctivo)
 
-- [ ] 4.1 RED: añadir en `tests/reconciliacion/test_{ecg_mortara,eco_doppler}.py` asignaciones cruzadas: ambos valores existen una vez, pero pertenecen a etiquetas distintas; debe fallar.
-- [ ] 4.2 GREEN: actualizar `reconciliacion/_comun.py` y las estrategias ECG/eco para usar `ReferenciaCampo.selector` como evidencia anclada etiqueta→valor, no solo como whitelist.
-- [ ] 4.3 REFACTOR: conservar normalizaciones permitidas, verificar errores seguros y ejecutar la suite completa; publicar PR 9 separado contra `feat/pdf-extraction-reconciliation`.
+- [x] 4.1 RED: añadir en `tests/reconciliacion/test_{ecg_mortara,eco_doppler}.py` asignaciones cruzadas: ambos valores existen una vez, pero pertenecen a etiquetas distintas; debe fallar.
+- [x] 4.2 GREEN: actualizar `reconciliacion/_comun.py` y las estrategias ECG/eco para usar `ReferenciaCampo.selector` como evidencia anclada etiqueta→valor, no solo como whitelist.
+- [x] 4.3 REFACTOR: conservar normalizaciones permitidas, verificar errores seguros y ejecutar la suite completa; publicar PR 9 separado contra `feat/pdf-extraction-reconciliation`.
