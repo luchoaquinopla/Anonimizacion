@@ -77,6 +77,46 @@ def test_secciones_de_texto_no_se_mezclan_con_medidas() -> None:
     assert "normal" in seccion_valvulas.texto.lower()
 
 
+def test_conserva_paginas_reales_de_medida_seccion_y_firma_repetidas() -> None:
+    paginas = (
+        "Paciente: Persona Sintetica\nFecha Estudio: 20/03/2024\nMEDIDAS\nAO | 28 | mm\nCONCLUSIONES\nTexto repetido.\nFirma: Medico Uno - MP 1",
+        "MEDIDAS\nAI | 28 | mm\nPERICARDIO\nTexto repetido.\nFirma: Medico Dos - MP 2",
+    )
+
+    documento = ParseadorEcoDoppler().parsear(TextoExtraido(paginas))
+
+    fuentes = {(fuente.id_campo, fuente.ordinal): fuente.pagina for fuente in documento.fuentes}
+    assert fuentes[("eco.medida", 0)] == 1
+    assert fuentes[("eco.medida", 1)] == 2
+    assert fuentes[("eco.seccion", 0)] == 1
+    assert fuentes[("eco.seccion", 1)] == 2
+    assert fuentes[("eco.firma", 0)] == 2
+
+
+def test_conserva_subseccion_con_padre_y_la_reconciliacion_la_ancla() -> None:
+    from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
+
+    texto = TextoExtraido((
+        "Paciente: Persona Sintetica\nFecha Estudio: 20/03/2024\nVALVULAS CARDIACAS\nAORTICA\nSin estenosis.",
+    ))
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    assert documento.contenido.secciones_texto[0].nombre == "VALVULAS CARDIACAS - AORTICA"
+    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_seccion_que_cruza_paginas_conserva_la_pagina_de_inicio() -> None:
+    texto = TextoExtraido((
+        "Paciente: Persona Sintetica\nFecha Estudio: 20/03/2024\nCONCLUSIONES\nTexto de la primera pagina.",
+        "PERICARDIO\nSin derrame.",
+    ))
+
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    fuentes_seccion = [fuente for fuente in documento.fuentes if fuente.id_campo == "eco.seccion"]
+    assert [(fuente.ordinal, fuente.pagina) for fuente in fuentes_seccion] == [(0, 1), (1, 2)]
+
+
 def test_header_ausente_lanza_error_parseo() -> None:
     texto = TextoExtraido(paginas=("MEDIDAS\nAO | 28 | mm\n",))
     with pytest.raises(ErrorParseo) as info:

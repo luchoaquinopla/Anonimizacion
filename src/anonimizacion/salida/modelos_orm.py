@@ -168,7 +168,7 @@ class TextoSeccionEco(Base):
 
 
 class Cuarentena(Base):
-    """Registro terminal de fallo por documento -- solo `id_documento`+`etapa`+`codigo`.
+    """Registro terminal de fallo por documento con metadata de ubicación segura.
 
     Nunca un mensaje crudo, nunca contenido del documento (ver
     `dominio/errores.py::ErrorDocumento`, `cuarentena.py`).
@@ -180,4 +180,7 @@ class Cuarentena(Base):
     id_documento: Mapped[str] = mapped_column(String, index=True, nullable=False)
     etapa: Mapped[str] = mapped_column(String, nullable=False)
     codigo: Mapped[str] = mapped_column(String, nullable=False)
+    campo: Mapped[str | None] = mapped_column(String, nullable=True)
+    pagina: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tipo_documento: Mapped[str | None] = mapped_column(String, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)

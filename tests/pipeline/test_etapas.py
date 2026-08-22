@@ -13,6 +13,7 @@ def test_valores_coinciden_con_los_strings_etapa_ya_usados_en_el_codigo() -> Non
     assert Etapa.EXTRACCION.value == "extraccion"
     assert Etapa.DETECCION.value == "deteccion"
     assert Etapa.PARSEO.value == "parseo"
+    assert Etapa.RECONCILIACION.value == "reconciliacion"
     assert Etapa.DETECCION_PII.value == "deteccion_pii"
     assert Etapa.PSEUDONIMIZACION.value == "pseudonimizacion"
     assert Etapa.SALIDA.value == "salida"
