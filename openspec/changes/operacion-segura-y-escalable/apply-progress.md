@@ -53,3 +53,13 @@ Se detectaron dos ramas de migración independientes desde `0001_esquema_inicial
 | Corrección | RED | GREEN | Refactor / triangulación |
 |---|---|---|---|
 | Cabeceras Alembic múltiples | La prueba de una única cabecera falló con dos revisiones. | `alembic heads` muestra solo `0004_fusion_corridas_cuarentena`; `tests/salida/test_migraciones.py` pasa 5 pruebas. | La migración no contiene DDL y preserva los dos historiales existentes. |
+
+## Entrega 3 — Coordinación de episodios
+
+Completada la tarea 2.2. El coordinador agrupa documentos del mismo paciente con una ancla de hasta siete días, exige un ECG, un laboratorio y un ecocardiograma por episodio, y evita publicar decisiones incompletas hasta el cierre de la corrida. Los tipos repetidos dentro de un candidato se tratan como asociación ambigua y quedan en cuarentena.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 2.2 | `tests/pipeline/test_coordinador_episodios.py` falló porque el módulo no existía. | 4 pruebas focalizadas pasan. | Cubre ventana de 7 días, separación a 8 días, empate por tipo, estudios faltantes y cierre de corrida. |
+
+Pendientes: tareas 2.3–5.2.
