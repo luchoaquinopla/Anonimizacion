@@ -157,11 +157,9 @@ Pendientes: tareas 4.1–5.2.
 
 ## Entrega 11 — Corpus sintético base
 
-Completada la tarea 4.1. Se generan localmente PDFs sintéticos de ECG, laboratorio y eco con semilla, junto con un oráculo sin DNI ni nombres. 
-
+Completada la tarea 4.1. Se generan localmente PDFs sintéticos de ECG, laboratorio y eco con semilla, junto con un oráculo sin DNI ni nombres.`r`n
 | Tarea | RED | GREEN | REFACTOR / triangulación |
 |---|---|---|---|
 | 4.1 | Faltaba el generador de corpus. | 2 pruebas focalizadas pasan. | Se cubrieron repetibilidad lógica, tres tipos y ausencia de PII en el oráculo. |
 
 Pendientes: tareas 4.2–5.2.
-
