@@ -1,24 +1,9 @@
-"""Test de la migración Alembic (tasks.md 7.1) contra SQLite (spec `anonymized-output`).
-
-Limitación de entorno de desarrollo (NO es una decisión de diseño): esta
-máquina no tiene un servidor PostgreSQL corriendo ni `psycopg2` instalado
-(verificado antes de empezar PR6). El dialecto de PRODUCCIÓN sigue siendo
-Postgres (design.md, decisión Q1) -- este test corre la MISMA migración
-contra SQLite en un archivo temporal, porque el DDL de
-`migrations/versions/0001_esquema_inicial.py` usa únicamente tipos
-portables (`sa.String`, `sa.Integer`, `sa.Float`, `sa.Boolean`, `sa.Date`,
-`sa.DateTime`, y `sa.JSON().with_variant(JSONB(), "postgresql")` para las
-columnas JSON) -- en Postgres esa columna compila a JSONB real; en SQLite
-cae al `JSON` genérico de SQLAlchemy (columna `TEXT` con (de)serialización
-automática). Ninguna columna JSON se usa como filtro/índice (design.md:
-"JSONB... nunca como camino de acceso primario"), así que esa diferencia de
-tipo no afecta ningún comportamiento ejercitado por los tests de esta fase.
-"""
-
+"""Pruebas de migraciones Alembic contra SQLite, incluido el estado durable de corridas."""
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
@@ -32,6 +17,8 @@ _TABLAS_ESPERADAS = {
     "medicion_eco",
     "texto_seccion_eco",
     "cuarentena",
+    "corrida",
+    "documento_corrida",
 }
 
 
@@ -55,6 +42,37 @@ def test_migracion_head_crea_todas_las_tablas_del_esquema(tmp_path) -> None:
     assert _TABLAS_ESPERADAS <= tablas
 
 
+def test_migracion_persiste_corrida_y_documento_idempotente(tmp_path) -> None:
+    ruta_db = tmp_path / "corridas.db"
+    url = f"sqlite:///{ruta_db}"
+    command.upgrade(_config_alembic(url), "head")
+
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        conexion.execute(
+            sa.text("INSERT INTO corrida (id_corrida, estado, version) VALUES ('corrida-1', 'creada', 0)")
+        )
+        conexion.execute(
+            sa.text(
+                "INSERT INTO documento_corrida "
+                "(corrida_id, huella_contenido, ruta_autorizada, estado, version) "
+                "VALUES ('corrida-1', :huella, 'entrada/estudio.pdf', 'inventariado', 0)"
+            ),
+            {"huella": "a" * 64},
+        )
+
+    with motor.begin() as conexion:
+        with pytest.raises(sa.exc.IntegrityError):
+            conexion.execute(
+                sa.text(
+                    "INSERT INTO documento_corrida "
+                    "(corrida_id, huella_contenido, ruta_autorizada, estado, version) "
+                    "VALUES ('corrida-1', :huella, 'entrada/repetido.pdf', 'inventariado', 0)"
+                ),
+                {"huella": "a" * 64},
+            )
+
+
 def test_migracion_downgrade_elimina_todas_las_tablas(tmp_path) -> None:
     ruta_db = tmp_path / "downgrade.db"
     url = f"sqlite:///{ruta_db}"
@@ -71,7 +89,6 @@ def test_migracion_downgrade_elimina_todas_las_tablas(tmp_path) -> None:
 
 
 def test_metadata_orm_coincide_con_la_migracion(tmp_path) -> None:
-    """El `Base.metadata` de `modelos_orm.py` describe exactamente las mismas tablas que la migración."""
     from anonimizacion.salida.modelos_orm import Base
 
     assert set(Base.metadata.tables.keys()) == _TABLAS_ESPERADAS

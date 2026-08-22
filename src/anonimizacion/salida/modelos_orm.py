@@ -1,6 +1,6 @@
 """Modelos SQLAlchemy del esquema de salida (design.md, decisión Q1: storage híbrido).
 
-Seis tablas, exactamente las que design.md enumera para la decisión Q1 (más
+Ocho tablas, incluyendo el estado durable de corridas para la decisión Q1 (más
 `cuarentena`, no listada ahí pero requerida por spec `batch-processing` /
 tasks.md 7.5 para persistir `ErrorDocumento`):
 
@@ -25,6 +25,7 @@ tasks.md 7.5 para persistir `ErrorDocumento`):
   PII (la depuración de PII en texto libre es responsabilidad de la
   detección de PII + el pipeline que la orquesta, Fase 5/8 -- esta tabla
   asume que el texto que recibe ya pasó por ahí).
+- `corrida` y `documento_corrida`: estado durable y versionado para reanudar una corrida; la huella es única dentro de cada corrida.
 - `cuarentena`: SOLO `id_documento` + `etapa` + `codigo` (ver
   `dominio/errores.py::ErrorDocumento` y `cuarentena.py`) -- nunca mensaje
   crudo, nunca contenido del documento (design.md, "Sin PII en cola, logs
@@ -46,7 +47,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -181,3 +182,39 @@ class Cuarentena(Base):
     etapa: Mapped[str] = mapped_column(String, nullable=False)
     codigo: Mapped[str] = mapped_column(String, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
+
+
+class CorridaOrm(Base):
+    """Estado durable de una ejecución administrativa del pipeline."""
+
+    __tablename__ = "corrida"
+
+    id_corrida: Mapped[str] = mapped_column(String(36), primary_key=True)
+    estado: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    creada_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
+    actualizada_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_ahora_utc, onupdate=_ahora_utc, nullable=False
+    )
+
+
+class DocumentoCorridaOrm(Base):
+    """Documento inventariado; la huella es idempotente dentro de su corrida."""
+
+    __tablename__ = "documento_corrida"
+    __table_args__ = (
+        UniqueConstraint("corrida_id", "huella_contenido", name="uq_documento_corrida_huella"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    corrida_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("corrida.id_corrida"), index=True, nullable=False
+    )
+    huella_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
+    ruta_autorizada: Mapped[str] = mapped_column(String, nullable=False)
+    estado: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    creada_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
+    actualizada_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_ahora_utc, onupdate=_ahora_utc, nullable=False
+    )

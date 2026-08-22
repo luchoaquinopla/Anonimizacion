@@ -27,10 +27,10 @@ Chain strategy: feature-branch-chain
 
 ## Phase 1: Corridas durables
 
-- [ ] 1.1 **RED**: crear `tests/dominio/test_corridas.py` para transiciones, huella duplicada y reanudación.
-- [ ] 1.2 **GREEN**: añadir `src/anonimizacion/dominio/corridas.py` y `estados_corrida.py` con estados/versionado.
-- [ ] 1.3 **RED/GREEN**: extender `src/anonimizacion/salida/modelos_orm.py` y migraciones con corrida/documento; probar persistencia en `tests/salida/test_migraciones.py`.
-- [ ] 1.4 **REFACTOR**: extraer repositorio de corridas en `src/anonimizacion/ingesta/repositorio_corridas.py`; eliminar duplicación de estado.
+- [x] 1.1 **RED**: crear `tests/dominio/test_corridas.py` para transiciones, huella duplicada y reanudación.
+- [x] 1.2 **GREEN**: añadir `src/anonimizacion/dominio/corridas.py` y `estados_corrida.py` con estados/versionado.
+- [x] 1.3 **RED/GREEN**: extender `src/anonimizacion/salida/modelos_orm.py` y migraciones con corrida/documento; probar persistencia en `tests/salida/test_migraciones.py`.
+- [x] 1.4 **REFACTOR**: extraer repositorio de corridas en `src/anonimizacion/ingesta/repositorio_corridas.py`; eliminar duplicación de estado.
 
 ## Phase 2: Ingesta, coordinación y salida
 
