@@ -140,3 +140,17 @@ Completada la tarea 3.3. La cola define una concurrencia configurable limitada e
 - Entrega 9: `pytest -q tests/trabajadores/test_app.py tests/trabajadores/test_tareas.py` → 11 passed.
 
 Pendientes: tareas 3.4–5.2.
+
+## Entrega 10 — Guía de despliegue institucional
+
+Completada la tarea 3.4. Se documentó la instalación base, el catálogo de variables y los controles de permisos, backups, retención y rollback. La guía diferencia la configuración que hoy existe de los requisitos de una operación institucional: no declara un comando de servicio de producción porque aún falta el composition root que conecte portal, corridas, PostgreSQL, Redis y publicación de punta a punta.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 3.4 | La comprobación documental falló porque no existían `deploy/` ni README. | `tests/deploy/test_documentacion_despliegue.py` pasa. | Se verifican los controles operativos, variables Celery reales y el aviso explícito de que el catálogo no contiene secretos. |
+
+## Verificación focalizada acumulada
+
+- Entrega 10: `pytest -q tests/deploy/test_documentacion_despliegue.py` → 1 passed.
+
+Pendientes: tareas 4.1–5.2.

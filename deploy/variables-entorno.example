@@ -1,0 +1,16 @@
+# Este archivo no contiene secretos ni valores institucionales reales.
+# Copiarlo fuera del repositorio, protegerlo con ACL y completar con IT.
+
+# Redis interno. No usar los valores de ejemplo como configuración de producción.
+CELERY_BROKER_URL=redis://redis-interno:6379/0
+CELERY_RESULT_BACKEND=redis://redis-interno:6379/1
+
+# Entre 1 y 16; iniciar con un valor bajo y medir.
+CELERY_WORKER_CONCURRENCY=4
+
+# Sólo desarrollo/pruebas sin Redis. En servicio real: 0 o ausente.
+CELERY_TASK_ALWAYS_EAGER=0
+
+# Requeridos por la composición institucional futura; nunca registrar ni versionar.
+DATABASE_URL=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
+ANONIMIZACION_PEPPER=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
