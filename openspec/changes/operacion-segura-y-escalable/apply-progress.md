@@ -18,3 +18,22 @@ Completadas las tareas 1.1–1.4. Se incorporó el dominio de corridas y documen
 `pytest -q tests/dominio/test_corridas.py tests/ingesta/test_repositorio_corridas.py tests/salida/test_migraciones.py tests/salida/destinos/test_postgres.py`
 
 Pendientes: tareas 2.1–5.2.
+
+## Entrega 2 — Inventario seguro de documentos
+
+Completada la tarea 2.1. `InventariadorDocumentos` limita la exploración a raíces autorizadas, recorre directorios de forma recursiva, omite extensiones no admitidas, rechaza PDFs que exceden el tamaño configurado y conserva una sola entrada por huella de contenido. La huella se calcula por bloques para no cargar PDFs completos en memoria.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 2.1 | `tests/ingesta/test_fuente.py` falló al no existir `InventariadorDocumentos`. | 7 pruebas focalizadas pasan. | Se cubrieron ruta no autorizada, inventario recursivo, extensión ignorada, huella duplicada y límite de tamaño; el cálculo de huella usa bloques de 1 MiB. |
+
+## Verificación focalizada acumulada
+
+- Entrega 1: `pytest -q tests/dominio/test_corridas.py tests/ingesta/test_repositorio_corridas.py tests/salida/test_migraciones.py tests/salida/destinos/test_postgres.py`
+- Entrega 2: `pytest -q tests/ingesta/test_fuente.py`
+
+Pendientes: tareas 2.2–5.2.
+
+## Incidencia de verificación
+
+La suite de migraciones falla fuera del alcance de esta entrega porque el worktree ya contiene dos cabeceras Alembic: `0002_corridas_durables` y `0003_tipo_documento_cuarentena`. `command.upgrade(..., "head")` no puede elegir una cabecera. No se modifica esa cadena en la tarea 2.1; requiere una migración de fusión en una entrega dedicada.

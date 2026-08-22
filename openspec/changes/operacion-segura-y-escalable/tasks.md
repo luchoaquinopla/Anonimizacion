@@ -34,7 +34,7 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Ingesta, coordinación y salida
 
-- [ ] 2.1 **RED/GREEN**: implementar `InventariadorDocumentos` en `ingesta/fuente.py`: raíces permitidas, extensión/tamaño y huella idempotente; probar rutas rechazadas.
+- [x] 2.1 **RED/GREEN**: implementar `InventariadorDocumentos` en `ingesta/fuente.py`: raíces permitidas, extensión/tamaño y huella idempotente; probar rutas rechazadas.
 - [ ] 2.2 **RED/GREEN**: crear `pipeline/coordinador_episodios.py` y pruebas de ventanas, empates, faltantes y cierre de corrida.
 - [ ] 2.3 **RED/GREEN**: adaptar `trabajadores/tareas.py` para persistir extracción mínima/completa sin publicar; probar reinicio sin duplicados.
 - [ ] 2.4 **RED/GREEN**: añadir `salida/publicador_bundles.py` y completar `salida/destinos/parquet.py`; probar escritura atómica, manifiesto sin PII y una fila vigente.

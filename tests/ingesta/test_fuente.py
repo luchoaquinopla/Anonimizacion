@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from anonimizacion.ingesta.artefacto import FormatoArtefacto
-from anonimizacion.ingesta.fuente import FuenteArtefacto
+from anonimizacion.ingesta.fuente import FuenteArtefacto, InventariadorDocumentos
 
 
 def _crear_pdf_falso(ruta: Path, contenido: bytes) -> str:
@@ -48,3 +48,42 @@ def test_fuente_artefacto_directorio_vacio_no_produce_artefactos(tmp_path: Path)
 def test_fuente_artefacto_directorio_inexistente_falla_explicito(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         FuenteArtefacto(directorio=tmp_path / "no_existe").listar()
+
+
+
+def test_inventariador_rechaza_ruta_fuera_de_raices_autorizadas(tmp_path: Path) -> None:
+    entrada_autorizada = tmp_path / "entrada"
+    entrada_autorizada.mkdir()
+    ruta_no_autorizada = tmp_path / "otra_entrada"
+    ruta_no_autorizada.mkdir()
+
+    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada_autorizada,), tamano_maximo_bytes=1024)
+
+    with pytest.raises(PermissionError):
+        inventariador.inventariar(ruta_no_autorizada)
+
+
+def test_inventariador_inventaria_recursivamente_y_descarta_huellas_duplicadas(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    subdirectorio = entrada / "subdirectorio"
+    subdirectorio.mkdir(parents=True)
+    _crear_pdf_falso(entrada / "original.pdf", b"%PDF-1.4 contenido repetido")
+    _crear_pdf_falso(subdirectorio / "copia.pdf", b"%PDF-1.4 contenido repetido")
+    (subdirectorio / "notas.txt").write_text("ignorar")
+
+    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=1024)
+
+    artefactos = inventariador.inventariar(entrada)
+
+    assert len(artefactos) == 1
+    assert artefactos[0].uri.endswith("original.pdf")
+
+
+def test_inventariador_rechaza_pdf_que_supera_tamano_maximo(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    _crear_pdf_falso(entrada / "grande.pdf", b"x" * 9)
+    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=8)
+
+    with pytest.raises(ValueError, match="tamano"):
+        inventariador.inventariar(entrada)
