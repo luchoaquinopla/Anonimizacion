@@ -8,9 +8,24 @@ dependencia de test adicional (p. ej. reportlab).
 
 from __future__ import annotations
 
+import random
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import pymupdf
+
+
+@dataclass(frozen=True)
+class DocumentoSintetico:
+    tipo: str
+    ruta: Path
+
+
+@dataclass(frozen=True)
+class CorpusClinicoSintetico:
+    documentos: tuple[DocumentoSintetico, ...]
+    oraculo: dict[str, dict[str, str]]
 
 
 def crear_pdf_con_texto(ruta: Path, paginas: list[str]) -> Path:
@@ -61,3 +76,26 @@ def crear_pdf_layout_columnas(
     documento.save(ruta)
     documento.close()
     return ruta
+
+
+def generar_corpus_clinico(directorio: Path, *, semilla: int) -> CorpusClinicoSintetico:
+    """Genera un episodio sintético local con su oráculo libre de PII."""
+    directorio.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(semilla)
+    dni = str(rng.randint(10_000_000, 49_999_999))
+    nombre = "Paciente Sintetico"
+    fecha = date(2024, 1, 15).isoformat()
+    plantillas = {
+        "ecg": f"12SL\nPaciente: {nombre}\nDNI: {dni}\nVent. rate: 70\nFecha: {fecha}",
+        "laboratorio": f"HEMATOLOGIA\nApellido y Nombre: {nombre}\nDNI: {dni}\nHemoglobina 14.2\nFecha: {fecha}",
+        "ecocardiograma": f"ECO DOPPLER\nPaciente: {nombre}\nDocumento: {dni}\nDDVI: 50\nFecha: {fecha}",
+    }
+    documentos = tuple(
+        DocumentoSintetico(tipo, crear_pdf_con_texto(directorio / f"{tipo}.pdf", [texto]))
+        for tipo, texto in plantillas.items()
+    )
+    oraculo = {
+        tipo: {"tipo": tipo, "fecha_estudio": fecha, "resultado_esperado": "aprobado"}
+        for tipo in plantillas
+    }
+    return CorpusClinicoSintetico(documentos, oraculo)

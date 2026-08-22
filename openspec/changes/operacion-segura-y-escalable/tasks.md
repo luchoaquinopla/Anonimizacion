@@ -49,7 +49,7 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Corpus, eco y carga
 
-- [ ] 4.1 **RED/GREEN**: ampliar `tests/fixtures/pdf_sintetico.py` con plantillas ECG/laboratorio/eco, semilla y oráculo; probar repetibilidad y cero red/PII real.
+- [x] 4.1 **RED/GREEN**: ampliar `tests/fixtures/pdf_sintetico.py` con plantillas ECG/laboratorio/eco, semilla y oráculo; probar repetibilidad y cero red/PII real.
 - [ ] 4.2 **RED/GREEN**: crear `tests/corpus_sintetico/test_pipeline_masivo.py` para válidos, ambiguos, faltantes, corruptos, fechas límite y ausencia de PII.
 - [ ] 4.3 crear `tests/carga/ejecutar_corpus.py` con escalones 1k/10k/100k y métricas de tiempo, memoria, reintentos y duplicados; no ejecutar 100k en CI.
 - [ ] 4.4 **RED**: registrar metadata segura de eco en `observabilidad/diagnostico_seguro.py` y fixture mínima que reproduce la cuarentena.
