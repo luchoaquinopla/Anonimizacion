@@ -78,6 +78,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
@@ -306,6 +307,16 @@ class ParseadorEcgMortara:
             qt_qtc=_colapsar_espacios(medidas["qt_qtc"]) if "qt_qtc" in medidas else None,
             ejes=_colapsar_espacios(medidas["ejes"]) if "ejes" in medidas else None,
         )
+        fuentes = (
+            ReferenciaCampo("ecg.nombre", 1, "ecg.nombre"),
+            *((ReferenciaCampo("ecg.id_estudio", 1, "ecg.id_estudio"),) if identidad.ids_internos else ()),
+            ReferenciaCampo("ecg.fecha_estudio", 1, "ecg.fecha_estudio"),
+            *((ReferenciaCampo("ecg.fecha_nacimiento", 1, "ecg.fecha_nacimiento"),) if identidad.fecha_nac else ()),
+        ) + tuple(
+            ReferenciaCampo(f"ecg.{campo}", 1, f"ecg.{campo}")
+            for campo, valor in (("vent_rate", contenido.vent_rate), ("pr_interval", contenido.pr_interval), ("qrs_duration", contenido.qrs_duration), ("qt_qtc", contenido.qt_qtc), ("ejes", contenido.ejes))
+            if valor is not None
+        )
 
         return DocumentoParseado(
             tipo_documento=TipoDocumento.ECG,
@@ -314,4 +325,5 @@ class ParseadorEcgMortara:
             fecha_estudio=fecha_estudio,
             contenido=contenido,
             adicionales=adicionales,
+            fuentes=fuentes,
         )

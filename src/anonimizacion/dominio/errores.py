@@ -9,6 +9,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from .referencias import validar_campo_reconciliacion
+from .tipos_documento import TipoDocumento
+
+
+class EtapaDocumento(str, Enum):
+    """Etapas permitidas para metadata segura de errores."""
+
+    EXTRACCION = "extraccion"
+    DETECCION = "deteccion"
+    PARSEO = "parseo"
+    RECONCILIACION = "reconciliacion"
+    DETECCION_PII = "deteccion_pii"
+    PSEUDONIMIZACION = "pseudonimizacion"
+    SALIDA = "salida"
+
 
 class CodigoErrorDocumento(str, Enum):
     """Códigos de fallo terminal — todos van a cuarentena.
@@ -34,6 +49,11 @@ class CodigoErrorDocumento(str, Enum):
     # Ver docstring de la clase: terminal tras agotar reintentos de un error
     # transitorio (`pipeline/ejecutor.py`, `trabajadores/politica_reintentos.py`).
     ERROR_TRANSITORIO_AGOTADO = "error_transitorio_agotado"
+    EVIDENCIA_AUSENTE = "evidencia_ausente"
+    EVIDENCIA_AMBIGUA = "evidencia_ambigua"
+    VALOR_DISCREPANTE = "valor_discrepante"
+    COBERTURA_INCOMPLETA = "cobertura_incompleta"
+    COBERTURA_AMBIGUA = "cobertura_ambigua"
 
 
 @dataclass(frozen=True)
@@ -41,8 +61,19 @@ class ErrorDocumento:
     """Registro terminal de fallo por documento; sin mensaje crudo, solo código."""
 
     id_documento: str
-    etapa: str
+    etapa: str | EtapaDocumento
     codigo: CodigoErrorDocumento
+    campo: str | None = None
+    pagina: int | None = None
+    tipo_documento: TipoDocumento | None = None
+
+    def __post_init__(self) -> None:
+        if self.campo is not None:
+            validar_campo_reconciliacion(self.campo)
+        if self.pagina is not None and self.pagina < 1:
+            raise ValueError("pagina debe comenzar en 1")
+        if self.tipo_documento is not None and not isinstance(self.tipo_documento, TipoDocumento):
+            raise ValueError("tipo_documento debe pertenecer al catálogo")
 
 
 class ErrorParseo(Exception):
@@ -52,7 +83,19 @@ class ErrorParseo(Exception):
     parseo o pseudonimización, y un default fijo llevaría a cuarentena mal etiquetada.
     """
 
-    def __init__(self, codigo: CodigoErrorDocumento, etapa: str) -> None:
+    def __init__(
+        self,
+        codigo: CodigoErrorDocumento,
+        etapa: str | EtapaDocumento,
+        campo: str | None = None,
+        pagina: int | None = None,
+    ) -> None:
+        if campo is not None:
+            validar_campo_reconciliacion(campo)
+        if pagina is not None and pagina < 1:
+            raise ValueError("pagina debe comenzar en 1")
         self.codigo = codigo
         self.etapa = etapa
+        self.campo = campo
+        self.pagina = pagina
         super().__init__(codigo.value)  # str(excepcion) legible; codigo.value, no el enum repr

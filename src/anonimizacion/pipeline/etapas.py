@@ -27,6 +27,7 @@ class Etapa(str, Enum):
     EXTRACCION = "extraccion"
     DETECCION = "deteccion"
     PARSEO = "parseo"
+    RECONCILIACION = "reconciliacion"
     DETECCION_PII = "deteccion_pii"
     PSEUDONIMIZACION = "pseudonimizacion"
     SALIDA = "salida"
