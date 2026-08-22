@@ -163,3 +163,20 @@ Completada la tarea 4.1. Se generan localmente PDFs sintéticos de ECG, laborato
 | 4.1 | Faltaba el generador de corpus. | 2 pruebas focalizadas pasan. | Se cubrieron repetibilidad lógica, tres tipos y ausencia de PII en el oráculo. |
 
 Pendientes: tareas 4.2–5.2.
+
+## Corrección de fidelidad — Corpus sintético de plantillas
+
+Se recalibraron las tres plantillas contra las referencias locales autorizadas, inspeccionadas sólo por geometría, paginación y etiquetas estructurales. No se copió, versionó ni registró contenido identificatorio de esas referencias. El corpus ahora reproduce el contrato que necesitan los parsers: ECG apaisado de una página con aviso tolerado, medidas, grilla y trazado explícitamente no clínico; laboratorio A4 de tres páginas con encabezado repetido y tablas por secciones; y ecocardiograma de dos páginas con encabezado, tabla de medidas y bloques de texto libre.
+
+| Tarea / corrección | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 4.1, fidelidad de layout | Dos pruebas nuevas fallaron: el ECG se emitía A4 y laboratorio/eco sólo tenían una página. | `tests/fixtures/test_pdf_sintetico_corpus.py` pasa 5 pruebas. | Se aisló el dibujo repetible de tablas, encabezados y pie de página; se probaron geometría, orden de etiquetas, paginación, secciones, marcador sintético y ejecución sin red. |
+
+## Fidelidad comprobada y límite conocido
+
+- ECG: 792×612, una página, etiquetas `12SL`, `PID / NAME MISMATCH`, bloque de medidas, calibración, grilla y seis trazos sintéticos no clínicos.
+- Laboratorio: 595×842, tres páginas, encabezado repetido, columnas de determinación/resultado/unidades/referencia y secciones HEMATOLOGIA, QUIMICA CLINICA e IONOGRAMA.
+- Ecocardiograma: 616×862, dos páginas, campos de encabezado, tabla de medidas y secciones MOTILIDAD SEGMENTARIA, VALVULAS, DOPPLER y CONCLUSIONES.
+- Todas las plantillas usan exclusivamente textos, identificadores y valores ficticios generados localmente; el oráculo no conserva nombre ni DNI y el generador no requiere red.
+
+Pendiente: calibrar tipografías, espaciados finos y variantes de layout contra una colección institucional de originales previamente anonimizados y autorizados. Esta tarea no prueba aún decisiones clínicas ni reemplaza la prueba masiva de 4.2–4.3.

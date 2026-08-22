@@ -78,24 +78,168 @@ def crear_pdf_layout_columnas(
     return ruta
 
 
+_TAMANO_ECG = (792, 612)
+_TAMANO_LABORATORIO = (595, 842)
+_TAMANO_ECO = (616, 862)
+_NOMBRE_SINTETICO = "Paciente Sintetico"
+_FECHA_SINTETICA = date(2024, 1, 15).isoformat()
+
+
+def _insertar_texto(pagina: pymupdf.Page, punto: tuple[float, float], texto: str, tamano: float = 8) -> None:
+    pagina.insert_text(punto, texto, fontsize=tamano, fontname="helv", color=(0, 0, 0))
+
+
+def _pie_pagina(pagina: pymupdf.Page, numero: int, total: int) -> None:
+    ancho = pagina.rect.width
+    alto = pagina.rect.height
+    pagina.draw_line((36, alto - 38), (ancho - 36, alto - 38), color=(0.45, 0.45, 0.45), width=0.5)
+    _insertar_texto(pagina, (ancho - 105, alto - 22), f"Pagina {numero} de {total}", 7)
+    _insertar_texto(pagina, (36, alto - 22), "DOCUMENTO SINTETICO - SOLO PRUEBAS", 7)
+
+
+def _tabla(
+    pagina: pymupdf.Page,
+    rectangulo: pymupdf.Rect,
+    encabezados: tuple[str, ...],
+    filas: tuple[tuple[str, ...], ...],
+    *,
+    tamano: float = 7,
+) -> None:
+    columnas = len(encabezados)
+    alto_fila = rectangulo.height / (len(filas) + 1)
+    ancho_columna = rectangulo.width / columnas
+    pagina.draw_rect(rectangulo, color=(0.2, 0.2, 0.2), width=0.7)
+    for fila in range(1, len(filas) + 1):
+        y = rectangulo.y0 + fila * alto_fila
+        pagina.draw_line((rectangulo.x0, y), (rectangulo.x1, y), color=(0.45, 0.45, 0.45), width=0.4)
+    for columna in range(1, columnas):
+        x = rectangulo.x0 + columna * ancho_columna
+        pagina.draw_line((x, rectangulo.y0), (x, rectangulo.y1), color=(0.45, 0.45, 0.45), width=0.4)
+    for columna, encabezado in enumerate(encabezados):
+        _insertar_texto(pagina, (rectangulo.x0 + columna * ancho_columna + 4, rectangulo.y0 + 12), encabezado, tamano)
+    for indice_fila, fila in enumerate(filas, start=1):
+        for columna, valor in enumerate(fila):
+            _insertar_texto(
+                pagina,
+                (rectangulo.x0 + columna * ancho_columna + 4, rectangulo.y0 + indice_fila * alto_fila + 12),
+                valor,
+                tamano,
+            )
+
+
+def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
+    pagina = documento.new_page(width=_TAMANO_ECG[0], height=_TAMANO_ECG[1])
+    _insertar_texto(pagina, (34, 28), "12SL - ECG RECORD", 13)
+    _insertar_texto(pagina, (34, 48), "Paciente: " + _NOMBRE_SINTETICO, 8)
+    _insertar_texto(pagina, (34, 62), "PID: " + dni + "    Fecha: " + _FECHA_SINTETICA, 8)
+    _insertar_texto(pagina, (560, 48), "Technician: Operador Sintetico", 8)
+    _insertar_texto(pagina, (560, 62), "PID / NAME MISMATCH", 8)
+    _tabla(
+        pagina,
+        pymupdf.Rect(34, 80, 758, 126),
+        ("Vent. rate", "PR interval", "QRS duration", "QT/QTc", "P-R-T axes"),
+        (("70 bpm", "160 ms", "92 ms", "390/420 ms", "45 60 30"),),
+        tamano=8,
+    )
+    grilla = pymupdf.Rect(34, 146, 758, 510)
+    pagina.draw_rect(grilla, color=(0.75, 0.35, 0.35), width=0.6)
+    for x in range(44, 759, 10):
+        pagina.draw_line((x, grilla.y0), (x, grilla.y1), color=(0.96, 0.82, 0.82), width=0.25)
+    for y in range(156, 511, 10):
+        pagina.draw_line((grilla.x0, y), (grilla.x1, y), color=(0.96, 0.82, 0.82), width=0.25)
+    for derivacion in range(6):
+        base = 172 + derivacion * 54
+        _insertar_texto(pagina, (40, base), f"Derivacion {derivacion + 1}", 7)
+        puntos: list[tuple[float, float]] = []
+        for x in range(95, 750, 8):
+            onda = ((x // 8 + derivacion) % 18) - 9
+            y = base - (onda if abs(onda) < 4 else onda * 0.35)
+            puntos.append((x, y))
+        for inicio, fin in zip(puntos, puntos[1:]):
+            pagina.draw_line(inicio, fin, color=(0.1, 0.1, 0.1), width=0.55)
+    _insertar_texto(pagina, (282, 530), "TRAZADO SINTETICO - NO CLINICO", 8)
+    _insertar_texto(pagina, (34, 548), "25 mm/s    10 mm/mV    40 Hz", 8)
+    _pie_pagina(pagina, 1, 1)
+
+
+def _encabezado_laboratorio(pagina: pymupdf.Page, dni: str) -> None:
+    _insertar_texto(pagina, (42, 38), "LABORATORIO DE ANALISIS CLINICOS", 13)
+    _insertar_texto(pagina, (42, 58), "Apellido y Nombre: " + _NOMBRE_SINTETICO, 8)
+    _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    Nro. de Peticion: PET-SINT-001", 8)
+    _insertar_texto(pagina, (42, 86), "Fecha: " + _FECHA_SINTETICA + "    Hora de Extraccion: 08:30", 8)
+    pagina.draw_line((42, 96), (553, 96), color=(0.2, 0.2, 0.2), width=0.6)
+
+
+def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
+    paginas = (
+        ("HEMATOLOGIA", (("Hemoglobina", "14.2", "g/dL", "12.0 - 16.0"), ("Hematocrito", "42", "%", "36 - 46"))),
+        ("QUIMICA CLINICA", (("Glucosa", "90", "mg/dL", "70 - 110"), ("Creatinina", "0.9", "mg/dL", "0.6 - 1.2"))),
+        ("IONOGRAMA", (("Sodio", "140", "mEq/L", "135 - 145"), ("Potasio", "4.1", "mEq/L", "3.5 - 5.1"))),
+    )
+    for numero, (seccion, filas) in enumerate(paginas, start=1):
+        pagina = documento.new_page(width=_TAMANO_LABORATORIO[0], height=_TAMANO_LABORATORIO[1])
+        _encabezado_laboratorio(pagina, dni)
+        _insertar_texto(pagina, (42, 124), seccion, 10)
+        _tabla(
+            pagina,
+            pymupdf.Rect(42, 140, 553, 255),
+            ("Determinacion", "Resultado", "Unidades", "Valores de Referencia"),
+            filas,
+        )
+        _insertar_texto(pagina, (42, 290), "Resultados sinteticos para validacion de parser", 8)
+        _pie_pagina(pagina, numero, len(paginas))
+
+
+def _encabezado_eco(pagina: pymupdf.Page, dni: str) -> None:
+    _insertar_texto(pagina, (42, 40), "ECOCARDIOGRAMA DOPPLER", 13)
+    _insertar_texto(pagina, (42, 60), "Paciente: " + _NOMBRE_SINTETICO + "    Documento: " + dni, 8)
+    _insertar_texto(pagina, (42, 74), "Nro. de Estudio: ECO-SINT-001    Fecha: " + _FECHA_SINTETICA, 8)
+    pagina.draw_line((42, 86), (574, 86), color=(0.2, 0.2, 0.2), width=0.6)
+
+
+def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
+    primera = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
+    _encabezado_eco(primera, dni)
+    _insertar_texto(primera, (42, 116), "MEDIDAS", 10)
+    _tabla(
+        primera,
+        pymupdf.Rect(42, 132, 574, 270),
+        ("Medida", "Valor", "Unidad", "Referencia"),
+        (("AO", "31", "mm", "Sintetica"), ("AI", "35", "mm", "Sintetica"), ("DDVI", "50", "mm", "Sintetica"), ("DSVI", "32", "mm", "Sintetica")),
+    )
+    _insertar_texto(primera, (42, 305), "MOTILIDAD SEGMENTARIA", 10)
+    _insertar_texto(primera, (42, 322), "Descripcion sintetica sin interpretacion clinica.", 8)
+    _pie_pagina(primera, 1, 2)
+
+    segunda = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
+    _encabezado_eco(segunda, dni)
+    for y, titulo in ((120, "VALVULAS"), (210, "DOPPLER"), (300, "CONCLUSIONES")):
+        _insertar_texto(segunda, (42, y), titulo, 10)
+        segunda.draw_rect(pymupdf.Rect(42, y + 12, 574, y + 66), color=(0.55, 0.55, 0.55), width=0.5)
+        _insertar_texto(segunda, (50, y + 32), "Seccion sintetica para validar estructura y orden de texto.", 8)
+    _pie_pagina(segunda, 2, 2)
+
+
 def generar_corpus_clinico(directorio: Path, *, semilla: int) -> CorpusClinicoSintetico:
     """Genera un episodio sintético local con su oráculo libre de PII."""
     directorio.mkdir(parents=True, exist_ok=True)
     rng = random.Random(semilla)
     dni = str(rng.randint(10_000_000, 49_999_999))
-    nombre = "Paciente Sintetico"
-    fecha = date(2024, 1, 15).isoformat()
-    plantillas = {
-        "ecg": f"12SL\nPaciente: {nombre}\nDNI: {dni}\nVent. rate: 70\nFecha: {fecha}",
-        "laboratorio": f"HEMATOLOGIA\nApellido y Nombre: {nombre}\nDNI: {dni}\nHemoglobina 14.2\nFecha: {fecha}",
-        "ecocardiograma": f"ECO DOPPLER\nPaciente: {nombre}\nDocumento: {dni}\nDDVI: 50\nFecha: {fecha}",
+    generadores = {
+        "ecg": _crear_ecg,
+        "laboratorio": _crear_laboratorio,
+        "ecocardiograma": _crear_ecocardiograma,
     }
-    documentos = tuple(
-        DocumentoSintetico(tipo, crear_pdf_con_texto(directorio / f"{tipo}.pdf", [texto]))
-        for tipo, texto in plantillas.items()
-    )
+    documentos: list[DocumentoSintetico] = []
+    for tipo, generador in generadores.items():
+        ruta = directorio / f"{tipo}.pdf"
+        documento = pymupdf.open()
+        generador(documento, dni)
+        documento.save(ruta)
+        documento.close()
+        documentos.append(DocumentoSintetico(tipo, ruta))
     oraculo = {
-        tipo: {"tipo": tipo, "fecha_estudio": fecha, "resultado_esperado": "aprobado"}
-        for tipo in plantillas
+        tipo: {"tipo": tipo, "fecha_estudio": _FECHA_SINTETICA, "resultado_esperado": "aprobado"}
+        for tipo in generadores
     }
-    return CorpusClinicoSintetico(documentos, oraculo)
+    return CorpusClinicoSintetico(tuple(documentos), oraculo)
