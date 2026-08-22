@@ -180,3 +180,15 @@ Se recalibraron las tres plantillas contra las referencias locales autorizadas, 
 - Todas las plantillas usan exclusivamente textos, identificadores y valores ficticios generados localmente; el oráculo no conserva nombre ni DNI y el generador no requiere red.
 
 Pendiente: calibrar tipografías, espaciados finos y variantes de layout contra una colección institucional de originales previamente anonimizados y autorizados. Esta tarea no prueba aún decisiones clínicas ni reemplaza la prueba masiva de 4.2–4.3.
+
+## Corrección de cobertura — Campos y secciones de referencias autorizadas
+
+Se realizó un inventario seguro campo por campo: las tres referencias locales se consultaron exclusivamente para comprobar etiquetas, geometría y secciones; no se conservaron valores ni fragmentos de texto. La matriz versionada `tests/fixtures/matriz_cobertura_sinteticos.md` registra qué parte del contrato cubre cada plantilla y sus omisiones deliberadas.
+
+| Corrección | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| Cobertura contractual de campos | La nueva prueba falló porque faltaban campos de cabecera y secciones de laboratorio/eco. | `tests/fixtures/test_pdf_sintetico_corpus.py` pasa 6 pruebas. | El contrato verifica presencia y orden de secciones; los helpers existentes conservan cabecera, tabla y paginación sin duplicar lógica. |
+
+La ampliación agrega únicamente etiquetas y datos ficticios relevantes para detección, parseo, anonimización o reconciliación: cabecera demográfica/técnica y métricas del ECG; datos administrativos y HEMOSTASIA para laboratorio; y cabecera, medidas, válvulas, pericardio y firma profesional para eco. La señal ECG no se declara como dato clínico: permanece como grilla y trazado sintético para validar geometría visual.
+
+Verificación visual: se regeneraron e inspeccionaron las seis páginas de `tmp/muestras_fieles/`. Pendientes 4.2–5.2.

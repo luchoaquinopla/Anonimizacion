@@ -132,6 +132,7 @@ def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
     _insertar_texto(pagina, (34, 28), "12SL - ECG RECORD", 13)
     _insertar_texto(pagina, (34, 48), "Paciente: " + _NOMBRE_SINTETICO, 8)
     _insertar_texto(pagina, (34, 62), "PID: " + dni + "    Fecha: " + _FECHA_SINTETICA, 8)
+    _insertar_texto(pagina, (34, 76), "Age: 44    Sex: F", 8)
     _insertar_texto(pagina, (560, 48), "Technician: Operador Sintetico", 8)
     _insertar_texto(pagina, (560, 62), "PID / NAME MISMATCH", 8)
     _tabla(
@@ -165,28 +166,29 @@ def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
 def _encabezado_laboratorio(pagina: pymupdf.Page, dni: str) -> None:
     _insertar_texto(pagina, (42, 38), "LABORATORIO DE ANALISIS CLINICOS", 13)
     _insertar_texto(pagina, (42, 58), "Apellido y Nombre: " + _NOMBRE_SINTETICO, 8)
-    _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    Nro. de Peticion: PET-SINT-001", 8)
-    _insertar_texto(pagina, (42, 86), "Fecha: " + _FECHA_SINTETICA + "    Hora de Extraccion: 08:30", 8)
-    pagina.draw_line((42, 96), (553, 96), color=(0.2, 0.2, 0.2), width=0.6)
+    _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    Fecha de Nacimiento: 1980-02-02    Edad: 44", 8)
+    _insertar_texto(pagina, (42, 86), "Medico Derivante: Profesional Sintetico    Nro. de Peticion: PET-SINT-001", 8)
+    _insertar_texto(pagina, (42, 100), "Fecha: " + _FECHA_SINTETICA + "    Hora de Extraccion: 08:30    Origen: Ambulatorio", 8)
+    pagina.draw_line((42, 110), (553, 110), color=(0.2, 0.2, 0.2), width=0.6)
 
 
 def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
     paginas = (
         ("HEMATOLOGIA", (("Hemoglobina", "14.2", "g/dL", "12.0 - 16.0"), ("Hematocrito", "42", "%", "36 - 46"))),
-        ("QUIMICA CLINICA", (("Glucosa", "90", "mg/dL", "70 - 110"), ("Creatinina", "0.9", "mg/dL", "0.6 - 1.2"))),
+        ("HEMOSTASIA\nQUIMICA CLINICA", (("Tiempo de prueba", "12", "s", "Sintetico"), ("Glucosa", "90", "mg/dL", "70 - 110"))),
         ("IONOGRAMA", (("Sodio", "140", "mEq/L", "135 - 145"), ("Potasio", "4.1", "mEq/L", "3.5 - 5.1"))),
     )
     for numero, (seccion, filas) in enumerate(paginas, start=1):
         pagina = documento.new_page(width=_TAMANO_LABORATORIO[0], height=_TAMANO_LABORATORIO[1])
         _encabezado_laboratorio(pagina, dni)
-        _insertar_texto(pagina, (42, 124), seccion, 10)
+        _insertar_texto(pagina, (42, 138), seccion, 10)
         _tabla(
             pagina,
-            pymupdf.Rect(42, 140, 553, 255),
+            pymupdf.Rect(42, 155, 553, 270),
             ("Determinacion", "Resultado", "Unidades", "Valores de Referencia"),
             filas,
         )
-        _insertar_texto(pagina, (42, 290), "Resultados sinteticos para validacion de parser", 8)
+        _insertar_texto(pagina, (42, 305), "Resultados sinteticos para validacion de parser", 8)
         _pie_pagina(pagina, numero, len(paginas))
 
 
@@ -194,29 +196,33 @@ def _encabezado_eco(pagina: pymupdf.Page, dni: str) -> None:
     _insertar_texto(pagina, (42, 40), "ECOCARDIOGRAMA DOPPLER", 13)
     _insertar_texto(pagina, (42, 60), "Paciente: " + _NOMBRE_SINTETICO + "    Documento: " + dni, 8)
     _insertar_texto(pagina, (42, 74), "Nro. de Estudio: ECO-SINT-001    Fecha: " + _FECHA_SINTETICA, 8)
-    pagina.draw_line((42, 86), (574, 86), color=(0.2, 0.2, 0.2), width=0.6)
+    _insertar_texto(pagina, (42, 88), "Medico Solicitante: Profesional Sintetico    Peso: 70 kg    Altura: 165 cm", 8)
+    _insertar_texto(pagina, (42, 102), "Superficie Corporal: 1.75 m2", 8)
+    pagina.draw_line((42, 112), (574, 112), color=(0.2, 0.2, 0.2), width=0.6)
 
 
 def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
     primera = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
     _encabezado_eco(primera, dni)
-    _insertar_texto(primera, (42, 116), "MEDIDAS", 10)
+    _insertar_texto(primera, (42, 142), "MEDIDAS", 10)
     _tabla(
         primera,
-        pymupdf.Rect(42, 132, 574, 270),
+        pymupdf.Rect(42, 158, 574, 320),
         ("Medida", "Valor", "Unidad", "Referencia"),
-        (("AO", "31", "mm", "Sintetica"), ("AI", "35", "mm", "Sintetica"), ("DDVI", "50", "mm", "Sintetica"), ("DSVI", "32", "mm", "Sintetica")),
+        (("AO", "31", "mm", "Sintetica"), ("AI", "35", "mm", "Sintetica"), ("DDVI", "50", "mm", "Sintetica"), ("DSVI", "32", "mm", "Sintetica"), ("FA", "36", "%", "Sintetica"), ("Septum", "9", "mm", "Sintetica"), ("P. Posterior", "9", "mm", "Sintetica")),
     )
-    _insertar_texto(primera, (42, 305), "MOTILIDAD SEGMENTARIA", 10)
-    _insertar_texto(primera, (42, 322), "Descripcion sintetica sin interpretacion clinica.", 8)
+    _insertar_texto(primera, (42, 355), "MOTILIDAD SEGMENTARIA", 10)
+    _insertar_texto(primera, (42, 372), "Descripcion sintetica sin interpretacion clinica.", 8)
     _pie_pagina(primera, 1, 2)
 
     segunda = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
     _encabezado_eco(segunda, dni)
-    for y, titulo in ((120, "VALVULAS"), (210, "DOPPLER"), (300, "CONCLUSIONES")):
+    _insertar_texto(segunda, (42, 124), "VALVULAS", 10)
+    for y, titulo in ((140, "VALVULA MITRAL"), (220, "VALVULA AORTICA"), (300, "VALVULA TRICUSPIDEA"), (380, "VALVULA PULMONAR"), (460, "PERICARDIO"), (540, "DOPPLER"), (620, "CONCLUSIONES")):
         _insertar_texto(segunda, (42, y), titulo, 10)
         segunda.draw_rect(pymupdf.Rect(42, y + 12, 574, y + 66), color=(0.55, 0.55, 0.55), width=0.5)
         _insertar_texto(segunda, (50, y + 32), "Seccion sintetica para validar estructura y orden de texto.", 8)
+    _insertar_texto(segunda, (42, 720), "Medico Informante: Profesional Sintetico    Matricula: MAT-SINT-001", 8)
     _pie_pagina(segunda, 2, 2)
 
 

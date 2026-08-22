@@ -96,3 +96,86 @@ def test_corpus_identifica_datos_ficticios_y_no_requiere_red(tmp_path, monkeypat
     assert "DOCUMENTO SINTETICO - SOLO PRUEBAS" in contenido
     assert "Paciente Sintetico" in contenido
     assert "Paciente Sintetico" not in str(corpus.oraculo)
+
+
+def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_path) -> None:
+    corpus = generar_corpus_clinico(tmp_path, semilla=29)
+    rutas = {documento.tipo: documento.ruta for documento in corpus.documentos}
+
+    def texto_de(ruta):
+        documento = pymupdf.open(ruta)
+        texto = "\n".join(pagina.get_text("text", sort=True) for pagina in documento)
+        documento.close()
+        return texto
+
+    contratos = {
+        "ecg": (
+            "12SL",
+            "Paciente:",
+            "PID:",
+            "Fecha:",
+            "Age:",
+            "Sex:",
+            "Technician:",
+            "Vent. rate",
+            "PR interval",
+            "QRS duration",
+            "QT/QTc",
+            "P-R-T axes",
+            "PID / NAME MISMATCH",
+            "25 mm/s",
+            "10 mm/mV",
+            "40 Hz",
+        ),
+        "laboratorio": (
+            "Apellido y Nombre:",
+            "DNI:",
+            "Fecha de Nacimiento:",
+            "Edad:",
+            "Medico Derivante:",
+            "Nro. de Peticion:",
+            "Fecha:",
+            "Hora de Extraccion:",
+            "Origen:",
+            "Determinacion",
+            "Resultado",
+            "Unidades",
+            "Valores de Referencia",
+            "HEMATOLOGIA",
+            "HEMOSTASIA",
+            "QUIMICA CLINICA",
+            "IONOGRAMA",
+        ),
+        "ecocardiograma": (
+            "Paciente:",
+            "Documento:",
+            "Nro. de Estudio:",
+            "Fecha:",
+            "Medico Solicitante:",
+            "Peso:",
+            "Altura:",
+            "Superficie Corporal:",
+            "FA",
+            "Septum",
+            "P. Posterior",
+            "MOTILIDAD SEGMENTARIA",
+            "VALVULA MITRAL",
+            "VALVULA AORTICA",
+            "VALVULA TRICUSPIDEA",
+            "VALVULA PULMONAR",
+            "PERICARDIO",
+            "DOPPLER",
+            "CONCLUSIONES",
+            "Medico Informante:",
+            "Matricula:",
+        ),
+    }
+
+    for tipo, campos in contratos.items():
+        texto = texto_de(rutas[tipo])
+        assert all(campo in texto for campo in campos)
+
+    texto_laboratorio = texto_de(rutas["laboratorio"])
+    assert texto_laboratorio.index("HEMATOLOGIA") < texto_laboratorio.index("HEMOSTASIA")
+    assert texto_laboratorio.index("HEMOSTASIA") < texto_laboratorio.index("QUIMICA CLINICA")
+    assert texto_laboratorio.index("QUIMICA CLINICA") < texto_laboratorio.index("IONOGRAMA")
