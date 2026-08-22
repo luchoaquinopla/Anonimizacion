@@ -42,7 +42,7 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Portal y operación institucional
 
-- [ ] 3.1 **RED/GREEN**: crear `src/anonimizacion/web/` con rutas internas de crear/consultar/reintentar corrida; probar que no acepta PDFs ni secretos.
+- [x] 3.1 **RED/GREEN**: crear `src/anonimizacion/web/` con rutas internas de crear/consultar/reintentar corrida; probar que no acepta PDFs ni secretos.
 - [ ] 3.2 **RED/GREEN**: exponer contadores agregados desde `observabilidad/metricas.py` y códigos seguros desde `bitacora_segura.py`.
 - [ ] 3.3 **RED/GREEN**: configurar cola, concurrencia y reintentos en `trabajadores/app.py`; probar límites y fallo recuperable.
 - [ ] 3.4 documentar instalación como servicio y variables protegidas en `deploy/` y `README.md`; incluir permisos, backups, retención y rollback.

@@ -98,3 +98,17 @@ Completada la tarea 2.5. `EjecutorPipeline` puede recibir el coordinador durable
 - Integración: `pytest -q tests/reconciliacion tests/pipeline` → 111 passed.
 
 Pendientes: tareas 3.1–5.2.
+
+## Entrega 7 — Portal interno de corridas
+
+Completada la tarea 3.1. Se incorporó una aplicación WSGI interna y sin dependencias nuevas para crear, consultar y reintentar corridas mediante un servicio inyectado. Sólo acepta JSON con una ruta incluida en las raíces configuradas por IT; no recibe archivos, secretos ni devuelve la ruta seleccionada.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 3.1 | `tests/web/test_rutas_corridas.py` falló porque no existía el módulo web. | 2 pruebas focalizadas pasan. | Se cubrieron las tres rutas y se rechazaron PDF, campos de secreto y rutas externas sin invocar el servicio. |
+
+## Verificación focalizada acumulada
+
+- Entrega 7: `pytest -q tests/web/test_rutas_corridas.py` → 2 passed.
+
+Pendientes: tareas 3.2–5.2.
