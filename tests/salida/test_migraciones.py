@@ -7,6 +7,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 _RAIZ_REPO = Path(__file__).resolve().parent.parent.parent
 _TABLAS_ESPERADAS = {
@@ -92,3 +93,10 @@ def test_metadata_orm_coincide_con_la_migracion(tmp_path) -> None:
     from anonimizacion.salida.modelos_orm import Base
 
     assert set(Base.metadata.tables.keys()) == _TABLAS_ESPERADAS
+
+
+
+def test_migraciones_tienen_una_unica_cabecera() -> None:
+    script = ScriptDirectory.from_config(_config_alembic("sqlite://"))
+
+    assert len(script.get_heads()) == 1

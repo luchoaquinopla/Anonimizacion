@@ -45,3 +45,11 @@ La revisión detectó que un enlace simbólico ubicado dentro de una raíz autor
 | Corrección | RED | GREEN | Refactor / limitación |
 |---|---|---|---|
 | Enlace simbólico fuera de raíz | La prueba determinista falló por método inexistente. | `tests/ingesta/test_fuente.py`: 8 pasan. | La prueba de enlace real se omite en este Windows por falta del privilegio de symlink; la prueba del destino resuelto cubre la decisión de seguridad. |
+
+## Corrección de infraestructura — fusión Alembic
+
+Se detectaron dos ramas de migración independientes desde `0001_esquema_inicial`: una de corridas durables y otra de metadata segura de cuarentena. Se agregó `0004_fusion_corridas_cuarentena`, una migración de fusión sin cambios de esquema que obliga a aplicar ambas ramas antes de continuar.
+
+| Corrección | RED | GREEN | Refactor / triangulación |
+|---|---|---|---|
+| Cabeceras Alembic múltiples | La prueba de una única cabecera falló con dos revisiones. | `alembic heads` muestra solo `0004_fusion_corridas_cuarentena`; `tests/salida/test_migraciones.py` pasa 5 pruebas. | La migración no contiene DDL y preserva los dos historiales existentes. |
