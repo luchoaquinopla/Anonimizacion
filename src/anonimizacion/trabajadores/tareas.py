@@ -23,12 +23,15 @@ dependencias por default silenciosamente.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
-from anonimizacion.trabajadores.app import app
+from anonimizacion.trabajadores.app import aplicar_configuracion_cola, app
+
+aplicar_configuracion_cola(os.environ)
 
 FabricaEjecutor = Callable[[], EjecutorPipeline]
 

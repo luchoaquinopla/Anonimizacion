@@ -126,3 +126,17 @@ Completada la tarea 3.2. Las métricas operativas ahora exponen cantidades y pro
 - Entrega 8: `pytest -q tests/observabilidad/test_metricas.py tests/observabilidad/test_bitacora_segura.py` → 47 passed.
 
 Pendientes: tareas 3.3–5.2.
+
+## Entrega 9 — Cola operativa con límites
+
+Completada la tarea 3.3. La cola define una concurrencia configurable limitada entre 1 y 16, prefetch de una tarea para evitar saturar al servidor, confirmación tardía y reenvío si un worker cae. La publicación de tareas usa reintentos con la política de backoff existente. La configuración se vuelve a aplicar al cargar las tareas, para que el modo local sin Redis use correctamente la opción eager incluso cuando otros módulos se importaron antes.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 3.3 | Faltaba `configuracion_cola`; luego el modo eager no respetaba el entorno explícito. | 11 pruebas de trabajadores pasan. | Se cubrieron máximo/mínimo de concurrencia, backpressure, redelivery ante caída, reintentos de publicación y eager sin broker. |
+
+## Verificación focalizada acumulada
+
+- Entrega 9: `pytest -q tests/trabajadores/test_app.py tests/trabajadores/test_tareas.py` → 11 passed.
+
+Pendientes: tareas 3.4–5.2.
