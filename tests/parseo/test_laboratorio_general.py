@@ -63,6 +63,17 @@ def test_tolera_seccion_ausente() -> None:
     assert len(resultado.contenido.resultados) == 1
 
 
+def test_conserva_la_pagina_real_de_resultados_repetidos() -> None:
+    paginas = (
+        _HEADER + "HEMATOLOGIA\nGlucosa | 90 | mg/dL | 70-100\n",
+        _HEADER + "QUIMICA CLINICA\nGlucosa | 90 | mg/dL | 70-100\n",
+    )
+
+    documento = ParseadorLaboratorioGeneral().parsear(TextoExtraido(paginas))
+
+    assert [fuente.pagina for fuente in documento.fuentes] == [1, 2]
+
+
 def test_numero_peticion_inconsistente_entre_paginas_lanza_error_parseo() -> None:
     pagina_1 = _HEADER + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n"
     pagina_2 = pagina_1.replace("987654", "111111")

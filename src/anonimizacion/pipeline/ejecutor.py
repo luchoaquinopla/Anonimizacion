@@ -58,6 +58,8 @@ from anonimizacion.pseudonimizacion.resolutor_claves import resolver_claves as _
 from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, ResultadoVinculacion
 from anonimizacion.pseudonimizacion.vinculacion import vincular_episodios as _vincular_episodios_real
 from anonimizacion.salida.constructor_registro import construir_registro as _construir_registro_real
+from anonimizacion.reconciliacion.base import ReconciliadorDocumento
+from anonimizacion.reconciliacion.registro import obtener_reconciliador as _obtener_reconciliador_real
 
 from .etapas import Etapa
 from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
@@ -172,6 +174,7 @@ class EjecutorPipeline:
         ),
         detectar_tipo: Callable[[TextoExtraido], TipoDocumento] = _detectar_tipo_real,
         obtener_parseador: Callable[[TipoDocumento], ParseadorDocumento] = _obtener_parseador_real,
+        obtener_reconciliador: Callable[[TipoDocumento], ReconciliadorDocumento] = _obtener_reconciliador_real,
         resolver_claves: Callable[..., ClavesPaciente] = _resolver_claves_real,
         vincular_episodios: Callable[[list[DocumentoParaVincular], bytes], ResultadoVinculacion] = (
             _vincular_episodios_real
@@ -188,6 +191,7 @@ class EjecutorPipeline:
         self._extraer = extraer
         self._detectar_tipo = detectar_tipo
         self._obtener_parseador = obtener_parseador
+        self._obtener_reconciliador = obtener_reconciliador
         self._resolver_claves = resolver_claves
         self._vincular_episodios = vincular_episodios
         self._construir_registro = construir_registro
@@ -201,7 +205,7 @@ class EjecutorPipeline:
             try:
                 resueltos.append(self._resolver_documento(item))
             except ErrorParseo as excepcion:
-                resultados.append(self._a_fallo(item.id_documento, excepcion))
+                resultados.append(self._a_fallo(item.id_documento, excepcion, getattr(excepcion, "tipo_documento", None)))
 
         resultado_vinculacion = self._vincular_episodios_resueltos(resueltos)
         # episodios ya escritos EN ESTE LOTE (fix post-PR9): `escribir_episodio`
@@ -218,7 +222,7 @@ class EjecutorPipeline:
                     self._emitir(resuelto, id_episodio, resultado_vinculacion, episodios_escritos)
                 )
             except ErrorParseo as excepcion:
-                resultados.append(self._a_fallo(resuelto.id_documento, excepcion))
+                resultados.append(self._a_fallo(resuelto.id_documento, excepcion, resuelto.documento.tipo_documento))
 
         return tuple(resultados)
 
@@ -229,30 +233,40 @@ class EjecutorPipeline:
             lambda: self._extraer(item.artefacto), etapa=Etapa.EXTRACCION.value, dormir=self._dormir
         )
         tipo = self._detectar_tipo(texto)  # pura, nunca lanza (Fase 3): TIPO_NO_RECONOCIDO en vez de excepción
-        parseador = self._obtener_parseador(tipo)  # ErrorParseo(TIPO_NO_RECONOCIDO) determinístico si no hay match
-        documento = _ejecutar_con_reintentos(
-            lambda: parseador.parsear(texto), etapa=Etapa.PARSEO.value, dormir=self._dormir
-        )
-        # Detección de PII sobre texto libre (design.md, "corre también sobre texto
+        try:
+            parseador = self._obtener_parseador(tipo)  # ErrorParseo(TIPO_NO_RECONOCIDO) determinístico si no hay match
+            documento = _ejecutar_con_reintentos(
+                lambda: parseador.parsear(texto), etapa=Etapa.PARSEO.value, dormir=self._dormir
+            )
+            reconciliador = self._obtener_reconciliador(tipo)
+            _ejecutar_con_reintentos(
+                lambda: reconciliador.reconciliar(documento, texto),
+                etapa=Etapa.RECONCILIACION.value,
+                dormir=self._dormir,
+            )
+            # Detección de PII sobre texto libre (design.md, "corre también sobre texto
         # libre"): se ejecuta acá para que la etapa exista explícitamente en el
         # pipeline real y clasifique la PII en sus namespaces (paciente/médico/
         # cuasi-identificador, ver `pii/politica.py`). La REDACCIÓN efectiva de
         # `secciones_texto` (el gap dejado abierto por PR7/PR8) se aplica más
         # abajo, en `_emitir`, pasando `self._motor` a `construir_registro` --
         # ver `pii/redaccion.py` y el docstring de `salida/constructor_registro.py`.
-        self._clasificar_pii(documento, self._motor)
-        claves = _ejecutar_con_reintentos(
-            lambda: self._resolver_claves(
-                documento.identidad,
-                self._pepper,
-                self._resolutor,
-                id_documento=item.id_documento,
+            self._clasificar_pii(documento, self._motor)
+            claves = _ejecutar_con_reintentos(
+                lambda: self._resolver_claves(
+                    documento.identidad,
+                    self._pepper,
+                    self._resolutor,
+                    id_documento=item.id_documento,
+                    etapa=Etapa.PSEUDONIMIZACION.value,
+                ),
                 etapa=Etapa.PSEUDONIMIZACION.value,
-            ),
-            etapa=Etapa.PSEUDONIMIZACION.value,
-            dormir=self._dormir,
-        )
-        return _DocumentoResuelto(id_documento=item.id_documento, documento=documento, claves=claves)
+                dormir=self._dormir,
+            )
+            return _DocumentoResuelto(id_documento=item.id_documento, documento=documento, claves=claves)
+        except ErrorParseo as error:
+            error.tipo_documento = tipo
+            raise
 
     def _vincular_episodios_resueltos(self, resueltos: list[_DocumentoResuelto]) -> ResultadoVinculacion:
         if not resueltos:
@@ -319,8 +333,15 @@ class EjecutorPipeline:
             timestamp=_ahora(),
         )
 
-    def _a_fallo(self, id_documento: str, excepcion: ErrorParseo) -> FalloDocumento:
-        error = ErrorDocumento(id_documento=id_documento, etapa=excepcion.etapa, codigo=excepcion.codigo)
+    def _a_fallo(self, id_documento: str, excepcion: ErrorParseo, tipo_documento: TipoDocumento | None = None) -> FalloDocumento:
+        error = ErrorDocumento(
+            id_documento=id_documento,
+            etapa=excepcion.etapa,
+            codigo=excepcion.codigo,
+            campo=excepcion.campo,
+            pagina=excepcion.pagina,
+            tipo_documento=tipo_documento,
+        )
         try:
             self._cuarentena.registrar(error)
         except Exception:

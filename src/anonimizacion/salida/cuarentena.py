@@ -30,5 +30,8 @@ class EscritorCuarentena:
                     id_documento=error.id_documento,
                     etapa=error.etapa,
                     codigo=error.codigo.value,
+                    campo=error.campo,
+                    pagina=error.pagina,
+                    tipo_documento=error.tipo_documento.value if error.tipo_documento else None,
                 )
             )

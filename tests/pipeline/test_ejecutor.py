@@ -96,6 +96,8 @@ def _construir_ejecutor(
     escritor: _EscritorFake | None = None,
     cuarentena: _CuarentenaFake | None = None,
     dormir: _DormirFake | None = None,
+    obtener_reconciliador=None,
+    clasificar_pii=None,
 ):
     escritor = escritor or _EscritorFake(escritos=[])
     cuarentena = cuarentena or _CuarentenaFake(registrados=[])
@@ -129,6 +131,14 @@ def _construir_ejecutor(
                 return texto  # `extraer` ya devuelve el DocumentoParseado en estos tests
 
         obtener_parseador = lambda tipo: _ParseadorFake()  # noqa: E731
+    if obtener_reconciliador is None:
+        class _ReconciliadorFake:
+            def reconciliar(self, documento, texto):
+                return None
+
+        obtener_reconciliador = lambda tipo: _ReconciliadorFake()  # noqa: E731
+    if clasificar_pii is None:
+        clasificar_pii = lambda documento, motor: None  # noqa: E731
 
     ejecutor = EjecutorPipeline(
         resolutor=object(),
@@ -143,9 +153,57 @@ def _construir_ejecutor(
         resolver_claves=resolver_claves,
         vincular_episodios=vincular_episodios,
         construir_registro=construir_registro,
-        clasificar_pii=lambda documento, motor: None,
+        clasificar_pii=clasificar_pii,
+        obtener_reconciliador=obtener_reconciliador,
     )
     return ejecutor, escritor, cuarentena, dormir
+
+
+def test_fallo_de_reconciliacion_bloquea_pii_claves_vinculo_y_salida() -> None:
+    llamadas: list[str] = []
+
+    class _ReconciliadorQueFalla:
+        def reconciliar(self, documento, texto):
+            llamadas.append("reconciliacion")
+            raise ErrorParseo(
+                CodigoErrorDocumento.COBERTURA_INCOMPLETA,
+                etapa="reconciliacion",
+                campo="ecg.vent_rate",
+                pagina=1,
+            )
+
+    ejecutor, escritor, cuarentena, dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("ok"),
+        resolver_claves=lambda *a, **k: llamadas.append("claves"),
+        obtener_reconciliador=lambda tipo: _ReconciliadorQueFalla(),
+        clasificar_pii=lambda documento, motor: llamadas.append("pii"),
+        vincular_episodios=lambda documentos, pepper: llamadas.append("vinculo"),
+    )
+
+    resultados = ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=_artefacto("uno"))])
+
+    assert llamadas == ["reconciliacion"]
+    assert dormir.llamadas == []
+    assert escritor.escritos == []
+    assert len(cuarentena.registrados) == 1
+    assert resultados[0].error.codigo == CodigoErrorDocumento.COBERTURA_INCOMPLETA
+    assert resultados[0].error.tipo_documento is TipoDocumento.LABORATORIO
+
+
+def test_fallo_de_pii_propaga_tipo_documento_a_cuarentena() -> None:
+    def falla_pii(documento, motor):
+        raise ErrorParseo(CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa="deteccion_pii")
+
+    ejecutor, _escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("ok"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+        clasificar_pii=falla_pii,
+    )
+
+    resultados = ejecutor.procesar_lote([ItemLote(id_documento="doc-pii", artefacto=_artefacto("pii"))])
+
+    assert resultados[0].error.tipo_documento is TipoDocumento.LABORATORIO
+    assert cuarentena.registrados == [resultados[0].error]
 
 
 def test_un_documento_con_layout_no_reconocido_no_aborta_el_resto_del_lote() -> None:
@@ -213,6 +271,28 @@ def test_error_deterministico_no_se_reintenta() -> None:
     assert isinstance(resultados[0], FalloDocumento)
     assert resultados[0].error.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
     assert cuarentena.registrados == [resultados[0].error]
+
+
+def test_fallo_propaga_campo_y_pagina_seguros_a_cuarentena() -> None:
+    def extraer(artefacto):
+        raise ErrorParseo(
+            codigo=CodigoErrorDocumento.EVIDENCIA_AUSENTE,
+            etapa="reconciliacion",
+            campo="ecg.vent_rate",
+            pagina=1,
+        )
+
+    ejecutor, _escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=extraer,
+        resolver_claves=lambda *a, **k: ClavesPaciente(id_paciente="x", id_alt_paciente=None, version_clave=1),
+    )
+
+    resultados = ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=_artefacto("uno"))])
+
+    error = resultados[0].error
+    assert error.campo == "ecg.vent_rate"
+    assert error.pagina == 1
+    assert cuarentena.registrados == [error]
 
 
 def test_error_transitorio_se_reintenta_y_puede_tener_exito() -> None:
