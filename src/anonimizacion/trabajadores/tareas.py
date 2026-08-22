@@ -74,6 +74,7 @@ def configurar_extractor(fabrica: FabricaExtractor, repositorio: object) -> None
     _repositorio_corridas = repositorio
 
 
+@app.task(name="anonimizacion.procesar_extraccion_minima")
 def procesar_extraccion_minima(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
     """Extrae lo mínimo una sola vez y conserva el estado para reanudar."""
     if _fabrica_extractor is None or _repositorio_corridas is None:
@@ -99,6 +100,7 @@ def procesar_extraccion_minima(corrida_id: str, uri: str, sha256: str) -> dict[s
     return {"estado": documento.estado.value}
 
 
+@app.task(name="anonimizacion.procesar_extraccion_completa")
 def procesar_extraccion_completa(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
     """Persiste extracción completa de un documento ya asociado, sin publicarlo."""
     if _fabrica_extractor is None or _repositorio_corridas is None:
