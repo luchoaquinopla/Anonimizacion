@@ -37,3 +37,11 @@ Pendientes: tareas 2.2–5.2.
 ## Incidencia de verificación
 
 La suite de migraciones falla fuera del alcance de esta entrega porque el worktree ya contiene dos cabeceras Alembic: `0002_corridas_durables` y `0003_tipo_documento_cuarentena`. `command.upgrade(..., "head")` no puede elegir una cabecera. No se modifica esa cadena en la tarea 2.1; requiere una migración de fusión en una entrega dedicada.
+
+## Corrección de seguridad — enlaces simbólicos
+
+La revisión detectó que un enlace simbólico ubicado dentro de una raíz autorizada podía resolver a un archivo externo. Se agregó `_esta_dentro_de_raiz`, aplicada tanto a la raíz solicitada como a cada PDF encontrado. Los destinos fuera de la raíz se omiten antes de leer tamaño o contenido.
+
+| Corrección | RED | GREEN | Refactor / limitación |
+|---|---|---|---|
+| Enlace simbólico fuera de raíz | La prueba determinista falló por método inexistente. | `tests/ingesta/test_fuente.py`: 8 pasan. | La prueba de enlace real se omite en este Windows por falta del privilegio de symlink; la prueba del destino resuelto cubre la decisión de seguridad. |

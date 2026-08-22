@@ -16,6 +16,7 @@ from pathlib import Path
 from .artefacto import ArtefactoCrudo, FormatoArtefacto
 
 _EXTENSIONES_SOPORTADAS = {".pdf": FormatoArtefacto.PDF}
+_TAMANO_BLOQUE_HUELLA = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -36,8 +37,6 @@ class FuenteArtefacto:
             sha256 = hashlib.sha256(ruta.read_bytes()).hexdigest()
             artefactos.append(ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato))
         return artefactos
-
-_TAMANO_BLOQUE_HUELLA = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -66,6 +65,8 @@ class InventariadorDocumentos:
             formato = _EXTENSIONES_SOPORTADAS.get(ruta.suffix.lower())
             if formato is None or not ruta.is_file():
                 continue
+            if not self._esta_dentro_de_raiz(ruta, ruta_raiz):
+                continue
             if ruta.stat().st_size > self.tamano_maximo_bytes:
                 raise ValueError("archivo PDF supera el tamano maximo permitido")
 
@@ -77,13 +78,15 @@ class InventariadorDocumentos:
         return artefactos
 
     def _es_ruta_autorizada(self, ruta: Path) -> bool:
-        for raiz_autorizada in self.raices_autorizadas:
-            try:
-                ruta.relative_to(raiz_autorizada.resolve())
-            except ValueError:
-                continue
-            return True
-        return False
+        return any(self._esta_dentro_de_raiz(ruta, raiz) for raiz in self.raices_autorizadas)
+
+    @staticmethod
+    def _esta_dentro_de_raiz(ruta: Path, raiz: Path) -> bool:
+        try:
+            ruta.resolve().relative_to(raiz.resolve())
+        except ValueError:
+            return False
+        return True
 
     @staticmethod
     def _calcular_huella(ruta: Path) -> str:

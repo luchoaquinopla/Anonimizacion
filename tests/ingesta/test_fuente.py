@@ -87,3 +87,28 @@ def test_inventariador_rechaza_pdf_que_supera_tamano_maximo(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="tamano"):
         inventariador.inventariar(entrada)
+
+
+def test_inventariador_omite_enlace_simbolico_que_resuelve_fuera_de_la_raiz(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    externo = tmp_path / "afuera.pdf"
+    _crear_pdf_falso(externo, b"%PDF-1.4 externo")
+    enlace = entrada / "enlace.pdf"
+    try:
+        enlace.symlink_to(externo)
+    except OSError as error:
+        pytest.skip(f"el entorno no permite enlaces simbolicos: {error}")
+
+    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=1024)
+
+    assert inventariador.inventariar(entrada) == []
+
+
+def test_inventariador_detecta_destino_resuelto_fuera_de_la_raiz(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    destino_externo = tmp_path / "afuera.pdf"
+    _crear_pdf_falso(destino_externo, b"%PDF-1.4 externo")
+
+    assert InventariadorDocumentos._esta_dentro_de_raiz(destino_externo, entrada) is False
