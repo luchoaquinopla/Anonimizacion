@@ -40,9 +40,11 @@ propia copia del regex/las funciones.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from typing import Any
 
+from anonimizacion.dominio.errores import CodigoErrorDocumento
 from anonimizacion.pii.redaccion import DetectorEntidades, MARCADOR_REDACTADO, redactar_texto
 
 #: Defensa primaria (capa 1). Ver design.md, decisión "Sin PII en cola, logs
@@ -52,6 +54,7 @@ from anonimizacion.pii.redaccion import DetectorEntidades, MARCADOR_REDACTADO, r
 CAMPOS_PERMITIDOS: frozenset[str] = frozenset(
     {"id_documento", "tipo_documento", "etapa", "codigo", "duracion_ms"}
 )
+CODIGOS_SEGUROS: frozenset[str] = frozenset(codigo.value for codigo in CodigoErrorDocumento)
 
 
 def _redactar(valor: Any, motor_pii: DetectorEntidades | None) -> Any:
@@ -75,6 +78,17 @@ def filtrar_y_redactar(
         for clave, valor in evento.items()
         if clave in CAMPOS_PERMITIDOS
     }
+
+
+def contar_codigos_seguros(eventos: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """Cuenta sólo códigos de dominio, sin propagar texto libre a métricas."""
+    return dict(
+        Counter(
+            codigo
+            for evento in eventos
+            if isinstance((codigo := evento.get("codigo")), str) and codigo in CODIGOS_SEGUROS
+        )
+    )
 
 
 class BitacoraSegura:

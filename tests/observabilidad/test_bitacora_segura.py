@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import random
+import json
 
 import pytest
 
@@ -22,6 +23,7 @@ from anonimizacion.observabilidad.bitacora_segura import (
     CAMPOS_PERMITIDOS,
     MARCADOR_REDACTADO,
     BitacoraSegura,
+    contar_codigos_seguros,
     filtrar_y_redactar,
 )
 from anonimizacion.pii.motor import MotorPii
@@ -103,6 +105,20 @@ def test_valores_no_string_no_se_tocan() -> None:
     evento = {"duracion_ms": 42.5}
     resultado = filtrar_y_redactar(evento)
     assert resultado["duracion_ms"] == 42.5
+
+
+def test_contador_de_codigos_omite_pii_y_codigos_no_catalogados() -> None:
+    resumen = contar_codigos_seguros(
+        [
+            {"codigo": "tipo_no_reconocido", "nombre_paciente": "Juan Pérez"},
+            {"codigo": "tipo_no_reconocido"},
+            {"codigo": "paciente Juan Pérez DNI 12345678"},
+        ]
+    )
+
+    assert resumen == {"tipo_no_reconocido": 2}
+    assert "Juan Pérez" not in json.dumps(resumen)
+    assert "12345678" not in json.dumps(resumen)
 
 
 # --- Property test: PII inyectada nunca aparece en la salida ------------

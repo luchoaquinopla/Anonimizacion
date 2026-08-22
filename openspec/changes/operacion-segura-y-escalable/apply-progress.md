@@ -112,3 +112,17 @@ Completada la tarea 3.1. Se incorporó una aplicación WSGI interna y sin depend
 - Entrega 7: `pytest -q tests/web/test_rutas_corridas.py` → 2 passed.
 
 Pendientes: tareas 3.2–5.2.
+
+## Entrega 8 — Observabilidad segura
+
+Completada la tarea 3.2. Las métricas operativas ahora exponen cantidades y promedios por etapa, sin muestras individuales. Los motivos de cuarentena se cuentan únicamente si pertenecen al catálogo de códigos del dominio; textos libres y campos no permitidos no llegan al resumen. Las etapas de duración también se limitan al catálogo del pipeline para impedir que un valor accidental con información sensible quede expuesto.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 3.2 | Las pruebas fallaron por ausencia de `resumen_operacional` y `contar_codigos_seguros`; luego la etapa libre no era rechazada. | 47 pruebas focalizadas pasan. | Se cubrieron agregación de documentos/fallos/duraciones, códigos no catalogados con PII y el rechazo de una etapa con PII. |
+
+## Verificación focalizada acumulada
+
+- Entrega 8: `pytest -q tests/observabilidad/test_metricas.py tests/observabilidad/test_bitacora_segura.py` → 47 passed.
+
+Pendientes: tareas 3.3–5.2.

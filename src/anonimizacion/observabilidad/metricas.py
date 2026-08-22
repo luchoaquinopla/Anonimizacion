@@ -23,6 +23,9 @@ from typing import Protocol
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.pipeline.etapas import Etapa
+
+_ETAPAS_SEGURAS = frozenset(etapa.value for etapa in Etapa)
 
 
 class ColectorMetricas(Protocol):
@@ -59,6 +62,8 @@ class MetricasEnMemoria:
             self._fallos[codigo.value] += 1
 
     def observar_duracion_ms(self, etapa: str, duracion_ms: float) -> None:
+        if etapa not in _ETAPAS_SEGURAS:
+            raise ValueError("etapa no admitida")
         with self._lock:
             self._duraciones_ms[etapa].append(duracion_ms)
 
@@ -70,5 +75,18 @@ class MetricasEnMemoria:
                 "fallos": dict(self._fallos),
                 "duraciones_ms": {
                     etapa: list(valores) for etapa, valores in self._duraciones_ms.items()
+                },
+            }
+
+    def resumen_operacional(self) -> dict[str, object]:
+        """Expone contadores y promedios, sin muestras individuales."""
+        with self._lock:
+            return {
+                "documentos_procesados": dict(self._documentos_procesados),
+                "fallos_por_codigo": dict(self._fallos),
+                "duraciones_ms": {
+                    etapa: {"cantidad": len(valores), "promedio": sum(valores) / len(valores)}
+                    for etapa, valores in self._duraciones_ms.items()
+                    if valores
                 },
             }
