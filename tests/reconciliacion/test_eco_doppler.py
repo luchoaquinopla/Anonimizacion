@@ -10,6 +10,7 @@ from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.reconciliacion.base import ReferenciaCampo
 from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
+from anonimizacion.reconciliacion.eco_doppler import _seccion_anclada
 
 
 def _documento(fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
@@ -20,6 +21,27 @@ def _documento(fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
 def test_reconcilia_medida_y_texto_del_eco() -> None:
     fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0), ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0))
     ReconciliadorEcoDoppler().reconciliar(_documento(fuentes), TextoExtraido(("AO 28 mm\nCONCLUSIONES\nEstudio normal.",)))
+
+
+def test_reconcilia_seccion_cuyo_encabezado_termina_en_dos_puntos() -> None:
+    fuente = ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0)
+    documento = DocumentoParseado(
+        TipoDocumento.ECOCARDIOGRAMA,
+        1,
+        IdentidadCruda(nombre=SecretStr("Persona Sintetica")),
+        date(2025, 3, 20),
+        ContenidoEco((), (SeccionTextoEco("CONCLUSIONES", "Estudio normal."),), None),
+        fuentes=(fuente,),
+    )
+
+    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("CONCLUSIONES:\nEstudio normal.",)))
+
+
+def test_no_confunde_un_texto_con_dos_puntos_con_el_encabezado_de_seccion() -> None:
+    seccion = SeccionTextoEco("CONCLUSIONES", "Estudio normal.")
+    texto = TextoExtraido(("CONCLUSIONES: texto de otra seccion\nEstudio normal.",))
+
+    assert not _seccion_anclada(seccion, 1, texto)
 
 
 def test_rechaza_referencia_eco_sin_destino() -> None:
@@ -235,6 +257,41 @@ def test_reconcilia_seccion_que_continua_en_la_pagina_siguiente() -> None:
     documento = ParseadorEcoDoppler().parsear(texto)
 
     ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_valida_contenido_de_seccion_que_solo_continua_en_la_pagina_siguiente() -> None:
+    seccion = SeccionTextoEco("CONCLUSIONES", "Segunda parte.")
+    texto = TextoExtraido(("CONCLUSIONES", "Segunda parte.\nPERICARDIO\nSin derrame."))
+
+    assert _seccion_anclada(seccion, 1, texto)
+
+
+def test_valida_subseccion_cuyo_padre_empieza_en_la_pagina_anterior() -> None:
+    seccion = SeccionTextoEco("VALVULAS CARDIACAS - AORTICA", "Sin alteraciones.")
+    texto = TextoExtraido(("VALVULAS CARDIACAS", "AORTICA\nSin alteraciones.\nMITRAL\nNormal."))
+
+    assert _seccion_anclada(seccion, 2, texto)
+
+
+def test_no_incluye_la_firma_en_la_evidencia_de_una_seccion() -> None:
+    seccion = SeccionTextoEco("CONCLUSIONES", "Estudio normal.")
+    texto = TextoExtraido(("CONCLUSIONES\nEstudio normal.\nFirma: Medico Sintetico - MP 99",))
+
+    assert _seccion_anclada(seccion, 1, texto)
+
+
+def test_valida_texto_de_seccion_intercalado_por_linea_decorativa() -> None:
+    seccion = SeccionTextoEco("CONCLUSIONES", "Estudio sin alteraciones.")
+    texto = TextoExtraido(("CONCLUSIONES\nEstudio\n-----\nsin alteraciones.",))
+
+    assert _seccion_anclada(seccion, 1, texto)
+
+
+def test_rechaza_palabras_de_seccion_separadas_por_texto_clinico_ajeno() -> None:
+    seccion = SeccionTextoEco("CONCLUSIONES", "Estudio sin alteraciones.")
+    texto = TextoExtraido(("CONCLUSIONES\nEstudio\nHallazgo clinico ajeno.\nsin alteraciones.",))
+
+    assert not _seccion_anclada(seccion, 1, texto)
 
 
 def test_rechaza_nombre_eco_asignado_a_otro_lugar_del_documento() -> None:

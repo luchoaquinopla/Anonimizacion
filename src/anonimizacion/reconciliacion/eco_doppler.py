@@ -178,6 +178,16 @@ def _firma_anclada(pagina: str, nombre: str, matricula: str) -> bool:
     return False
 
 
+def _es_linea_decorativa(linea: str) -> bool:
+    return bool(linea) and not any(caracter.isalnum() for caracter in linea)
+
+
+def _contenido_en_orden(contenido: str, evidencia: list[str]) -> bool:
+    """Tolera separadores visuales, sin admitir texto clínico intercalado."""
+    evidencia_util = [linea for linea in evidencia if not _es_linea_decorativa(linea)]
+    return bool(contenido) and contenido in " ".join(evidencia_util)
+
+
 def _seccion_anclada(seccion: object, pagina_origen: int, texto: TextoExtraido) -> bool:
     """Valida el span consecutivo de una sección sin cruzar a otra sección."""
     nombre = normalizar_texto(getattr(seccion, "nombre"))
@@ -190,19 +200,36 @@ def _seccion_anclada(seccion: object, pagina_origen: int, texto: TextoExtraido) 
         lineas = [normalizar_texto(linea) for linea in pagina.splitlines() if linea.strip()]
         inicio = 0
         if indice_pagina == pagina_origen:
-            for etiqueta in etiquetas:
+            for ordinal_etiqueta, etiqueta in enumerate(etiquetas):
                 try:
                     posicion = lineas.index(etiqueta, inicio)
                 except ValueError:
-                    return False
+                    posicion = next(
+                        (
+                            indice
+                            for indice, linea in enumerate(lineas[inicio:], start=inicio)
+                            if linea == f"{etiqueta}:"
+                        ),
+                        None,
+                    )
+                    if posicion is None:
+                        if ordinal_etiqueta == 0 and len(etiquetas) > 1:
+                            continue
+                        return False
                 inicio = posicion + 1
             encontro_etiqueta = True
         for linea in lineas[inicio:]:
             etiqueta = _normalizar_etiqueta(linea)
-            if etiqueta in _SECCIONES or etiqueta in _SUBSECCIONES:
-                return encontro_etiqueta and contenido in " ".join(lineas_span)
+            if (
+                etiqueta in _SECCIONES
+                or etiqueta in _SUBSECCIONES
+                or _PATRON_FIRMA.fullmatch(linea)
+                or _PATRON_FIRMA_LEGADA.fullmatch(linea)
+                or _PATRON_MATRICULA.fullmatch(linea)
+            ):
+                return encontro_etiqueta and _contenido_en_orden(contenido, lineas_span)
             lineas_span.append(linea)
-    return encontro_etiqueta and contenido in " ".join(lineas_span)
+    return encontro_etiqueta and _contenido_en_orden(contenido, lineas_span)
 
 
 class ReconciliadorEcoDoppler:

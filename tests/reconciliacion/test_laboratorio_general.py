@@ -150,6 +150,28 @@ def test_laboratorio_rechaza_referencia_en_pagina_incorrecta_con_valor_repetido(
     assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
 
 
+def test_laboratorio_no_inventaria_el_header_de_una_pagina_posterior() -> None:
+    texto = TextoExtraido((
+        "HEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
+        "Fecha: 10/01/2025  Hora: 09:00",
+    ))
+
+    inventario = ReconciliadorLaboratorioGeneral().inventariar(texto)
+
+    assert [(hallazgo.pagina, hallazgo.ordinal) for hallazgo in inventario] == [(1, 0)]
+
+
+def test_laboratorio_conserva_seccion_en_una_tabla_que_continua_en_la_pagina_siguiente() -> None:
+    texto = TextoExtraido((
+        "HEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
+        "Fecha: 10/01/2025  Hora: 09:00\nHematocrito | 40 | % | 36 - 46",
+    ))
+
+    inventario = ReconciliadorLaboratorioGeneral().inventariar(texto)
+
+    assert [(hallazgo.pagina, hallazgo.ordinal) for hallazgo in inventario] == [(1, 0), (2, 1)]
+
+
 def test_laboratorio_reconstruye_nombre_partido_antes_de_asociar_fila() -> None:
     filas = (
         ResultadoLaboratorio(

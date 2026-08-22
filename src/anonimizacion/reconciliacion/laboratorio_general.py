@@ -19,6 +19,9 @@ from .normalizacion import normalizar_texto
 _SECCIONES = frozenset({"HEMATOLOGIA", "HEMOSTASIA", "QUIMICA CLINICA", "IONOGRAMA"})
 _PATRON_NUMERO = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 _PATRON_ENCABEZADO = re.compile(r"resultado", re.IGNORECASE)
+_PATRON_ENCABEZADO_PAGINA = re.compile(
+    r"^(?:fecha|hora|apellido y nombre|documento|dni|medico|n[ºo°]\s*peticion)\s*:", re.IGNORECASE
+)
 _ENCABEZADOS_COLUMNA = frozenset({"pruebas", "resultado", "unidades", "referencia", "valores de referencia"})
 
 
@@ -124,7 +127,11 @@ class ReconciliadorLaboratorioGeneral:
                     seccion = seccion_candidata
                     indice += 1
                     continue
-                if seccion is None or self.es_texto_permitido(linea_limpia):
+                if (
+                    seccion is None
+                    or self.es_texto_permitido(linea_limpia)
+                    or _PATRON_ENCABEZADO_PAGINA.match(linea_limpia)
+                ):
                     indice += 1
                     continue
                 if _es_subseccion(linea_limpia, seccion_candidata):
