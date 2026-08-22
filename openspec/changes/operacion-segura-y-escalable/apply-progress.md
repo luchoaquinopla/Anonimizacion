@@ -63,3 +63,13 @@ Completada la tarea 2.2. El coordinador agrupa documentos del mismo paciente con
 | 2.2 | `tests/pipeline/test_coordinador_episodios.py` falló porque el módulo no existía. | 4 pruebas focalizadas pasan. | Cubre ventana de 7 días, separación a 8 días, empate por tipo, estudios faltantes y cierre de corrida. |
 
 Pendientes: tareas 2.3–5.2.
+
+## Entrega 4 — Extracción persistente por documento
+
+Completada la tarea 2.3. Las tareas de worker ahora pueden ejecutar extracción mínima y completa como etapas separadas, actualizar el estado durable del documento y reanudar sin volver a ejecutar una extracción mínima ya confirmada. Ninguna de estas tareas publica resultados: la publicación continúa fuera de este corte.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 2.3 | Las pruebas fallaron al no existir la configuración ni la tarea de extracción persistente. | 2 pruebas nuevas pasan. | Se cubrieron reinicio sin duplicar extracción mínima y extracción completa posterior a asociación; el fixture reinicia dependencias globales entre pruebas. |
+
+Pendientes: tareas 2.4–5.2.

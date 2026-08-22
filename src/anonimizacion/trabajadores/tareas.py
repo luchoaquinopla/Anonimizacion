@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.trabajadores.app import app
@@ -59,3 +60,62 @@ def procesar_documento(id_documento: str, uri: str, sha256: str) -> dict[str, ob
     ejecutor = _obtener_ejecutor()
     (resultado,) = ejecutor.procesar_lote([item])
     return resultado.resumen_trazable()
+
+FabricaExtractor = Callable[[], object]
+
+_fabrica_extractor: FabricaExtractor | None = None
+_repositorio_corridas: object | None = None
+
+
+def configurar_extractor(fabrica: FabricaExtractor, repositorio: object) -> None:
+    """Configura la extracción por etapas y su persistencia durable."""
+    global _fabrica_extractor, _repositorio_corridas
+    _fabrica_extractor = fabrica
+    _repositorio_corridas = repositorio
+
+
+def procesar_extraccion_minima(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
+    """Extrae lo mínimo una sola vez y conserva el estado para reanudar."""
+    if _fabrica_extractor is None or _repositorio_corridas is None:
+        raise RuntimeError("extractor de documentos no configurado")
+    documento = next(
+        documento
+        for documento in _repositorio_corridas.documentos_para_reanudar(corrida_id)
+        if documento.huella_contenido == sha256
+    )
+    if documento.estado.value == "extraido_minimo":
+        return {"estado": documento.estado.value}
+    if documento.estado.value != "inventariado":
+        raise RuntimeError("estado no apto para extraccion minima")
+
+    version = documento.version
+    documento.avanzar_a(EstadoDocumentoCorrida.CLASIFICADO)
+    if not _repositorio_corridas.actualizar_documento(documento, version_esperada=version):
+        return {"estado": "en_progreso"}
+    _fabrica_extractor().extraer_minimo(ArtefactoCrudo(uri=uri, sha256=sha256, formato=FormatoArtefacto.PDF))
+    version = documento.version
+    documento.avanzar_a(EstadoDocumentoCorrida.EXTRAIDO_MINIMO)
+    _repositorio_corridas.actualizar_documento(documento, version_esperada=version)
+    return {"estado": documento.estado.value}
+
+
+def procesar_extraccion_completa(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
+    """Persiste extracción completa de un documento ya asociado, sin publicarlo."""
+    if _fabrica_extractor is None or _repositorio_corridas is None:
+        raise RuntimeError("extractor de documentos no configurado")
+    documento = next(
+        documento
+        for documento in _repositorio_corridas.documentos_para_reanudar(corrida_id)
+        if documento.huella_contenido == sha256
+    )
+    if documento.estado is EstadoDocumentoCorrida.EXTRAIDO_COMPLETO:
+        return {"estado": documento.estado.value}
+    if documento.estado is not EstadoDocumentoCorrida.ASOCIADO:
+        raise RuntimeError("estado no apto para extraccion completa")
+
+    _fabrica_extractor().extraer_completo(ArtefactoCrudo(uri=uri, sha256=sha256, formato=FormatoArtefacto.PDF))
+    version = documento.version
+    documento.avanzar_a(EstadoDocumentoCorrida.EXTRAIDO_COMPLETO)
+    if not _repositorio_corridas.actualizar_documento(documento, version_esperada=version):
+        return {"estado": "en_progreso"}
+    return {"estado": documento.estado.value}
