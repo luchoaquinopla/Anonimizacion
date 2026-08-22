@@ -73,3 +73,13 @@ Completada la tarea 2.3. Las tareas de worker ahora pueden ejecutar extracción 
 | 2.3 | Las pruebas fallaron al no existir la configuración ni la tarea de extracción persistente. | 2 pruebas nuevas pasan. | Se cubrieron reinicio sin duplicar extracción mínima y extracción completa posterior a asociación; el fixture reinicia dependencias globales entre pruebas. |
 
 Pendientes: tareas 2.4–5.2.
+
+## Entrega 5 — Bundles anonimizados
+
+Completada la tarea 2.4. Los bundles se publican en una carpeta temporal y se renombran al destino sólo después de escribir el manifiesto. El manifiesto contiene únicamente identificadores pseudónimos, versión y tipos de estudio. La proyección Parquet por episodio reemplaza su archivo temporalmente para conservar una única fila vigente.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 2.4 | Las pruebas fallaron por ausencia del publicador. | 2 pruebas focalizadas pasan. | Cubre publicación atómica, manifiesto sin PII y reemplazo de la fila Parquet. |
+
+Pendientes: tareas 2.5–5.2.

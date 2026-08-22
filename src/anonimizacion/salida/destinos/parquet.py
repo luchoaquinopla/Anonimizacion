@@ -148,3 +148,20 @@ class EscritorParquet:
                     }
                 )
         return filas
+
+    def escribir_episodio(self, registro: RegistroAnonimizado) -> None:
+        """Mantiene una única proyección analítica vigente por episodio."""
+        destino = self._directorio_base / "episodios" / f"{registro.id_episodio}.parquet"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        tabla = pa.Table.from_pylist([
+            {
+                "id_paciente": registro.id_paciente,
+                "id_episodio": registro.id_episodio,
+                "fecha_estudio": registro.fecha_estudio.isoformat(),
+                "tipo_documento": registro.tipo_documento.value,
+                "version_esquema": registro.version_esquema,
+            }
+        ])
+        temporal = destino.with_suffix(".tmp")
+        pq.write_table(tabla, temporal)
+        temporal.replace(destino)
