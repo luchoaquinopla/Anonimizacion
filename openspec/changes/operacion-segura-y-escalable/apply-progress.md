@@ -83,3 +83,18 @@ Completada la tarea 2.4. Los bundles se publican en una carpeta temporal y se re
 | 2.4 | Las pruebas fallaron por ausencia del publicador. | 2 pruebas focalizadas pasan. | Cubre publicación atómica, manifiesto sin PII y reemplazo de la fila Parquet. |
 
 Pendientes: tareas 2.5–5.2.
+
+## Entrega 6 — Integración segura por episodio
+
+Completada la tarea 2.5. `EjecutorPipeline` puede recibir el coordinador durable: una vez que cada documento pasó su reconciliación, la coordinación decide los episodios completos antes de construir registros anonimizados o escribir salida. Los estudios faltantes y asociaciones ambiguas quedan en cuarentena con códigos seguros; los lotes previos conservan su vínculo histórico mientras no se inyecte el coordinador nuevo.
+
+| Tarea | RED | GREEN | REFACTOR / triangulación |
+|---|---|---|---|
+| 2.5 | La prueba E2E falló porque `EjecutorPipeline` no aceptaba `coordinar_episodios`. | 17 pruebas de ejecutor/coordinador pasan; 111 de pipeline y reconciliación pasan. | Se cubrieron un episodio incompleto sin anonimización/publicación y uno completo que se emite tras reconciliar sus tres estudios; el adaptador convierte el resultado durable al contrato de salida existente. |
+
+## Verificación focalizada acumulada
+
+- Entrega 6: `pytest -q tests/pipeline/test_ejecutor.py tests/pipeline/test_coordinador_episodios.py` → 17 passed.
+- Integración: `pytest -q tests/reconciliacion tests/pipeline` → 111 passed.
+
+Pendientes: tareas 3.1–5.2.

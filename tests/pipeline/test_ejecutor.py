@@ -19,6 +19,7 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
+from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import BACKOFF_SEGUNDOS, MAX_REINTENTOS, EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
 from anonimizacion.pseudonimizacion.vinculacion import MetadataEpisodio, ResultadoVinculacion
@@ -30,9 +31,13 @@ def _artefacto(nombre: str) -> ArtefactoCrudo:
     return ArtefactoCrudo(uri=f"/fake/{nombre}.pdf", sha256="a" * 64, formato=FormatoArtefacto.PDF)
 
 
-def _documento(id_paciente_sufijo: str, fecha: date = date(2026, 1, 10)) -> DocumentoParseado:
+def _documento(
+    id_paciente_sufijo: str,
+    fecha: date = date(2026, 1, 10),
+    tipo: TipoDocumento = TipoDocumento.LABORATORIO,
+) -> DocumentoParseado:
     return DocumentoParseado(
-        tipo_documento=TipoDocumento.LABORATORIO,
+        tipo_documento=tipo,
         version_esquema=1,
         identidad=None,  # no se usa: resolver_claves está fakeado en estos tests
         fecha_estudio=fecha,
@@ -98,6 +103,7 @@ def _construir_ejecutor(
     dormir: _DormirFake | None = None,
     obtener_reconciliador=None,
     clasificar_pii=None,
+    coordinar_episodios_durables=None,
 ):
     escritor = escritor or _EscritorFake(escritos=[])
     cuarentena = cuarentena or _CuarentenaFake(registrados=[])
@@ -155,8 +161,90 @@ def _construir_ejecutor(
         construir_registro=construir_registro,
         clasificar_pii=clasificar_pii,
         obtener_reconciliador=obtener_reconciliador,
+        coordinar_episodios=coordinar_episodios_durables,
     )
     return ejecutor, escritor, cuarentena, dormir
+
+
+def test_episodio_incompleto_queda_en_cuarentena_antes_de_anonimizar_o_publicar() -> None:
+    llamadas: list[str] = []
+    documentos = iter(
+        [
+            _documento("paciente", tipo=TipoDocumento.ECG),
+            _documento("paciente", tipo=TipoDocumento.LABORATORIO),
+        ]
+    )
+
+    class _ReconciliadorAprobado:
+        def reconciliar(self, documento, texto):
+            llamadas.append(f"reconciliacion:{documento.tipo_documento.value}")
+
+    ejecutor, escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: next(documentos),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+        obtener_reconciliador=lambda tipo: _ReconciliadorAprobado(),
+        clasificar_pii=lambda documento, motor: llamadas.append(f"pii:{documento.tipo_documento.value}"),
+        construir_registro=lambda *a, **k: llamadas.append("anonimizacion"),
+        coordinar_episodios_durables=coordinar_episodios,
+    )
+
+    resultados = ejecutor.procesar_lote(
+        [
+            ItemLote(id_documento="ecg-1", artefacto=_artefacto("ecg")),
+            ItemLote(id_documento="lab-1", artefacto=_artefacto("lab")),
+        ]
+    )
+
+    assert [resultado.id_documento for resultado in resultados] == ["ecg-1", "lab-1"]
+    assert all(isinstance(resultado, FalloDocumento) for resultado in resultados)
+    assert llamadas == ["reconciliacion:ecg", "pii:ecg", "reconciliacion:laboratorio", "pii:laboratorio"]
+    assert escritor.escritos == []
+    assert cuarentena.registrados == [resultado.error for resultado in resultados]
+
+
+def test_episodio_completo_coordinado_emite_solo_despues_de_reconciliarlo() -> None:
+    llamadas: list[str] = []
+    documentos = iter(
+        [
+            _documento("paciente", tipo=TipoDocumento.ECG),
+            _documento("paciente", tipo=TipoDocumento.LABORATORIO),
+            _documento("paciente", tipo=TipoDocumento.ECOCARDIOGRAMA),
+        ]
+    )
+
+    class _ReconciliadorAprobado:
+        def reconciliar(self, documento, texto):
+            llamadas.append(f"reconciliacion:{documento.tipo_documento.value}")
+
+    ejecutor, escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: next(documentos),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+        obtener_reconciliador=lambda tipo: _ReconciliadorAprobado(),
+        clasificar_pii=lambda documento, motor: llamadas.append(f"pii:{documento.tipo_documento.value}"),
+        coordinar_episodios_durables=coordinar_episodios,
+    )
+
+    resultados = ejecutor.procesar_lote(
+        [
+            ItemLote(id_documento="ecg-1", artefacto=_artefacto("ecg")),
+            ItemLote(id_documento="lab-1", artefacto=_artefacto("lab")),
+            ItemLote(id_documento="eco-1", artefacto=_artefacto("eco")),
+        ]
+    )
+
+    assert all(isinstance(resultado, ExitoDocumento) for resultado in resultados)
+    assert len({resultado.id_episodio for resultado in resultados}) == 1
+    assert len(escritor.escritos) == 3
+    assert len(escritor.episodios_escritos) == 1
+    assert cuarentena.registrados == []
+    assert llamadas == [
+        "reconciliacion:ecg",
+        "pii:ecg",
+        "reconciliacion:laboratorio",
+        "pii:laboratorio",
+        "reconciliacion:ecocardiograma",
+        "pii:ecocardiograma",
+    ]
 
 
 def test_fallo_de_reconciliacion_bloquea_pii_claves_vinculo_y_salida() -> None:

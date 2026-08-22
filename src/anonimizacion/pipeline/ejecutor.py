@@ -8,14 +8,13 @@ fallo de un documento nunca detiene el procesamiento del resto del lote;
 diseño resúmenes sin PII.
 
 Secuencia por documento (design.md, "Data Flow"):
-`extraer -> detectar_tipo -> obtener_parseador+parsear -> [detección de PII
-sobre texto libre] -> resolver_claves -> [batch: vincular_episodios] ->
-construir_registro -> escribir`. La vinculación de episodios es la única
-etapa que opera sobre TODO el lote a la vez (`pseudonimizacion/vinculacion.py`
-ya es así desde Fase 6 -- clusteriza por `id_paciente` a través de los
-documentos, no puede resolverse documento a documento), por eso
-`procesar_lote` primero resuelve cada documento de forma aislada, y recién
-vincula episodios sobre los que sobrevivieron, antes de emitir.
+`extraer -> detectar_tipo -> obtener_parseador+parsear -> reconciliar ->
+[detección de PII sobre texto libre] -> resolver_claves -> [batch:
+coordinar_episodios] -> construir_registro -> escribir`. La coordinación es
+la única etapa que opera sobre TODO el lote a la vez: espera a que cada
+documento esté reconciliado y bloquea la anonimización/salida de episodios
+incompletos o ambiguos. Sin el coordinador durable inyectado se conserva el
+vínculo histórico para los lotes existentes.
 
 Cada etapa concreta se recibe como dependencia inyectable (con default a la
 implementación real de la fase correspondiente): esto hace que este módulo
@@ -55,12 +54,17 @@ from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pii.politica import clasificar as _clasificar_real
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
 from anonimizacion.pseudonimizacion.resolutor_claves import resolver_claves as _resolver_claves_real
-from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, ResultadoVinculacion
+from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, MetadataEpisodio, ResultadoVinculacion
 from anonimizacion.pseudonimizacion.vinculacion import vincular_episodios as _vincular_episodios_real
 from anonimizacion.salida.constructor_registro import construir_registro as _construir_registro_real
 from anonimizacion.reconciliacion.base import ReconciliadorDocumento
 from anonimizacion.reconciliacion.registro import obtener_reconciliador as _obtener_reconciliador_real
 
+from .coordinador_episodios import (
+    DocumentoParaCoordinar,
+    MotivoCuarentenaEpisodio,
+    ResultadoCoordinacion,
+)
 from .etapas import Etapa
 from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 
@@ -70,6 +74,10 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 # duplica el número en dos lugares).
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
+_CODIGO_CUARENTENA_POR_MOTIVO = {
+    MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.COBERTURA_AMBIGUA,
+    MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.COBERTURA_INCOMPLETA,
+}
 
 
 class DestinoEscritura(Protocol):
@@ -179,6 +187,7 @@ class EjecutorPipeline:
         vincular_episodios: Callable[[list[DocumentoParaVincular], bytes], ResultadoVinculacion] = (
             _vincular_episodios_real
         ),
+        coordinar_episodios: Callable[..., ResultadoCoordinacion] | None = None,
         construir_registro: Callable[..., RegistroAnonimizado] = _construir_registro_real,
         clasificar_pii: Callable[[DocumentoParseado, MotorPii], object] = _clasificar_real,
     ) -> None:
@@ -194,6 +203,7 @@ class EjecutorPipeline:
         self._obtener_reconciliador = obtener_reconciliador
         self._resolver_claves = resolver_claves
         self._vincular_episodios = vincular_episodios
+        self._coordinar_episodios = coordinar_episodios
         self._construir_registro = construir_registro
         self._clasificar_pii = clasificar_pii
 
@@ -207,7 +217,8 @@ class EjecutorPipeline:
             except ErrorParseo as excepcion:
                 resultados.append(self._a_fallo(item.id_documento, excepcion, getattr(excepcion, "tipo_documento", None)))
 
-        resultado_vinculacion = self._vincular_episodios_resueltos(resueltos)
+        resueltos, resultado_vinculacion, fallos_coordinacion = self._coordinar_resueltos(resueltos)
+        resultados.extend(fallos_coordinacion)
         # episodios ya escritos EN ESTE LOTE (fix post-PR9): `escribir_episodio`
         # es idempotente del lado del destino (ver `EscritorPostgres.
         # escribir_episodio`), pero este set evita el round-trip redundante a
@@ -281,6 +292,62 @@ class EjecutorPipeline:
             for r in resueltos
         ]
         return self._vincular_episodios(documentos, self._pepper)
+
+    def _coordinar_resueltos(
+        self, resueltos: list[_DocumentoResuelto]
+    ) -> tuple[list[_DocumentoResuelto], ResultadoVinculacion, list[FalloDocumento]]:
+        if self._coordinar_episodios is None:
+            return resueltos, self._vincular_episodios_resueltos(resueltos), []
+
+        documentos = [
+            DocumentoParaCoordinar(
+                id_documento=resuelto.id_documento,
+                id_paciente=resuelto.claves.id_paciente,
+                tipo_documento=resuelto.documento.tipo_documento,
+                fecha_estudio=resuelto.documento.fecha_estudio,
+            )
+            for resuelto in resueltos
+        ]
+        coordinacion = self._coordinar_episodios(documentos, pepper=self._pepper, corrida_cerrada=True)
+        resultado_vinculacion = self._resultado_vinculacion_desde_coordinacion(coordinacion)
+        resueltos_aprobados = [
+            resuelto
+            for resuelto in resueltos
+            if resuelto.id_documento in resultado_vinculacion.id_episodio_por_documento
+        ]
+        fallos = [
+            self._a_fallo(
+                resuelto.id_documento,
+                ErrorParseo(
+                    self._codigo_por_motivo(motivo),
+                    etapa=Etapa.RECONCILIACION.value,
+                ),
+                resuelto.documento.tipo_documento,
+            )
+            for resuelto in resueltos
+            if (motivo := coordinacion.documentos_en_cuarentena.get(resuelto.id_documento)) is not None
+        ]
+        return resueltos_aprobados, resultado_vinculacion, fallos
+
+    @staticmethod
+    def _resultado_vinculacion_desde_coordinacion(coordinacion: ResultadoCoordinacion) -> ResultadoVinculacion:
+        id_episodio_por_documento = {
+            documento.id_documento: episodio.id_episodio
+            for episodio in coordinacion.episodios_aprobados
+            for documento in episodio.documentos
+        }
+        metadata_por_episodio = {
+            episodio.id_episodio: MetadataEpisodio(
+                id_paciente=episodio.id_paciente,
+                fecha_ancla=episodio.fecha_ancla,
+            )
+            for episodio in coordinacion.episodios_aprobados
+        }
+        return ResultadoVinculacion(id_episodio_por_documento, metadata_por_episodio)
+
+    @staticmethod
+    def _codigo_por_motivo(motivo: MotivoCuarentenaEpisodio) -> CodigoErrorDocumento:
+        return _CODIGO_CUARENTENA_POR_MOTIVO[motivo]
 
     def _emitir(
         self,

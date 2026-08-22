@@ -38,7 +38,7 @@ Chain strategy: feature-branch-chain
 - [x] 2.2 **RED/GREEN**: crear `pipeline/coordinador_episodios.py` y pruebas de ventanas, empates, faltantes y cierre de corrida.
 - [x] 2.3 **RED/GREEN**: adaptar `trabajadores/tareas.py` para persistir extracción mínima/completa sin publicar; probar reinicio sin duplicados.
 - [x] 2.4 **RED/GREEN**: añadir `salida/publicador_bundles.py` y completar `salida/destinos/parquet.py`; probar escritura atómica, manifiesto sin PII y una fila vigente.
-- [ ] 2.5 **REFACTOR**: integrar coordinador, reconciliadores y `pipeline/ejecutor.py`; añadir E2E de cuarentena previa a anonimización/publicación.
+- [x] 2.5 **REFACTOR**: integrar coordinador, reconciliadores y `pipeline/ejecutor.py`; añadir E2E de cuarentena previa a anonimización/publicación.
 
 ## Phase 3: Portal y operación institucional
 
