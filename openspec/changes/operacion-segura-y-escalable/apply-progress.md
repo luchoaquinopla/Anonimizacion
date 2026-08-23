@@ -204,8 +204,16 @@ Se incorporó una calibración reproducible que ejecuta extracción nativa, dete
 ### Diferencias iniciales y corrección
 
 - El original era detectado y parseado; el sintético era detectado pero quedaba en cuarentena durante parseo.
-- Se alinearon las etiquetas reales de cabecera, formatos de fecha, petición, tabla multipágina, 24 determinaciones numéricas soportadas, subsecciones y conteos de unidad/referencia.
-- La plantilla conserva una fila cualitativa y `IONOGRAMA SERICO`, que hoy no son extraídos por el parser. El reconciliador los inventaría y por seguridad envía tanto el original como el sintético a cuarentena con `cobertura_incompleta` antes de PII/anonimización.
-- Por lo anterior, PII y anonimización figuran como `no_ejecutada_por_cuarentena`; el reporte sólo enumera campos de PII estructurada presentes, nunca valores.
+- La primera versión alineó cabecera, fechas, petición y tabla multipágina, pero dejó una cuarentena reproducible por diferencias entre parser e inventario independiente.
+- Esa cuarentena motivó la corrección posterior documentada a continuación; no se tomó como criterio de éxito definitivo.
 
-La compuerta de laboratorio queda aprobada. La compuerta global permanece pendiente y bloquea 4.2 hasta completar ECG y ecocardiograma (4.1b–4.1c).
+## Corrección de la compuerta — Laboratorio aprobado de punta a punta
+
+La calibración anterior reproducía una cuarentena en vez de demostrar un flujo utilizable. Se corrigió sin relajar la cobertura: parser y reconciliador mantienen inventarios independientes, pero comparten la regla estructural de cualitativos y la canonicalización `IONOGRAMA SERICO` → `IONOGRAMA`. El parser conserva la subsección entre páginas, descarta encabezados repetidos y mantiene página/ordinal de cada fila.
+
+| Corrección | RED | GREEN | Triangulación |
+|---|---|---|---|
+| Cualitativos, alias y continuidad | 4 fallas contractuales confirmaron omisión, alias divergente y absorción de narrativa; 2 fallas adicionales confirmaron pérdida de sección y falso positivo de petición. | 40 pruebas de parser/reconciliación y 48 focales acumuladas pasan. | La regla acepta celdas breves en mayúsculas sin enumerar resultados, rechaza prosa y conserva asociación ordinal multipágina. |
+| Calibración original/sintético | El contrato previo esperaba cuarentena y no ejecutaba realmente política PII ni construcción anonimizada. | Ambos finalizan aprobados con 36 resultados numéricos, 6 secciones, 29 determinaciones únicas, 34 unidades y 33 referencias. | La compuerta ejecuta clasificación PII y construcción del registro; verifica cinco campos retirados y conteos por categoría, nunca valores. |
+
+Reporte local seguro: `tmp/calibracion_laboratorio/reporte_seguro.json` (no versionado). No queda una nueva cuarentena de laboratorio. La compuerta global permanece pendiente y bloquea 4.2 hasta completar ECG y ecocardiograma (4.1b–4.1c).

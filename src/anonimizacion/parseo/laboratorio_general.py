@@ -102,17 +102,19 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.parseo.contrato_laboratorio import (
+    SECCIONES_LABORATORIO,
+    es_encabezado_documento_laboratorio,
+    es_resultado_cualitativo_estructurado,
+    normalizar_seccion_laboratorio,
+)
 from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
 
-_SECCIONES = ("HEMATOLOGIA", "HEMOSTASIA", "QUIMICA CLINICA", "IONOGRAMA")
-
 _PATRON_VALOR_FILA = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 _PATRON_RANGO_REFERENCIA = re.compile(r"^[+-]?\d+(?:[.,]\d+)?\s*-\s*[+-]?\d+(?:[.,]\d+)?$")
-
-_MAPA_ACENTOS = str.maketrans("ÁÉÍÓÚáéíóúÜüÀÈÌÒÙàèìòù", "AEIOUaeiouUuAEIOUaeiou")
 
 _CAMPOS_HEADER = {
     "nombre": r"Apellido y Nombre:\s*(.+)",
@@ -190,15 +192,11 @@ def _parsear_fecha_nacimiento(texto: str) -> str | None:
         return None
 
 
-def _quitar_acentos(texto: str) -> str:
-    return texto.translate(_MAPA_ACENTOS)
-
-
 def _normalizar_encabezado_seccion(linea_limpia: str) -> str:
     """Normaliza una línea candidata a nombre de sección: quita acentos,
     guiones (el documento real trae `-NOMBRE-`) y mayusculiza, para poder
     compararla contra `_SECCIONES` sin importar la variante exacta."""
-    return _quitar_acentos(linea_limpia).strip().strip("-").strip().upper()
+    return normalizar_seccion_laboratorio(linea_limpia)
 
 
 def _es_encabezado_tabla_repetido(candidata: str) -> bool:
@@ -273,9 +271,11 @@ def _completar_nombre_partido(nombre_prueba: str, lineas: list[str], indice: int
     return nombre_completo, 1
 
 
-def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
+def _extraer_resultados(
+    pagina: str, seccion_inicial: str | None = None
+) -> tuple[tuple[ResultadoLaboratorio, ...], str | None]:
     resultados: list[ResultadoLaboratorio] = []
-    seccion_actual: str | None = None
+    seccion_actual = seccion_inicial
     lineas = pagina.splitlines()
     indice = 0
     while indice < len(lineas):
@@ -285,11 +285,15 @@ def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
             continue
         candidata = _normalizar_encabezado_seccion(linea_limpia)
 
+        if es_encabezado_documento_laboratorio(linea_limpia):
+            indice += 1
+            continue
+
         if _es_encabezado_tabla_repetido(candidata):
             indice += 1
             continue
 
-        if candidata in _SECCIONES:
+        if candidata in SECCIONES_LABORATORIO:
             seccion_actual = candidata
             indice += 1
             continue
@@ -319,7 +323,10 @@ def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
 
         # Formato real: columnas separadas por 2+ espacios, sin "|".
         tokens = [token for token in re.split(r"\s{2,}", linea_limpia) if token]
-        if len(tokens) >= 2 and _PATRON_VALOR_FILA.match(tokens[1]):
+        if len(tokens) >= 2 and ":" not in tokens[0] and (
+            _PATRON_VALOR_FILA.match(tokens[1])
+            or (len(tokens) == 2 and es_resultado_cualitativo_estructurado(tokens[1]))
+        ):
             if seccion_actual is not None:
                 nombre_prueba, lineas_consumidas = _completar_nombre_partido(tokens[0], lineas, indice)
                 unidades, valores_referencia = _clasificar_columnas_extra(tokens[2:])
@@ -344,7 +351,7 @@ def _extraer_resultados(pagina: str) -> tuple[ResultadoLaboratorio, ...]:
 
         indice += 1
 
-    return tuple(resultados)
+    return tuple(resultados), seccion_actual
 
 
 class ParseadorLaboratorioGeneral:
@@ -356,6 +363,7 @@ class ParseadorLaboratorioGeneral:
         header: dict[str, str] | None = None
         resultados: list[ResultadoLaboratorio] = []
         paginas_resultados: list[int] = []
+        seccion_actual: str | None = None
 
         for numero_pagina, pagina in enumerate(texto.paginas_ordenadas, start=1):
             campos_pagina = _extraer_campos_header(pagina)
@@ -369,7 +377,7 @@ class ParseadorLaboratorioGeneral:
                         codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
                     )
 
-            resultados_pagina = _extraer_resultados(pagina)
+            resultados_pagina, seccion_actual = _extraer_resultados(pagina, seccion_actual)
             resultados.extend(resultados_pagina)
             paginas_resultados.extend([numero_pagina] * len(resultados_pagina))
 

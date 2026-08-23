@@ -225,6 +225,16 @@ def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
             ("Linfocitos", "35", "%", "20 - 45"),
         ),
         (
+            ("Monocitos", "7", "%", "2 - 10"),
+            ("Cayados", "1", "%", "0 - 5"),
+            ("Granulocitos inmaduros", "1", "%", "0 - 3"),
+            ("Neutrofilos", "55", "%", "40 - 70"),
+            ("Eosinofilos", "2", "%", "0 - 5"),
+            ("Basofilos", "1", "%", "0 - 2"),
+            ("Linfocitos", "35", "%", "20 - 45"),
+            ("Monocitos", "7", "%", "2 - 10"),
+            ("Cayados", "1", "%", "0 - 5"),
+            ("Granulocitos inmaduros", "1", "%", "0 - 3"),
             ("HEMOSTASIA", "", "", ""),
             ("Tiempo de Protrombina", "12", "s", "10 - 14"),
             ("RIN", "1", "", "0 - 2"),
@@ -235,13 +245,11 @@ def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
             ("Uremia", "30", "mg/dL", "15 - 45"),
             ("Creatinina serica", "0.9", "mg/dL", ""),
             ("Filtrado Glomerular Estimado (CKD-EPI 2021)", "102", "mL/min", ""),
-            ("Control cualitativo", "NO DETECTADO", "", ""),
         ),
         (
             ("IONOGRAMA SERICO", "", "", ""),
             ("Sodio", "140", "mEq/L", "135 - 145"),
             ("Potasio", "4.1", "mEq/L", "3.5 - 5.1"),
-            ("Cloro", "103", "mEq/L", "98 - 107"),
         ),
     )
     limites = ((130, 720), (130, 520), (130, 310))

@@ -11,11 +11,14 @@ from pathlib import Path
 import unicodedata
 
 from anonimizacion.deteccion.detector_tipo import detectar_tipo
+from anonimizacion.dominio.modelos import ClavesPaciente
 from anonimizacion.dominio.errores import ErrorParseo
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
 from anonimizacion.parseo.registro import obtener_parseador
+from anonimizacion.pii.politica import clasificar
 from anonimizacion.reconciliacion.normalizacion import normalizar_texto
 from anonimizacion.reconciliacion.registro import obtener_reconciliador
+from anonimizacion.salida.constructor_registro import construir_registro
 
 def _normalizar_etiqueta(valor: str) -> str:
     normalizado = unicodedata.normalize("NFKD", normalizar_texto(valor))
@@ -72,6 +75,7 @@ class ComparacionContrato:
 
 _DETERMINACIONES = (
     "basofilos",
+    "cayados",
     "conc. de hba corpuscular media",
     "creatinina serica",
     "eosinofilos",
@@ -80,16 +84,20 @@ _DETERMINACIONES = (
     "globulos blancos",
     "globulos rojos",
     "glucemia",
+    "granulocitos inmaduros",
     "hematocrito",
     "hemoglobina",
     "hemoglobina corpuscular media",
     "linfocitos",
+    "monocitos",
     "neutrofilos",
     "plaquetas",
+    "potasio",
     "r",
     "rdw-cv",
     "rdw-sd",
     "rin",
+    "sodio",
     "tiempo de protrombina",
     "tiempo de tromboplastina aptt",
     "uremia",
@@ -103,11 +111,11 @@ CONTRATO_LABORATORIO = ResumenLaboratorio(
     estado_parseo="aprobado",
     campos_identidad=("dni", "fecha_nac", "ids_internos", "nombre"),
     campos_adicionales=("edad", "hora_extraccion", "medico_derivante", "origen"),
-    secciones=("formula leucocitaria", "hematologia", "hemograma", "hemostasia", "quimica clinica"),
+    secciones=("formula leucocitaria", "hematologia", "hemograma", "hemostasia", "ionograma", "quimica clinica"),
     determinaciones=_DETERMINACIONES,
-    tipos_resultado=(("numerico", 24),),
-    resultados_con_unidad=22,
-    resultados_con_referencia=21,
+    tipos_resultado=(("numerico", 36),),
+    resultados_con_unidad=34,
+    resultados_con_referencia=33,
     campos_pii_estructurada=(
         "identidad.dni",
         "identidad.fecha_nac",
@@ -115,14 +123,30 @@ CONTRATO_LABORATORIO = ResumenLaboratorio(
         "identidad.nombre",
         "adicionales.medico_derivante",
     ),
-    estado_pii="no_ejecutada_por_cuarentena",
-    pii_por_categoria=(),
-    estado_anonimizacion="no_ejecutada_por_cuarentena",
-    campos_retirados_salida=(),
-    estado_final="cuarentena",
-    codigo_final="cobertura_incompleta",
-    etapa_final="reconciliacion",
+    estado_pii="ejecutada",
+    pii_por_categoria=(("cuasi_identificador", 1), ("medico", 1), ("paciente", 3), ("texto_libre", 0)),
+    estado_anonimizacion="ejecutada",
+    campos_retirados_salida=(
+        "identidad.dni",
+        "identidad.fecha_nac",
+        "identidad.ids_internos",
+        "identidad.nombre",
+        "adicionales.medico_derivante",
+    ),
+    estado_final="aprobado",
+    codigo_final=None,
+    etapa_final=None,
 )
+
+
+class _MotorPiiCalibracion:
+    """Doble offline: la compuerta valida política, no calidad del modelo NER."""
+
+    def evaluar_ids_internos(self, ids_internos: tuple[str, ...]) -> tuple[object, ...]:
+        return ()
+
+    def detectar(self, texto: str) -> tuple[object, ...]:
+        return ()
 
 
 def evaluar_laboratorio(ruta: Path) -> ResumenLaboratorio:
@@ -166,6 +190,23 @@ def evaluar_laboratorio(ruta: Path) -> ResumenLaboratorio:
         codigo_final = error.codigo.value
         etapa_final = getattr(error.etapa, "value", str(error.etapa))
     bloqueada = estado_final == "cuarentena"
+    pii_por_categoria: tuple[tuple[str, int], ...] = ()
+    campos_retirados: tuple[str, ...] = ()
+    if not bloqueada:
+        politica = clasificar(documento, _MotorPiiCalibracion())
+        pii_por_categoria = tuple(sorted({
+            "paciente": len(politica.elementos_paciente),
+            "medico": len(politica.elementos_medico),
+            "cuasi_identificador": len(politica.cuasi_identificadores),
+            "texto_libre": len(politica.detecciones_texto_libre),
+        }.items()))
+        construir_registro(
+            documento,
+            ClavesPaciente("paciente-calibracion", "alternativa-calibracion", 1),
+            id_episodio="episodio-calibracion",
+            pepper=b"pepper-sintetico-de-calibracion",
+        )
+        campos_retirados = tuple(campos_pii)
     return ResumenLaboratorio(
         tipo_documento=tipo.value,
         estado_deteccion="aprobado",
@@ -179,9 +220,9 @@ def evaluar_laboratorio(ruta: Path) -> ResumenLaboratorio:
         resultados_con_referencia=sum(fila.valores_referencia is not None for fila in contenido.resultados),
         campos_pii_estructurada=tuple(campos_pii),
         estado_pii="no_ejecutada_por_cuarentena" if bloqueada else "ejecutada",
-        pii_por_categoria=(),
+        pii_por_categoria=pii_por_categoria,
         estado_anonimizacion="no_ejecutada_por_cuarentena" if bloqueada else "ejecutada",
-        campos_retirados_salida=(),
+        campos_retirados_salida=campos_retirados,
         estado_final=estado_final,
         codigo_final=codigo_final,
         etapa_final=etapa_final,
@@ -210,7 +251,9 @@ def comparar_contrato(actual: ResumenLaboratorio, esperado: ResumenLaboratorio) 
         equivalencia_pii=(
             actual.campos_pii_estructurada == esperado.campos_pii_estructurada
             and actual.estado_pii == esperado.estado_pii
+            and actual.pii_por_categoria == esperado.pii_por_categoria
             and actual.estado_anonimizacion == esperado.estado_anonimizacion
+            and actual.campos_retirados_salida == esperado.campos_retirados_salida
         ),
         equivalencia_estado_final=(
             actual.estado_final == esperado.estado_final

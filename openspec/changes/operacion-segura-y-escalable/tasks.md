@@ -52,6 +52,7 @@ Chain strategy: feature-branch-chain
 - [x] 4.1 **RED/GREEN**: ampliar `tests/fixtures/pdf_sintetico.py` con plantillas ECG/laboratorio/eco, semilla y oráculo; probar repetibilidad y cero red/PII real.
   - Correcciones aplicadas: las plantillas conservan geometría, encabezados, secciones, campos relevantes y paginación estructural de las referencias autorizadas, siempre con datos ficticios; la matriz segura de cobertura está en `tests/fixtures/matriz_cobertura_sinteticos.md`.
 - [x] 4.1a **RED/GREEN**: ejecutar la compuerta 1:1 de laboratorio contra un contrato seguro sin valores; exigir cobertura total de campos, secciones y determinaciones soportadas y equivalencia de decisiones del pipeline.
+  - [x] Corregir cualitativos estructurados, alias `IONOGRAMA SERICO`, continuidad multipágina y encabezados repetidos; exigir reconciliación aprobada antes de PII/anonimización.
 - [ ] 4.1b **RED/GREEN**: ejecutar la misma compuerta 1:1 para ECG, diferenciando métricas textuales de imagen/señal.
 - [ ] 4.1c **RED/GREEN**: ejecutar la misma compuerta 1:1 para ecocardiograma, incluyendo medidas, texto libre, firma y cuarentena.
 - [ ] 4.2 **RED/GREEN**: crear `tests/corpus_sintetico/test_pipeline_masivo.py` para válidos, ambiguos, faltantes, corruptos, fechas límite y ausencia de PII.

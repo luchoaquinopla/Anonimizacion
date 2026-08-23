@@ -21,13 +21,17 @@ def test_sintetico_cumple_contrato_seguro_derivado_del_original(tmp_path) -> Non
     assert comparacion.cobertura_campos == 1.0
     assert comparacion.cobertura_secciones == 1.0
     assert comparacion.cobertura_determinaciones == 1.0
+    assert resumen.secciones == CONTRATO_LABORATORIO.secciones
+    assert resumen.determinaciones == CONTRATO_LABORATORIO.determinaciones
     assert comparacion.equivalencia_tipos
     assert comparacion.equivalencia_pii
     assert comparacion.equivalencia_estado_final
     assert resumen.estado_parseo == "aprobado"
-    assert resumen.estado_final == "cuarentena"
-    assert resumen.codigo_final == "cobertura_incompleta"
-    assert resumen.etapa_final == "reconciliacion"
+    assert resumen.estado_final == "aprobado"
+    assert resumen.codigo_final is None
+    assert resumen.etapa_final is None
+    assert resumen.estado_pii == "ejecutada"
+    assert resumen.estado_anonimizacion == "ejecutada"
 
 
 def test_resumen_de_calibracion_no_contiene_valores_identificatorios(tmp_path) -> None:
@@ -45,7 +49,12 @@ def test_resumen_de_calibracion_no_contiene_valores_identificatorios(tmp_path) -
         "identidad.nombre",
         "adicionales.medico_derivante",
     ]
-    assert serializado["estado_pii"] == "no_ejecutada_por_cuarentena"
-    assert serializado["pii_por_categoria"] == {}
-    assert serializado["estado_anonimizacion"] == "no_ejecutada_por_cuarentena"
-    assert serializado["campos_retirados_salida"] == []
+    assert serializado["estado_pii"] == "ejecutada"
+    assert serializado["pii_por_categoria"] == {
+        "cuasi_identificador": 1,
+        "medico": 1,
+        "paciente": 3,
+        "texto_libre": 0,
+    }
+    assert serializado["estado_anonimizacion"] == "ejecutada"
+    assert serializado["campos_retirados_salida"] == serializado["campos_pii_estructurada"]

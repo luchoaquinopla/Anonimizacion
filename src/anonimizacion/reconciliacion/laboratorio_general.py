@@ -9,6 +9,12 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo, Eta
 from anonimizacion.dominio.modelos import DocumentoParseado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.parseo.contrato_laboratorio import (
+    SECCIONES_LABORATORIO,
+    es_encabezado_documento_laboratorio,
+    es_resultado_cualitativo_estructurado,
+    normalizar_seccion_laboratorio,
+)
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio
 
 from ._comun import reconciliar_cobertura, reconciliar_referencias
@@ -16,15 +22,12 @@ from .base import HallazgoCobertura
 from .normalizacion import normalizar_texto
 
 
-_SECCIONES = frozenset({"HEMATOLOGIA", "HEMOSTASIA", "QUIMICA CLINICA", "IONOGRAMA"})
 _PATRON_NUMERO = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 _PATRON_ENCABEZADO = re.compile(r"resultado", re.IGNORECASE)
 _PATRON_ENCABEZADO_PAGINA = re.compile(
-    r"^(?:fecha|hora|apellido y nombre|documento|dni|medico|n[ºo°]\s*peticion)\s*:", re.IGNORECASE
+    r"^(?:fecha|hora|apellido y nombre|documento|dni|m[eé]dico|n[ºo°]\s*petici[oó]n)\s*:",
+    re.IGNORECASE,
 )
-_ENCABEZADOS_COLUMNA = frozenset({"pruebas", "resultado", "unidades", "referencia", "valores de referencia"})
-
-
 @dataclass(frozen=True)
 class _FilaInventariada:
     """Fila transitoria, usada solo para comparar el PDF en memoria."""
@@ -38,13 +41,7 @@ class _FilaInventariada:
 
 
 def _normalizar_seccion(linea: str) -> str:
-    return (
-        linea.translate(str.maketrans("ÁÉÍÓÚáéíóúÜü", "AEIOUaeiouUu"))
-        .strip()
-        .strip("-")
-        .strip()
-        .upper()
-    )
+    return normalizar_seccion_laboratorio(linea)
 
 
 def _fila_desde_linea(linea: str, seccion: str, pagina: int) -> _FilaInventariada | None:
@@ -62,18 +59,12 @@ def _fila_desde_linea(linea: str, seccion: str, pagina: int) -> _FilaInventariad
     partes = [parte.strip() for parte in re.split(r"\s{2,}", linea) if parte.strip()]
     if len(partes) < 2 or not (
         _PATRON_NUMERO.fullmatch(partes[1])
-        or (len(partes) == 2 and _es_resultado_cualitativo(partes[1]))
+        or (len(partes) == 2 and es_resultado_cualitativo_estructurado(partes[1]))
     ):
         return None
     referencia = next((parte for parte in partes[2:] if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?\s*-\s*[+-]?\d+(?:[.,]\d+)?", parte)), None)
     unidad = next((parte for parte in partes[2:] if parte != referencia), None)
     return _FilaInventariada(seccion, partes[0], partes[1], unidad, referencia, pagina)
-
-
-def _es_resultado_cualitativo(valor: str) -> bool:
-    """Reconoce una segunda columna cualitativa sin enumerar resultados clínicos."""
-    normalizado = normalizar_texto(valor)
-    return normalizado not in _ENCABEZADOS_COLUMNA and any(caracter.isalpha() for caracter in normalizado)
 
 
 def _completar_nombre_partido(
@@ -123,7 +114,10 @@ class ReconciliadorLaboratorioGeneral:
             while indice < len(lineas):
                 linea_limpia = lineas[indice].strip()
                 seccion_candidata = _normalizar_seccion(linea_limpia)
-                if seccion_candidata in _SECCIONES:
+                if es_encabezado_documento_laboratorio(linea_limpia):
+                    indice += 1
+                    continue
+                if seccion_candidata in SECCIONES_LABORATORIO:
                     seccion = seccion_candidata
                     indice += 1
                     continue

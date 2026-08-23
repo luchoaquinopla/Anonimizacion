@@ -161,6 +161,17 @@ def test_laboratorio_no_inventaria_el_header_de_una_pagina_posterior() -> None:
     assert [(hallazgo.pagina, hallazgo.ordinal) for hallazgo in inventario] == [(1, 0)]
 
 
+def test_laboratorio_no_inventaria_numero_peticion_acentuado_en_pagina_posterior() -> None:
+    texto = TextoExtraido((
+        "HEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
+        "Nº Petición:  REACTIVO",
+    ))
+
+    inventario = ReconciliadorLaboratorioGeneral().inventariar(texto)
+
+    assert [(hallazgo.pagina, hallazgo.ordinal) for hallazgo in inventario] == [(1, 0)]
+
+
 def test_laboratorio_conserva_seccion_en_una_tabla_que_continua_en_la_pagina_siguiente() -> None:
     texto = TextoExtraido((
         "HEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
@@ -207,6 +218,29 @@ def test_laboratorio_valida_resultado_cualitativo_con_destino() -> None:
     filas = (ResultadoLaboratorio("HEMATOLOGIA", "SARS-CoV-2", "NO DETECTADO", None, None),)
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),)
     texto = TextoExtraido(("HEMATOLOGIA\nSARS-CoV-2  NO DETECTADO",))
+
+    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+
+def test_laboratorio_no_inventaria_narrativa_como_resultado_cualitativo() -> None:
+    texto = TextoExtraido(("HEMATOLOGIA\nComentario general  Texto narrativo que no es un resultado",))
+
+    assert ReconciliadorLaboratorioGeneral().inventariar(texto) == ()
+
+
+def test_laboratorio_canonicaliza_alias_ionograma_y_conserva_asociacion_ordinal() -> None:
+    filas = (
+        ResultadoLaboratorio("HEMATOLOGIA", "Marcador", "REACTIVO", None, None),
+        ResultadoLaboratorio("IONOGRAMA", "Sodio", "140", "mEq/L", "135 - 145"),
+    )
+    fuentes = (
+        ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),
+        ReferenciaCampo("laboratorio.resultado", 2, "laboratorio.resultado", 1),
+    )
+    texto = TextoExtraido((
+        "HEMATOLOGIA\nMarcador  REACTIVO",
+        "IONOGRAMA SERICO\nSodio  140  mEq/L  135 - 145",
+    ))
 
     ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
 

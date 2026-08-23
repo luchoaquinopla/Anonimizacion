@@ -188,6 +188,52 @@ def test_cuerpo_real_espaciado_sin_pipes_extrae_filas_con_seccion_y_subseccion()
     assert filas["PruebaTres"].valores_referencia is None
 
 
+def test_cuerpo_real_acepta_resultado_cualitativo_estructurado_sin_absorber_narrativa() -> None:
+    cuerpo = (
+        "HEMATOLOGIA\n"
+        "Marcador Cualitativo  NO DETECTADO\n"
+        "Comentario general  Texto narrativo que no es un resultado\n"
+    )
+
+    resultado = ParseadorLaboratorioGeneral().parsear(TextoExtraido(paginas=(_HEADER + cuerpo,)))
+
+    assert [(fila.prueba, fila.resultado) for fila in resultado.contenido.resultados] == [
+        ("Marcador Cualitativo", "NO DETECTADO")
+    ]
+
+
+def test_canonicaliza_ionograma_serico_y_conserva_pagina_y_ordinal() -> None:
+    texto = TextoExtraido(
+        paginas=(
+            _HEADER + "HEMATOLOGIA\nMarcador Cualitativo  REACTIVO\n",
+            "IONOGRAMA SERICO\nSodio  140  mEq/L  135 - 145\n",
+        )
+    )
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert [fila.seccion for fila in resultado.contenido.resultados] == ["HEMATOLOGIA", "IONOGRAMA"]
+    assert [(fuente.pagina, fuente.ordinal) for fuente in resultado.fuentes] == [(1, 0), (2, 1)]
+
+
+def test_conserva_seccion_para_resultados_que_continuan_en_la_pagina_siguiente() -> None:
+    texto = TextoExtraido(
+        paginas=(
+            _HEADER + "HEMATOLOGIA\nFORMULA LEUCOCITARIA\nNeutrofilos  55\n",
+            "Nº Petición: 987654\nMonocitos  REACTIVO\nHEMOSTASIA\nRIN  1\n",
+        )
+    )
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert [(fila.seccion, fila.prueba) for fila in resultado.contenido.resultados] == [
+        ("FORMULA LEUCOCITARIA", "Neutrofilos"),
+        ("FORMULA LEUCOCITARIA", "Monocitos"),
+        ("HEMOSTASIA", "RIN"),
+    ]
+    assert [(fuente.pagina, fuente.ordinal) for fuente in resultado.fuentes] == [(1, 0), (2, 1), (2, 2)]
+
+
 def test_nombre_de_prueba_partido_en_dos_lineas_por_parentesis_se_reconstruye() -> None:
     """Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
     "Fix: persistencia del puente id_alt_paciente en Postgres entre
