@@ -117,6 +117,34 @@ def test_seccion_que_cruza_paginas_conserva_la_pagina_de_inicio() -> None:
     assert [(fuente.ordinal, fuente.pagina) for fuente in fuentes_seccion] == [(0, 1), (1, 2)]
 
 
+def test_seccion_que_cruza_paginas_excluye_encabezado_y_pie_repetidos() -> None:
+    from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
+
+    texto = TextoExtraido((
+        _HEADER_MINIMO
+        + "Nº Estudio: 900\n"
+        + "EVALUACION DE FLUJOS POR DOPPLER\n"
+        + "FLUJO PULMONAR\n"
+        + "Informe no valido sin firma\nPagina 1 de 2\n",
+        "SERVICIO DE ECOCARDIOGRAFIA\n"
+        + "Paciente: Prueba Sintetica  Documento: 11222333  Fecha Estudio: 05/06/2025\n"
+        + "Edad: 50 anos  Nº Estudio: 900  Peso: 70 kg  Altura: 170 cm  S.C.: 1.8 m2\n"
+        + "Medico Solicitante: Profesional Sintetico\n"
+        + "Flujo sistolico conservado.\n"
+        + "FLUJO TRICUSPIDEO\nSin alteraciones.\n",
+    ))
+
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    pulmonar = next(
+        seccion
+        for seccion in documento.contenido.secciones_texto
+        if seccion.nombre.endswith("FLUJO PULMONAR")
+    )
+    assert pulmonar.texto == "Flujo sistolico conservado."
+    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
 def test_header_ausente_lanza_error_parseo() -> None:
     texto = TextoExtraido(paginas=("MEDIDAS\nAO | 28 | mm\n",))
     with pytest.raises(ErrorParseo) as info:

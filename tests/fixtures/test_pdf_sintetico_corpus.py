@@ -69,14 +69,14 @@ def test_laboratorio_y_eco_preservan_paginacion_y_secciones_extraibles(tmp_path)
     assert len(ecocardiograma) == 2
     assert all((round(pagina.rect.width), round(pagina.rect.height)) == (616, 862) for pagina in ecocardiograma)
     texto_eco = [pagina.get_text("text", sort=True) for pagina in ecocardiograma]
-    assert "ECOCARDIOGRAMA DOPPLER" in texto_eco[0]
+    assert "ECOGRAFIA DOPPLER COLOR CARDIACA" in texto_eco[0]
     assert "DDVI" in texto_eco[0]
     assert "MOTILIDAD SEGMENTARIA" in texto_eco[0]
-    assert "VALVULAS" in texto_eco[1]
-    assert "DOPPLER" in texto_eco[1]
+    assert "VALVULAS CARDIACAS" in texto_eco[0]
+    assert "EVALUACION DE FLUJOS POR DOPPLER" in texto_eco[0]
     assert "CONCLUSIONES" in texto_eco[1]
     assert "Pagina 2 de 2" in texto_eco[1]
-    assert texto_eco[1].index("VALVULAS") < texto_eco[1].rindex("DOPPLER") < texto_eco[1].index("CONCLUSIONES")
+    assert texto_eco[0].index("VALVULAS CARDIACAS") < texto_eco[0].index("EVALUACION DE FLUJOS POR DOPPLER")
     ecocardiograma.close()
 
 
@@ -147,27 +147,40 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "IONOGRAMA",
         ),
         "ecocardiograma": (
-            "Paciente:",
+            "PACIENTE:",
             "Documento:",
-            "Nro. de Estudio:",
-            "Fecha:",
+            "Nº ESTUDIO:",
+            "Fecha Estudio:",
             "Medico Solicitante:",
             "Peso:",
             "Altura:",
-            "Superficie Corporal:",
+            "S.C.",
+            "AO",
+            "AI",
+            "DDVI",
+            "DSVI",
             "FA",
-            "Septum",
-            "P. Posterior",
+            "SEPTUM",
+            "P.POSTERIOR",
+            "VD",
+            "PULMON",
+            "AD",
             "MOTILIDAD SEGMENTARIA",
-            "VALVULA MITRAL",
-            "VALVULA AORTICA",
-            "VALVULA TRICUSPIDEA",
-            "VALVULA PULMONAR",
+            "AURICULAS",
+            "VALVULAS CARDIACAS",
+            "AORTICA",
+            "MITRAL",
+            "TRICUSPIDEA",
+            "PULMONAR",
             "PERICARDIO",
-            "DOPPLER",
+            "EVALUACION DE FLUJOS POR DOPPLER",
+            "FLUJO AORTICO",
+            "FLUJO MITRAL",
+            "FLUJO PULMONAR",
+            "FLUJO TRICUSPIDEO",
             "CONCLUSIONES",
-            "Medico Informante:",
-            "Matricula:",
+            "Matricula W",
+            "DIAGNOSTICO POR IMAGENES",
         ),
     }
 

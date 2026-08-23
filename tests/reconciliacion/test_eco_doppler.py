@@ -318,6 +318,17 @@ def test_aprueba_nombre_eco_en_su_header() -> None:
     )
 
 
+def test_aprueba_nombre_eco_sin_arrastrar_columnas_vecinas_del_header() -> None:
+    from anonimizacion.parseo.eco_doppler import ParseadorEcoDoppler
+
+    texto = TextoExtraido((
+        "Paciente: Persona Sintetica      Documento: 11222333      Fecha Estudio: 20/03/2025",
+    ))
+    documento = ParseadorEcoDoppler().parsear(texto)
+
+    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
 def test_rechaza_firma_esperada_disgregada_junto_a_otra_firma() -> None:
     fuente = ReferenciaCampo("eco.firma", 1, "eco.firma")
     documento_base = _documento((fuente,))

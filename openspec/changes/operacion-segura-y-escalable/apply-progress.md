@@ -217,3 +217,17 @@ La calibración anterior reproducía una cuarentena en vez de demostrar un flujo
 | Calibración original/sintético | El contrato previo esperaba cuarentena y no ejecutaba realmente política PII ni construcción anonimizada. | Ambos finalizan aprobados con 36 resultados numéricos, 6 secciones, 29 determinaciones únicas, 34 unidades y 33 referencias. | La compuerta ejecuta clasificación PII y construcción del registro; verifica cinco campos retirados y conteos por categoría, nunca valores. |
 
 Reporte local seguro: `tmp/calibracion_laboratorio/reporte_seguro.json` (no versionado). No queda una nueva cuarentena de laboratorio. La compuerta global permanece pendiente y bloquea 4.2 hasta completar ECG y ecocardiograma (4.1b–4.1c).
+
+## Compuerta 1:1 — Ecocardiograma aprobado de punta a punta
+
+La referencia autorizada se inspeccionó sólo de forma local y se resumió mediante etiquetas, conteos, procedencia y estados. El original reveló que una sección Doppler empieza en la página 1 y continúa después del encabezado repetido de la página 2. El parser incorporaba ese boilerplate —incluidos campos identificatorios— al texto clínico y el reconciliador no podía anclar la evidencia. También capturaba columnas vecinas al validar el nombre del header.
+
+| Tarea | Safety net | RED | GREEN | Triangulación / refactor |
+|---|---|---|---|---|
+| 4.1c, compuerta de eco | 47 pruebas de parser, reconciliación y fixtures pasaban. | La compuerta faltaba; el caso multipágina mostró pie/header dentro de `FLUJO PULMONAR`, y el header en una fila falló por arrastrar columnas. | 51 pruebas focales pasan; original y sintético finalizan aprobados hasta PII/anonimización. | Se filtró sólo boilerplate declarado, se deduplicó el inventario de headers repetidos y se conservó el anclaje estricto de texto clínico. |
+
+La equivalencia exacta cubre 10 medidas en su orden (7 numéricas y 3 textuales), 12 secciones en su orden, unidades, páginas de medidas/secciones, firma en página 2, campos estructurados, conteos PII y decisión final. El sintético conserva dos páginas, tabla doble y continuidad de `FLUJO PULMONAR`, siempre con datos ficticios. Reporte local seguro: `tmp/calibracion_ecocardiograma/reporte_seguro.json` (no versionado).
+
+Verificación final: 51 pruebas focales y la suite completa (`409 passed, 1 skipped`) sin regresiones; el único omitido requiere privilegios de enlaces simbólicos en Windows.
+
+La compuerta global sigue bloqueada únicamente por ECG (4.1b); 4.2 no debe comenzar antes de completarla.

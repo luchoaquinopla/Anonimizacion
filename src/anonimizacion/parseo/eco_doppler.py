@@ -120,6 +120,29 @@ _PATRON_FIRMA = re.compile(r"Firma:\s*(?P<nombre>.+?)\s*-\s*MP\s*(?P<matricula>\
 _PATRON_MATRICULA = re.compile(r"Matr[ií]cula\s+([A-Za-z])\s*(\d+)", re.IGNORECASE)
 _PATRON_NOMBRE_FIRMA = re.compile(r"^[A-ZÁÉÍÓÚÑ.]+(?:\s+[A-ZÁÉÍÓÚÑ.]+)+$")
 _TEXTO_FIRMA_EXCLUIDO = {"DIAGNOSTICO POR IMAGENES"}
+_PREFIJOS_BOILERPLATE = (
+    "servicio de ecocardiografia",
+    "ecografia doppler color cardiaca",
+    "instituto de cardiologia",
+    "funcacorr",
+    "fundacion cardiologica",
+    "paciente:",
+    "documento:",
+    "fecha estudio:",
+    "edad:",
+    "nº estudio:",
+    "n° estudio:",
+    "no estudio:",
+    "medico solicitante:",
+    "médico solicitante:",
+    "informe no valido",
+    "informe no válido",
+    "pagina ",
+    "pag.:",
+    "bolivar ",
+    "e-mail:",
+    "documento sintetico - solo pruebas",
+)
 
 
 @dataclass(frozen=True)
@@ -164,6 +187,12 @@ class _CuerpoEco:
     paginas_secciones: tuple[int, ...]
     firma: FirmaMedico | None
     pagina_firma: int | None
+
+
+def es_boilerplate_eco(linea: str) -> bool:
+    """Reconoce cabecera/pie repetidos sin aceptar texto clínico libre."""
+    normalizada = " ".join(linea.strip().casefold().split())
+    return normalizada.startswith(_PREFIJOS_BOILERPLATE)
 
 
 def _primer_segmento(texto: str) -> str:
@@ -272,6 +301,8 @@ def _parsear_cuerpo(
         for linea in pagina.splitlines():
             linea_limpia = linea.strip()
             if not linea_limpia:
+                continue
+            if es_boilerplate_eco(linea_limpia):
                 continue
 
             # Formato legado (fixtures sintéticas anteriores a la

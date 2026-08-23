@@ -35,11 +35,13 @@ por la prueba contractual `test_corpus_conserva_campos_y_secciones_contractuales
 |---|---|---|
 | Paciente, documento, estudio y fecha | PII y reconciliación | Cubierto |
 | Médico solicitante, peso, altura, superficie corporal | Cabecera | Cubierto |
-| AO, AI, DDVI, DSVI, FA, Septum, P. Posterior | Tabla de medidas | Cubierto |
-| Motilidad segmentaria | Bloque de texto libre | Cubierto |
-| Válvulas mitral, aórtica, tricúspidea y pulmonar | Secciones de texto libre | Cubierto |
-| Pericardio, Doppler, conclusiones | Secciones de texto libre | Cubierto |
-| Médico informante y matrícula | Firma / PII profesional | Cubierto |
+| AO, SEPTUM, AI, P.POSTERIOR, DDVI, VD, DSVI, PULMON, FA y AD | Tabla doble de medidas | Cubierto 1:1 |
+| Motilidad segmentaria y aurículas | Bloques de texto libre | Cubierto 1:1 |
+| Válvulas aórtica, mitral, pulmonar y tricuspídea | Subsecciones de texto libre | Cubierto 1:1 |
+| Pericardio y flujos aórtico, mitral, pulmonar y tricuspídeo | Secciones de texto libre | Cubierto 1:1 |
+| Flujo pulmonar entre páginas | Continuidad y procedencia | Cubierto 1:1 |
+| Conclusiones | Bloque final de texto libre | Cubierto 1:1 |
+| Nombre del informante y matrícula estructural | Firma / PII profesional | Cubierto 1:1 |
 
 ## Omisiones deliberadas
 

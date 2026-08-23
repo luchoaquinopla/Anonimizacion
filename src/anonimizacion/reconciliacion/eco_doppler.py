@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import re
 
+from anonimizacion.dominio.errores import (
+    CodigoErrorDocumento,
+    ErrorParseo,
+    EtapaDocumento,
+)
 from anonimizacion.dominio.modelos import DocumentoParseado
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo, EtapaDocumento
+from anonimizacion.dominio.referencias import selector_medida_eco
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
-from anonimizacion.parseo.eco_doppler import ContenidoEco
-from anonimizacion.dominio.referencias import selector_medida_eco
+from anonimizacion.parseo.eco_doppler import ContenidoEco, es_boilerplate_eco
 
 from ._comun import reconciliar_cobertura, reconciliar_referencias
 from .base import HallazgoCobertura
 from .normalizacion import normalizar_texto
-
 
 _CAMPOS_HEADER = {
     "eco.nombre": re.compile(r"(?i)paciente:\s*.+"),
@@ -85,7 +88,12 @@ def _asociacion_eco(referencia: object, esperado: str, pagina: str) -> bool:
     patron_header = patrones_header.get(selector)
     if patron_header is not None:
         coincidencia = re.search(patron_header, pagina, re.IGNORECASE)
-        return coincidencia is not None and normalizar_texto(coincidencia.group(1)).replace(",", ".") == esperado
+        valor_header = (
+            re.split(r"\s{2,}", coincidencia.group(1), maxsplit=1)[0].strip()
+            if coincidencia is not None
+            else ""
+        )
+        return normalizar_texto(valor_header).replace(",", ".") == esperado
     if selector.startswith("eco.medida."):
         partes = esperado.split()
         corte = next(
@@ -197,7 +205,11 @@ def _seccion_anclada(seccion: object, pagina_origen: int, texto: TextoExtraido) 
     encontro_etiqueta = False
 
     for indice_pagina, pagina in enumerate(texto.paginas_ordenadas[pagina_origen - 1:], start=pagina_origen):
-        lineas = [normalizar_texto(linea) for linea in pagina.splitlines() if linea.strip()]
+        lineas = [
+            normalizar_texto(linea)
+            for linea in pagina.splitlines()
+            if linea.strip() and not es_boilerplate_eco(linea)
+        ]
         inicio = 0
         if indice_pagina == pagina_origen:
             for ordinal_etiqueta, etiqueta in enumerate(etiquetas):
@@ -246,6 +258,7 @@ class ReconciliadorEcoDoppler:
         ordinal_seccion = 0
         en_medidas = False
         seccion_pendiente: tuple[int, bool] | None = None
+        headers_inventariados: set[str] = set()
 
         def cerrar_seccion() -> None:
             nonlocal seccion_pendiente, ordinal_seccion
@@ -262,8 +275,11 @@ class ReconciliadorEcoDoppler:
                 if self.es_texto_permitido(linea):
                     continue
                 for id_campo, patron in _CAMPOS_HEADER.items():
-                    if patron.search(linea):
+                    if id_campo not in headers_inventariados and patron.search(linea):
                         hallazgos.append(HallazgoCobertura(id_campo, pagina_numero, clase="header"))
+                        headers_inventariados.add(id_campo)
+                if es_boilerplate_eco(linea):
+                    continue
                 etiqueta = _normalizar_etiqueta(linea)
                 if etiqueta == "MEDIDAS" or etiqueta.startswith("MEDIDAS "):
                     cerrar_seccion()

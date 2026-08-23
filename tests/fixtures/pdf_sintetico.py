@@ -262,36 +262,71 @@ def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
 
 
 def _encabezado_eco(pagina: pymupdf.Page, dni: str) -> None:
-    _insertar_texto(pagina, (42, 40), "ECOCARDIOGRAMA DOPPLER", 13)
-    _insertar_texto(pagina, (42, 60), "Paciente: " + _NOMBRE_SINTETICO + "    Documento: " + dni, 8)
-    _insertar_texto(pagina, (42, 74), "Nro. de Estudio: ECO-SINT-001    Fecha: " + _FECHA_SINTETICA, 8)
-    _insertar_texto(pagina, (42, 88), "Medico Solicitante: Profesional Sintetico    Peso: 70 kg    Altura: 165 cm", 8)
-    _insertar_texto(pagina, (42, 102), "Superficie Corporal: 1.75 m2", 8)
+    _insertar_texto(pagina, (180, 35), "SERVICIO DE ECOCARDIOGRAFIA", 13)
+    _insertar_texto(pagina, (170, 55), "ECOGRAFIA DOPPLER COLOR CARDIACA", 11)
+    _insertar_texto(
+        pagina,
+        (42, 76),
+        f"PACIENTE: {_NOMBRE_SINTETICO}      Documento: {dni}      Fecha Estudio: 15/01/2024",
+        8,
+    )
+    _insertar_texto(
+        pagina,
+        (42, 92),
+        "Edad: 44 anos      Nº ESTUDIO: ECO-SINT-001      Peso: 70 kg      Altura: 165 cm      S.C. 1.75 m2",
+        8,
+    )
+    _insertar_texto(pagina, (42, 106), "Medico Solicitante: Profesional Sintetico", 8)
     pagina.draw_line((42, 112), (574, 112), color=(0.2, 0.2, 0.2), width=0.6)
 
 
 def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
     primera = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
     _encabezado_eco(primera, dni)
-    _insertar_texto(primera, (42, 142), "MEDIDAS", 10)
+    _insertar_texto(primera, (250, 128), "VALORES HALLADOS", 9)
     _tabla(
         primera,
-        pymupdf.Rect(42, 158, 574, 320),
-        ("Medida", "Valor", "Unidad", "Referencia"),
-        (("AO", "31", "mm", "Sintetica"), ("AI", "35", "mm", "Sintetica"), ("DDVI", "50", "mm", "Sintetica"), ("DSVI", "32", "mm", "Sintetica"), ("FA", "36", "%", "Sintetica"), ("Septum", "9", "mm", "Sintetica"), ("P. Posterior", "9", "mm", "Sintetica")),
+        pymupdf.Rect(42, 140, 574, 270),
+        ("MEDIDAS", "VALOR", "VALOR NORMAL", "MEDIDAS", "VALOR", "VALOR NORMAL"),
+        (
+            ("AO", "31 mm", "< 41 mm", "SEPTUM", "9 mm", "< 11 mm"),
+            ("AI", "35 mm", "< 40 mm", "P.POSTERIOR", "9 mm", "< 11 mm"),
+            ("DDVI", "50 mm", "< 52 mm", "VD", "NORMAL", ""),
+            ("DSVI", "32 mm", "VARIABLE", "PULMON", "NORMAL", ""),
+            ("FA", "36 %", "> 30 %", "AD", "NORMAL", ""),
+        ),
+        tamano=6,
     )
-    _insertar_texto(primera, (42, 355), "MOTILIDAD SEGMENTARIA", 10)
-    _insertar_texto(primera, (42, 372), "Descripcion sintetica sin interpretacion clinica.", 8)
+    bloques = (
+        (300, "MOTILIDAD SEGMENTARIA", "Descripcion sintetica de motilidad."),
+        (345, "AURICULAS", "Descripcion sintetica de ambas auriculas."),
+        (390, "VALVULAS CARDIACAS", ""),
+        (415, "AORTICA", "Descripcion sintetica de valvula aortica."),
+        (455, "MITRAL", "Descripcion sintetica de valvula mitral."),
+        (495, "PULMONAR", "Descripcion sintetica de valvula pulmonar."),
+        (535, "TRICUSPIDEA", "Descripcion sintetica de valvula tricuspidea."),
+        (575, "PERICARDIO", "Descripcion sintetica del pericardio."),
+        (615, "EVALUACION DE FLUJOS POR DOPPLER", ""),
+        (640, "FLUJO AORTICO", "Descripcion sintetica del flujo aortico."),
+        (680, "FLUJO MITRAL", "Descripcion sintetica del flujo mitral."),
+        (720, "FLUJO PULMONAR", ""),
+    )
+    for y, titulo, contenido in bloques:
+        _insertar_texto(primera, (42, y), titulo, 8)
+        if contenido:
+            _insertar_texto(primera, (62, y + 15), contenido, 7)
     _pie_pagina(primera, 1, 2)
 
     segunda = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
     _encabezado_eco(segunda, dni)
-    _insertar_texto(segunda, (42, 124), "VALVULAS", 10)
-    for y, titulo in ((140, "VALVULA MITRAL"), (220, "VALVULA AORTICA"), (300, "VALVULA TRICUSPIDEA"), (380, "VALVULA PULMONAR"), (460, "PERICARDIO"), (540, "DOPPLER"), (620, "CONCLUSIONES")):
-        _insertar_texto(segunda, (42, y), titulo, 10)
-        segunda.draw_rect(pymupdf.Rect(42, y + 12, 574, y + 66), color=(0.55, 0.55, 0.55), width=0.5)
-        _insertar_texto(segunda, (50, y + 32), "Seccion sintetica para validar estructura y orden de texto.", 8)
-    _insertar_texto(segunda, (42, 720), "Medico Informante: Profesional Sintetico    Matricula: MAT-SINT-001", 8)
+    _insertar_texto(segunda, (62, 135), "Descripcion sintetica del flujo pulmonar.", 7)
+    _insertar_texto(segunda, (42, 165), "FLUJO TRICUSPIDEO", 8)
+    _insertar_texto(segunda, (62, 180), "Descripcion sintetica del flujo tricuspideo.", 7)
+    _insertar_texto(segunda, (250, 220), "CONCLUSIONES", 9)
+    _insertar_texto(segunda, (62, 245), "Conclusiones sinteticas sin validez clinica.", 8)
+    _insertar_texto(segunda, (360, 330), "PROFESIONAL MEDICO SINTETICO", 8)
+    _insertar_texto(segunda, (390, 348), "Matricula W 9001", 8)
+    _insertar_texto(segunda, (365, 370), "DIAGNOSTICO POR IMAGENES", 8)
     _pie_pagina(segunda, 2, 2)
 
 
