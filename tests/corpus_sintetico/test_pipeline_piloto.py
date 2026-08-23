@@ -21,7 +21,7 @@ def test_piloto_adversarial_ejecuta_cincuenta_casos_punta_a_punta(corridas_pilot
     resultado, _segundo = corridas_piloto
 
     assert resultado.casos == 50
-    assert resultado.archivos_en_disco == 154
+    assert resultado.pdfs_entrada == 154
     assert resultado.documentos_inventariados == 149
     assert resultado.episodios_aprobados == 40
     assert resultado.documentos_publicados == 120

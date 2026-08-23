@@ -47,7 +47,7 @@ el lote, y cada **PDF original** se retiene cifrado aparte como fuente de verdad
 Antes de medir 1k, 10k o 100k documentos, el repositorio ejecuta un piloto offline de 50 casos
 sintéticos deterministas. Incluye episodios completos, el límite exacto de siete días, separación
 a ocho días, estudios faltantes, asociaciones ambiguas, duplicados por huella y PDFs corruptos.
-Los 154 archivos físicos se reducen a 149 entradas únicas y recorren el pipeline real hasta una
+Los 154 PDFs de entrada se reducen a 149 entradas únicas y recorren el pipeline real hasta una
 salida temporal en memoria; el oráculo conserva sólo estados y conteos, nunca nombres, DNI ni
 fechas de nacimiento.
 
@@ -69,16 +69,45 @@ siete y ocho días, faltantes, asociaciones ambiguas y un archivo corrupto. En l
 del 23 de agosto de 2026 se inventariaron 998 documentos únicos: 972 fueron aprobados dentro de
 324 episodios y 26 quedaron en cuarentena según el oráculo; no hubo reintentos ni PII en salida.
 
-La corrida corregida tardó 226,54 segundos: 4,414 archivos físicos/s y 4,405 documentos únicos/s.
+La corrida corregida tardó 226,54 segundos: 4,414 PDFs de entrada/s y 4,405 documentos únicos/s.
 El pico *lifetime* del proceso fue 145.432.576 bytes. Cada ejecución usa un directorio UUID aislado
 y agrega sus métricas al reporte estable, por lo que puede repetirse sin mezclar corpus anteriores.
+El workspace conserva 1.005 PDFs de staging y 1.000 PDFs de entrada durante la corrida: esta
+medición incluye ese doble I/O y no presenta las entradas como el total de archivos almacenados.
 
 Son reales la extracción PyMuPDF, detección, parser, reconciliación, coordinación y construcción
 anonimizada. El motor PII/Presidio-spaCy, HMAC/resolutor, cola, PostgreSQL y almacenamiento productivo
 se reemplazan por adaptadores offline o no participan. La compuerta compara todos los literales
 sintéticos efímeros contra los registros finales, pero **no valida el NER institucional**. Por eso
-esta medición no demuestra todavía capacidad institucional. 10k/100k siguen pendientes y 100k no
-se ejecutará en CI.
+esta medición no demuestra todavía capacidad institucional. El escalón 10k se documenta a
+continuación y 100k permanece pendiente; 100k no se ejecutará en CI.
+
+## Segundo escalón de carga: 10.000 PDFs
+
+El perfil 10k escala la misma composición y el mismo oráculo del perfil 1k, sin duplicar la lógica
+del pipeline. Genera exactamente 10.000 PDFs de entrada en una carpeta UUID aislada: 9.980 son
+únicos y 20 son duplicados intencionales. Mantiene proporcionalmente completos, límites de siete
+y ocho días, faltantes, ambigüedad y corrupción. Es un comando local deliberado y no integra la
+suite normal de CI. Además conserva 10.050 PDFs en `generados/`: el workspace ocupa 20.050 PDFs
+entre staging y entrada, y ambos flujos de escritura forman parte del tiempo end-to-end.
+
+La ejecución del 23 de agosto de 2026 aprobó 3.240 episodios y 9.720 documentos. Los otros 260
+documentos coincidieron con las cuarentenas esperadas: 80 por cobertura ambigua, 170 por cobertura
+incompleta y 10 por parseo incompleto. Hubo cero fallos inesperados, cero reintentos y cero
+literales PII sintéticos en los registros finales; el oráculo completo fue aprobado.
+
+El tiempo end-to-end fue 2.874,23 segundos (47,90 minutos), con 3,479 PDFs de entrada/s y 3,472
+documentos únicos/s. La memoria pico *lifetime* del proceso fue 315.772.928 bytes. El preflight
+considera tanto staging como entrada: estimó 1.085.851.860 bytes de disco, 1.454.325.760 bytes de
+memoria y 2.265,41137 segundos, frente a 888.964.816.896 bytes de disco y 6.227.922.944 bytes de
+memoria disponibles al migrar el reporte. Estas métricas agregadas y su aprobación quedan allí;
+PDFs y reporte se mantienen bajo `tmp/carga_10000/`, fuera de Git.
+
+Esta prueba aumenta la evidencia de volumen, pero conserva los límites del escalón 1k: mide
+extracción, detección de tipo, parsers, reconciliación, coordinación y construcción reales con
+adaptadores offline. No mide Presidio-spaCy institucional, HMAC real, Celery/Redis, PostgreSQL ni
+storage productivo. Por eso NO certifica todavía la capacidad del despliegue institucional; 100k
+y la prueba sobre la infraestructura final siguen pendientes.
 
 ## Librerías principales
 

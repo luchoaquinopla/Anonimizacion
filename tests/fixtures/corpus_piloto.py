@@ -20,7 +20,7 @@ from .pdf_sintetico import crear_pdf_corrupto, generar_corpus_clinico
 @dataclass(frozen=True)
 class ResumenPiloto:
     casos: int
-    archivos_en_disco: int
+    pdfs_entrada: int
     documentos_inventariados: int
     episodios_aprobados: int
     documentos_publicados: int
@@ -137,7 +137,7 @@ def contar_coincidencias_pii(registros: list[object], valores_pii: list[str]) ->
 def ejecutar_corpus_sintetico(
     directorio: Path, *, semilla: int, tipos_caso: tuple[str, ...], duplicados: int
 ) -> ResumenPiloto:
-    entrada, archivos_en_disco, valores_pii = _crear_entrada(
+    entrada, pdfs_entrada, valores_pii = _crear_entrada(
         directorio, semilla, tipos_caso, duplicados
     )
     inventario = InventariadorDocumentos((directorio,), 10 * 1024 * 1024).inventariar(entrada)
@@ -165,7 +165,7 @@ def ejecutar_corpus_sintetico(
     pii_en_salida = contar_coincidencias_pii(destino.registros, valores_pii)
     return ResumenPiloto(
         casos=len(tipos_caso),
-        archivos_en_disco=archivos_en_disco,
+        pdfs_entrada=pdfs_entrada,
         documentos_inventariados=len(items),
         episodios_aprobados=len(destino.episodios),
         documentos_publicados=sum(isinstance(resultado, ExitoDocumento) for resultado in resultados),

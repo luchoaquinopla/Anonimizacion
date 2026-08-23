@@ -58,12 +58,15 @@ Chain strategy: feature-branch-chain
   - [x] Compuerta global 1:1 completa para laboratorio, ECG y ecocardiograma; 4.2 permanece pendiente.
 - [x] 4.2a **RED/GREEN**: ejecutar un corpus piloto adversarial determinista de 50 casos para completos, ventana de 7/8 días, faltantes, duplicados, ambigüedad, corruptos y ausencia de PII, antes de escalar volumen.
 - [x] 4.3a crear `tests/carga/ejecutar_corpus.py` y ejecutar el escalón de 1.000 PDFs con métricas seguras de tiempo, throughput, memoria, reintentos, fallos y deduplicación.
-- [ ] 4.3b ejecutar los escalones 10k/100k sobre hardware representativo; 100k nunca en CI.
+- [x] 4.3b ejecutar el escalón de 10k sobre hardware local, con perfil proporcional, oráculo completo y reporte seguro; no incluirlo en CI normal.
+  - [x] Corregir la semántica de métricas: separar PDFs de entrada y staging, expresar throughput por entrada y persistir preflight agregado.
+- [ ] 4.3c ejecutar el escalón de 100k sólo sobre hardware representativo; nunca en CI.
 - [ ] 4.4 **RED**: registrar metadata segura de eco en `observabilidad/diagnostico_seguro.py` y fixture mínima que reproduce la cuarentena.
 - [ ] 4.5 **GREEN/REFACTOR**: corregir `parseo/eco_doppler.py` sólo si 4.4 confirma causa; mantener variantes desconocidas en cuarentena.
 - [ ] 4.6 actualizar `docs/pipeline.md` y la arquitectura/bitácora de Obsidian al cerrar cada work unit.
   - [x] 4.6a actualizar `docs/pipeline.md` con alcance, resultados y límite de capacidad del piloto 4.2a.
   - [x] 4.6c actualizar `docs/pipeline.md` con el resultado y límites del escalón 1k.
+  - [x] 4.6d actualizar `docs/pipeline.md` con el resultado y límites del escalón 10k.
   - [ ] 4.6b reflejar este hito y el cambio de reconciliación en arquitectura/bitácora de Obsidian.
 
 ## Phase 5: Verificación

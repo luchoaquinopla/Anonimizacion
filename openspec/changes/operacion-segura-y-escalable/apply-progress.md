@@ -252,7 +252,7 @@ Se incorporó una etapa intermedia de 50 casos deterministas antes de las prueba
 |---|---|---|---|---|
 | 4.2a, piloto adversarial | 31 pruebas relevantes pasaban; 1 omitida por privilegios de symlink en Windows. | El test falló porque no existía `tests.fixtures.corpus_piloto`; luego tres ECG válidos expusieron `evidencia_ambigua` por repetir una cifra fuera de su campo. | El piloto produce 40 episodios aprobados, 120 documentos publicados y 29 cuarentenas esperadas. | Dos corridas completas con la misma semilla coinciden; la red se bloquea, el oráculo no contiene PII y cinco copias se omiten por huella. La asociación estructural ahora prevalece sobre coincidencias numéricas incidentales. |
 
-Evidencia final del piloto: 154 archivos físicos, 149 documentos inventariados, 8 fallos de asociación ambigua, 19 por estudios faltantes y 2 PDFs corruptos. Las 17 pruebas focales pasan y la suite completa queda en `416 passed, 1 skipped`; el único omitido requiere privilegios de enlaces simbólicos en Windows. Este resultado valida decisiones y conteos funcionales, no capacidad: los escalones 1k/10k/100k de 4.3 siguen pendientes.
+Evidencia final del piloto: 154 PDFs de entrada, 149 documentos inventariados, 8 fallos de asociación ambigua, 19 por estudios faltantes y 2 PDFs corruptos. Las 17 pruebas focales pasan y la suite completa queda en `416 passed, 1 skipped`; el único omitido requiere privilegios de enlaces simbólicos en Windows. Este resultado valida decisiones y conteos funcionales, no capacidad: los escalones 1k/10k/100k de 4.3 siguen pendientes.
 
 ### Corrección posterior a auditoría del piloto
 
@@ -264,12 +264,32 @@ También se agregaron regresiones Eco: una asociación estructurada válida prev
 
 ## Entrega 13 — Primer escalón de carga de 1.000 PDFs
 
-Se agregó un runner reproducible que reutiliza las plantillas calibradas y el pipeline del piloto. El plan contiene 333 casos y exactamente 1.000 archivos: 320 completos, 4 en el límite de siete días, 3 separados por ocho días, 3 faltantes, 2 ambiguos, 1 corrupto y 2 duplicados intencionales. Cada generación usa semilla/fecha propias; los duplicados no sustituyen el volumen.
+Se agregó un runner reproducible que reutiliza las plantillas calibradas y el pipeline del piloto. El plan contiene 333 casos y exactamente 1.000 PDFs de entrada: 320 completos, 4 en el límite de siete días, 3 separados por ocho días, 3 faltantes, 2 ambiguos, 1 corrupto y 2 duplicados intencionales. Cada generación usa semilla/fecha propias; los duplicados no sustituyen el volumen.
 
 | Tarea | Safety net | RED | GREEN | Triangulación / refactor |
 |---|---|---|---|---|
 | 4.3a, carga 1k | Las 3 pruebas del piloto pasaban en 70,26 s. | Primero faltaba `tests.carga.ejecutar_corpus`; la auditoría posterior exigió CLI reejecutable, oráculo completo y métricas no ambiguas. | Cinco pruebas cubren plan/oráculo exactos, desvío rechazado, corrida real pequeña y dos ejecuciones aisladas con reporte agregado. | La generación/ejecución común se extrajo del piloto; memoria y throughput explicitan su denominador/alcance y 10k/100k quedan fuera. |
 
-La ejecución corregida produjo 1.000 PDFs físicos y 998 únicos: 324 episodios/972 documentos aprobados; 26 cuarentenas esperadas (`cobertura_ambigua`: 8, `cobertura_incompleta`: 17, `parseo_incompleto`: 1), 0 fallos inesperados, 2 duplicados, 0 reintentos y 0 PII. Duró 226,541137 s, con 4,414 archivos físicos/s, 4,405 únicos/s y pico lifetime de 145.432.576 bytes. Cada corrida usa un UUID y el reporte estable agrega historiales.
+La ejecución corregida produjo 1.000 PDFs de entrada y 998 documentos únicos: 324 episodios/972 documentos aprobados; 26 cuarentenas esperadas (`cobertura_ambigua`: 8, `cobertura_incompleta`: 17, `parseo_incompleto`: 1), 0 fallos inesperados, 2 duplicados, 0 reintentos y 0 PII. Duró 226,541137 s, con 4,414 PDFs de entrada/s, 4,405 únicos/s y pico lifetime de 145.432.576 bytes. El workspace conserva además 1.005 PDFs de staging, por lo que el doble I/O forma parte del tiempo medido. Cada corrida usa un UUID y el reporte estable agrega historiales.
 
 La medición ejecuta extracción, detección, parser, reconciliación, coordinación y constructor reales. Usa motor PII offline y resolutor determinista; no mide Presidio-spaCy, HMAC real, Celery/Redis, PostgreSQL ni storage productivo. Los literales sintéticos efímeros se contrastan contra los registros finales, sin presentar ese control como evaluación del NER institucional.
+
+## Entrega 14 — Escalón de carga de 10.000 PDFs
+
+El runner común ahora genera perfiles mediante una composición base y escala el oráculo, sin duplicar el pipeline ni los conteos. El perfil 10k conserva la proporción del escalón 1k: 3.200 completos, 40 en el límite de siete días, 30 separados por ocho días, 30 faltantes, 20 ambiguos, 10 corruptos y 20 duplicados intencionales. La entrada local `tests/carga/ejecutar_corpus_10000.py` no forma parte de CI.
+
+| Tarea | RED | GREEN | Ejecución / triangulación |
+|---|---|---|---|
+| 4.3b, carga 10k | El contrato falló al importar el perfil y el oráculo 10k inexistentes. | Seis pruebas focales pasan y validan composición, conteos, códigos y deduplicación esperada. | La corrida exacta aprobó el oráculo completo y mantuvo aislamiento UUID, PII efímera, cuarentenas esperadas y fallos inesperados separados. |
+
+Preflight recalculado al migrar el reporte: 888.964.816.896 bytes de disco y 6.227.922.944 bytes de RAM disponibles; 1.085.851.860 bytes de disco para staging + entrada, 1.454.325.760 bytes de memoria y 2.265,41137 s estimados. La ejecución produjo 10.000 PDFs de entrada, 10.050 PDFs de staging y 9.980 documentos únicos: 3.240 episodios/9.720 documentos aprobados; 260 cuarentenas esperadas (`cobertura_ambigua`: 80, `cobertura_incompleta`: 170, `parseo_incompleto`: 10), 0 fallos inesperados, 20 duplicados, 0 reintentos y 0 PII literal en salida. Duró 2.874,229822 s, con 3,479 PDFs de entrada/s, 3,472 únicos/s y pico lifetime de 315.772.928 bytes. El reporte seguro conserva el preflight agregado y su estado aprobado.
+
+### Corrección semántica de métricas de carga
+
+La revisión confirmó que `generados/` y `entrada/` coexisten durante la corrida. Los campos del reporte se renombraron a `pdfs_entrada` y `throughput_pdfs_entrada_segundo`, y se agregó `pdfs_staging_generados`; no se presenta la cantidad de entrada como total físico del workspace. El preflight reproducible considera ambas áreas y persiste sólo espacio/memoria disponibles, estimaciones de disco/memoria/tiempo y estado aprobado. Los reportes locales anteriores se migraron de forma atómica sin repetir la ejecución 10k.
+
+| Corrección | RED | GREEN / migración |
+|---|---|---|
+| Semántica entrada/staging y preflight | Cuatro pruebas fallaron al exigir campos separados y preflight; un RED adicional confirmó que el resumen piloto todavía exponía `archivos_en_disco`. | 10 pruebas de carga/piloto pasan. Los reportes 1k/10k fueron migrados y validados localmente, sin valores sensibles ni nueva corrida 10k. |
+
+El alcance técnico sigue siendo el mismo que en 1k: extracción, detección de tipo, parser, reconciliación, coordinación y constructor reales; motor PII offline y resolutor determinista; sin medir Presidio-spaCy, HMAC real, Celery/Redis, PostgreSQL ni storage productivo. El escalón 100k queda pendiente y nunca debe ejecutarse en CI.
