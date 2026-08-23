@@ -231,3 +231,15 @@ La equivalencia exacta cubre 10 medidas en su orden (7 numéricas y 3 textuales)
 Verificación final: 51 pruebas focales y la suite completa (`409 passed, 1 skipped`) sin regresiones; el único omitido requiere privilegios de enlaces simbólicos en Windows.
 
 La compuerta global sigue bloqueada únicamente por ECG (4.1b); 4.2 no debe comenzar antes de completarla.
+
+## Compuerta 1:1 — ECG aprobado de punta a punta
+
+La referencia autorizada se procesó sólo localmente y se resumió sin valores. El original atraviesa detección, parseo, reconciliación, política PII y construcción anonimizada con cinco métricas textuales extraíbles. El sintético anterior era detectado como ECG, pero su cabecera idealizada no correspondía al layout posicional Mortara y terminaba en `parseo_incompleto`.
+
+| Tarea | Safety net | RED | GREEN | Triangulación / refactor |
+|---|---|---|---|---|
+| 4.1b, compuerta ECG | 21 pruebas de parser, reconciliación y fixture pasaban. | La compuerta no existía y el diagnóstico confirmó la cuarentena del sintético durante parseo. | La compuerta y el fixture recalibrado pasan; original y sintético finalizan aprobados hasta PII/anonimización. | Dos semillas y una cabecera incompleta verifican el contrato; 25 pruebas focales cubren parser, reconciliación, aviso tolerado y corpus. El layout se renderizó para separar visualmente métricas y trazado. |
+
+La equivalencia segura cubre los campos de cabecera, cinco métricas en orden (`Vent. rate`, PR, QRS, QT/QTc y P-R-T), su normalización numérica escalar/par/triple, procedencia en página 1, `PID / NAME MISMATCH`, categorías y conteos PII y decisión final. La imagen de trazado queda declarada fuera del contrato clínico: sólo se prueba la presencia de una grilla y figura no clínica, nunca equivalencia de señal o interpretación médica. Reporte local seguro: `tmp/calibracion_ecg/reporte_seguro.json` (no versionado).
+
+Verificación final: 25 pruebas focales y la suite completa (`413 passed, 1 skipped`) sin regresiones; el único omitido requiere privilegios de enlaces simbólicos en Windows. Con laboratorio, ecocardiograma y ECG aprobados, la compuerta global 4.1a–4.1c queda completa. La prueba masiva 4.2 continúa pendiente y no se inició en esta entrega.

@@ -9,11 +9,11 @@ por la prueba contractual `test_corpus_conserva_campos_y_secciones_contractuales
 
 | Etiqueta o sección | Uso | Estado |
 |---|---|---|
-| 12SL, PID, paciente y fecha | Detección, PII y reconciliación | Cubierto |
-| Age, Sex | Extracción de cabecera | Cubierto |
-| Technician | PII de profesional | Cubierto |
-| Vent. rate, PR interval, QRS duration, QT/QTc, P-R-T axes | Métricas extraíbles | Cubierto |
-| PID / NAME MISMATCH | Aviso tolerado por parser | Cubierto |
+| MORTARA/12SL, nombre posicional `~,`, ID y fecha | Detección, PII y reconciliación | Cubierto 1:1 |
+| Fecha de nacimiento, edad y sexo posicionales | Extracción de cabecera | Cubierto 1:1 |
+| Technician, Test ind y Ordered by | Cabecera técnica y médico derivante | Cubierto 1:1 |
+| Vent. rate, PR interval, QRS duration, QT/QTc, P-R-T axes | Métricas textuales extraíbles | Cubierto 1:1 |
+| PID / NAME MISMATCH | Aviso tolerado por parser | Cubierto 1:1 |
 | 25 mm/s, 10 mm/mV, 40 Hz | Calibración / layout | Cubierto |
 | Grilla y trazado | Contrato visual | Cubierto, etiquetado como no clínico |
 | Señal cruda o diagnóstico clínico | Fuera del PDF textual | Omitido deliberadamente |

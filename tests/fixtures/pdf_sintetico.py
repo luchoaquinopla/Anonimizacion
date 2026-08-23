@@ -11,6 +11,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 
 import pymupdf
@@ -129,20 +130,23 @@ def _tabla(
 
 def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
     pagina = documento.new_page(width=_TAMANO_ECG[0], height=_TAMANO_ECG[1])
-    _insertar_texto(pagina, (34, 28), "12SL - ECG RECORD", 13)
-    _insertar_texto(pagina, (34, 48), "Paciente: " + _NOMBRE_SINTETICO, 8)
-    _insertar_texto(pagina, (34, 62), "PID: " + dni + "    Fecha: " + _FECHA_SINTETICA, 8)
-    _insertar_texto(pagina, (34, 76), "Age: 44    Sex: F", 8)
-    _insertar_texto(pagina, (560, 48), "Technician: Operador Sintetico", 8)
-    _insertar_texto(pagina, (560, 62), "PID / NAME MISMATCH", 8)
-    _tabla(
+    _insertar_texto(pagina, (34, 26), "MORTARA ELI 380 - 12SL ECG REPORT", 11)
+    _insertar_texto(
         pagina,
-        pymupdf.Rect(34, 80, 758, 126),
-        ("Vent. rate", "PR interval", "QRS duration", "QT/QTc", "P-R-T axes"),
-        (("70 bpm", "160 ms", "92 ms", "390/420 ms", "45 60 30"),),
-        tamano=8,
+        (34, 46),
+        f"{_NOMBRE_SINTETICO}~,      ID:ECG-SINT-{dni[-4:]}      15-JAN-2024  08:30:00      INSTITUTO FICTICIO   ROUTINE RECORD",
+        7,
     )
-    grilla = pymupdf.Rect(34, 146, 758, 510)
+    _insertar_texto(pagina, (34, 62), "02-FEB-1980 (43 yr)      Female      Unknown", 7)
+    _insertar_texto(pagina, (34, 76), "*** PID / NAME MISMATCH ***", 7)
+    _insertar_texto(pagina, (34, 90), "Room:      Loc:3", 7)
+    medidas = (
+        "BPM", "70", "Vent. rate", "ms", "160", "PR interval", "ms", "92",
+        "QRS duration", "ms", "QT/QTc", "390/420", "45", "60", "30", "P-R-T axes",
+    )
+    for indice, linea in enumerate(medidas):
+        _insertar_texto(pagina, (34, 112 + indice * 10), linea, 6)
+    grilla = pymupdf.Rect(130, 112, 758, 510)
     pagina.draw_rect(grilla, color=(0.75, 0.35, 0.35), width=0.6)
     for x in range(44, 759, 10):
         pagina.draw_line((x, grilla.y0), (x, grilla.y1), color=(0.96, 0.82, 0.82), width=0.25)
@@ -150,16 +154,19 @@ def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
         pagina.draw_line((grilla.x0, y), (grilla.x1, y), color=(0.96, 0.82, 0.82), width=0.25)
     for derivacion in range(6):
         base = 172 + derivacion * 54
-        _insertar_texto(pagina, (40, base), f"Derivacion {derivacion + 1}", 7)
+        _insertar_texto(pagina, (136, base), f"Derivacion {derivacion + 1}", 7)
         puntos: list[tuple[float, float]] = []
-        for x in range(95, 750, 8):
+        for x in range(196, 750, 8):
             onda = ((x // 8 + derivacion) % 18) - 9
             y = base - (onda if abs(onda) < 4 else onda * 0.35)
             puntos.append((x, y))
-        for inicio, fin in zip(puntos, puntos[1:]):
+        for inicio, fin in pairwise(puntos):
             pagina.draw_line(inicio, fin, color=(0.1, 0.1, 0.1), width=0.55)
     _insertar_texto(pagina, (282, 530), "TRAZADO SINTETICO - NO CLINICO", 8)
     _insertar_texto(pagina, (34, 548), "25 mm/s    10 mm/mV    40 Hz", 8)
+    _insertar_texto(pagina, (430, 548), "Technician: Operador Sintetico", 7)
+    _insertar_texto(pagina, (430, 560), "Test ind: Routine", 7)
+    _insertar_texto(pagina, (34, 574), "Ordered by: - Dr Profesional Sintetico      Unconfirmed", 7)
     _pie_pagina(pagina, 1, 1)
 
 

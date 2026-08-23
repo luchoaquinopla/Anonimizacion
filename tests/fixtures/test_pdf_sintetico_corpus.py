@@ -110,13 +110,15 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
 
     contratos = {
         "ecg": (
+            "MORTARA",
             "12SL",
-            "Paciente:",
-            "PID:",
-            "Fecha:",
-            "Age:",
-            "Sex:",
+            "~,",
+            "ID:",
+            "(43 yr)",
+            "Female",
             "Technician:",
+            "Test ind:",
+            "Ordered by:",
             "Vent. rate",
             "PR interval",
             "QRS duration",
