@@ -166,29 +166,90 @@ def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
 def _encabezado_laboratorio(pagina: pymupdf.Page, dni: str) -> None:
     _insertar_texto(pagina, (42, 38), "LABORATORIO DE ANALISIS CLINICOS", 13)
     _insertar_texto(pagina, (42, 58), "Apellido y Nombre: " + _NOMBRE_SINTETICO, 8)
-    _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    Fecha de Nacimiento: 1980-02-02    Edad: 44", 8)
-    _insertar_texto(pagina, (42, 86), "Medico Derivante: Profesional Sintetico    Nro. de Peticion: PET-SINT-001", 8)
-    _insertar_texto(pagina, (42, 100), "Fecha: " + _FECHA_SINTETICA + "    Hora de Extraccion: 08:30    Origen: Ambulatorio", 8)
+    _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    F.Nacimiento : 02/02/1980    Edad: 44", 8)
+    _insertar_texto(pagina, (42, 86), "Medico: Profesional Sintetico    No Peticion: PET-SINT-001", 8)
+    _insertar_texto(pagina, (42, 100), "Fecha: 15/01/2024    Hora de Extraccion: 08:30    Origen: Ambulatorio", 8)
     pagina.draw_line((42, 110), (553, 110), color=(0.2, 0.2, 0.2), width=0.6)
 
 
+def _tabla_laboratorio(
+    pagina: pymupdf.Page,
+    filas: tuple[tuple[str, str, str, str], ...],
+    *,
+    y_inicio: float,
+    y_fin: float,
+) -> None:
+    posiciones_x = (42, 330, 390, 460, 553)
+    alto_fila = (y_fin - y_inicio) / (len(filas) + 1)
+    pagina.draw_rect(pymupdf.Rect(42, y_inicio, 553, y_fin), color=(0.2, 0.2, 0.2), width=0.7)
+    for x in posiciones_x[1:-1]:
+        pagina.draw_line((x, y_inicio), (x, y_fin), color=(0.45, 0.45, 0.45), width=0.4)
+    for indice in range(1, len(filas) + 1):
+        y = y_inicio + indice * alto_fila
+        pagina.draw_line((42, y), (553, y), color=(0.45, 0.45, 0.45), width=0.4)
+    encabezados = ("Pruebas", "Resultado", "Unidades", "Valores de Referencia")
+    for columna, encabezado in enumerate(encabezados):
+        _insertar_texto(pagina, (posiciones_x[columna] + 4, y_inicio + 11), encabezado, 6)
+    for indice, fila in enumerate(filas, start=1):
+        for columna, valor in enumerate(fila):
+            if valor:
+                _insertar_texto(
+                    pagina,
+                    (posiciones_x[columna] + 4, y_inicio + indice * alto_fila + 11),
+                    valor,
+                    6,
+                )
+
+
 def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
-    paginas = (
-        ("HEMATOLOGIA", (("Hemoglobina", "14.2", "g/dL", "12.0 - 16.0"), ("Hematocrito", "42", "%", "36 - 46"))),
-        ("HEMOSTASIA\nQUIMICA CLINICA", (("Tiempo de prueba", "12", "s", "Sintetico"), ("Glucosa", "90", "mg/dL", "70 - 110"))),
-        ("IONOGRAMA", (("Sodio", "140", "mEq/L", "135 - 145"), ("Potasio", "4.1", "mEq/L", "3.5 - 5.1"))),
+    paginas: tuple[tuple[tuple[str, str, str, str], ...], ...] = (
+        (
+            ("HEMATOLOGIA", "", "", ""),
+            ("Eritrosedimentacion", "10", "mm/h", "1 - 20"),
+            ("HEMOGRAMA", "", "", ""),
+            ("Hematocrito", "42", "%", "36 - 46"),
+            ("Globulos Rojos", "4500", "mil/uL", "4000 - 5500"),
+            ("Hemoglobina", "14.2", "g/dL", "12 - 16"),
+            ("Volumen Corpuscular Medio", "90", "fL", "80 - 100"),
+            ("Hemoglobina Corpuscular Media", "30", "pg", "27 - 33"),
+            ("Conc. de Hba Corpuscular Media", "33", "g/dL", "32 - 36"),
+            ("RDW-SD", "44", "fL", "37 - 54"),
+            ("RDW-CV", "13", "%", "11 - 15"),
+            ("Plaquetas", "250", "mil/uL", "150 - 450"),
+            ("Volumen Plaquetario Medio", "10", "fL", "7 - 12"),
+            ("Globulos Blancos", "7000", "/uL", "4000 - 11000"),
+            ("FORMULA LEUCOCITARIA", "", "", ""),
+            ("Neutrofilos", "55", "%", "40 - 70"),
+            ("Eosinofilos", "2", "%", "0 - 5"),
+            ("Basofilos", "1", "%", "0 - 2"),
+            ("Linfocitos", "35", "%", "20 - 45"),
+        ),
+        (
+            ("HEMOSTASIA", "", "", ""),
+            ("Tiempo de Protrombina", "12", "s", "10 - 14"),
+            ("RIN", "1", "", "0 - 2"),
+            ("Tiempo de Tromboplastina APTT", "30", "s", "25 - 40"),
+            ("R", "1", "", ""),
+            ("QUIMICA CLINICA", "", "", ""),
+            ("Glucemia", "90", "mg/dL", "70 - 110"),
+            ("Uremia", "30", "mg/dL", "15 - 45"),
+            ("Creatinina serica", "0.9", "mg/dL", ""),
+            ("Filtrado Glomerular Estimado (CKD-EPI 2021)", "102", "mL/min", ""),
+            ("Control cualitativo", "NO DETECTADO", "", ""),
+        ),
+        (
+            ("IONOGRAMA SERICO", "", "", ""),
+            ("Sodio", "140", "mEq/L", "135 - 145"),
+            ("Potasio", "4.1", "mEq/L", "3.5 - 5.1"),
+            ("Cloro", "103", "mEq/L", "98 - 107"),
+        ),
     )
-    for numero, (seccion, filas) in enumerate(paginas, start=1):
+    limites = ((130, 720), (130, 520), (130, 310))
+    for numero, filas in enumerate(paginas, start=1):
         pagina = documento.new_page(width=_TAMANO_LABORATORIO[0], height=_TAMANO_LABORATORIO[1])
         _encabezado_laboratorio(pagina, dni)
-        _insertar_texto(pagina, (42, 138), seccion, 10)
-        _tabla(
-            pagina,
-            pymupdf.Rect(42, 155, 553, 270),
-            ("Determinacion", "Resultado", "Unidades", "Valores de Referencia"),
-            filas,
-        )
-        _insertar_texto(pagina, (42, 305), "Resultados sinteticos para validacion de parser", 8)
+        _tabla_laboratorio(pagina, filas, y_inicio=limites[numero - 1][0], y_fin=limites[numero - 1][1])
+        _insertar_texto(pagina, (42, limites[numero - 1][1] + 25), "Resultados sinteticos para validacion de parser", 8)
         _pie_pagina(pagina, numero, len(paginas))
 
 

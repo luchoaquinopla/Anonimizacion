@@ -25,7 +25,8 @@ por la prueba contractual `test_corpus_conserva_campos_y_secciones_contractuales
 | Apellido y Nombre, DNI, fecha de nacimiento, edad | PII y reconciliación | Cubierto |
 | Médico derivante, petición, fecha, hora de extracción, origen | Cabecera y PII de profesional | Cubierto |
 | Determinación, resultado, unidades, valores de referencia | Tabla extraíble | Cubierto |
-| HEMATOLOGIA, HEMOSTASIA, QUIMICA CLINICA, IONOGRAMA | Secciones de parser | Cubierto |
+| HEMATOLOGIA, HEMOGRAMA, FORMULA LEUCOCITARIA, HEMOSTASIA, QUIMICA CLINICA | Secciones y subsecciones soportadas por parser | Cubierto 1:1 |
+| IONOGRAMA SERICO y fila cualitativa | Evidencia no soportada por parser | Cubierto; provoca cuarentena segura |
 | Encabezado y pie repetidos | Documento multipágina | Cubierto |
 
 ## Ecocardiograma Doppler

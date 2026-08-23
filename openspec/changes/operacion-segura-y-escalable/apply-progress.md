@@ -192,3 +192,20 @@ Se realizó un inventario seguro campo por campo: las tres referencias locales s
 La ampliación agrega únicamente etiquetas y datos ficticios relevantes para detección, parseo, anonimización o reconciliación: cabecera demográfica/técnica y métricas del ECG; datos administrativos y HEMOSTASIA para laboratorio; y cabecera, medidas, válvulas, pericardio y firma profesional para eco. La señal ECG no se declara como dato clínico: permanece como grilla y trazado sintético para validar geometría visual.
 
 Verificación visual: se regeneraron e inspeccionaron las seis páginas de `tmp/muestras_fieles/`. Pendientes 4.2–5.2.
+
+## Compuerta 1:1 — Laboratorio
+
+Se incorporó una calibración reproducible que ejecuta extracción nativa, detección de tipo, parseo, normalización estructural y reconciliación sobre cualquier PDF de laboratorio. El original autorizado se usó sólo localmente para derivar un contrato versionable de etiquetas, conteos y estados; CI ejecuta ese contrato exclusivamente contra el sintético.
+
+| Tarea | Safety net | RED | GREEN | Triangulación / refactor |
+|---|---|---|---|---|
+| 4.1a, compuerta de laboratorio | 40 pruebas focalizadas pasaban antes del cambio. | La compuerta no existía; después mostró que el sintético fallaba en parseo por etiquetas y formatos de fecha/petición incompatibles. | 8 pruebas de calibración/fixtures pasan y la comparación local alcanza 1.0 en campos, secciones y determinaciones para ambos documentos. | Se separaron resumen seguro, contrato y comparación; dos semillas verifican comportamiento y ausencia de valores identificatorios. |
+
+### Diferencias iniciales y corrección
+
+- El original era detectado y parseado; el sintético era detectado pero quedaba en cuarentena durante parseo.
+- Se alinearon las etiquetas reales de cabecera, formatos de fecha, petición, tabla multipágina, 24 determinaciones numéricas soportadas, subsecciones y conteos de unidad/referencia.
+- La plantilla conserva una fila cualitativa y `IONOGRAMA SERICO`, que hoy no son extraídos por el parser. El reconciliador los inventaría y por seguridad envía tanto el original como el sintético a cuarentena con `cobertura_incompleta` antes de PII/anonimización.
+- Por lo anterior, PII y anonimización figuran como `no_ejecutada_por_cuarentena`; el reporte sólo enumera campos de PII estructurada presentes, nunca valores.
+
+La compuerta de laboratorio queda aprobada. La compuerta global permanece pendiente y bloquea 4.2 hasta completar ECG y ecocardiograma (4.1b–4.1c).

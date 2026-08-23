@@ -62,7 +62,7 @@ def test_laboratorio_y_eco_preservan_paginacion_y_secciones_extraibles(tmp_path)
     assert "Valores de Referencia" in texto_laboratorio[0]
     assert "QUIMICA CLINICA" in texto_laboratorio[1]
     assert "Pagina 3 de 3" in texto_laboratorio[2]
-    assert texto_laboratorio[0].index("HEMATOLOGIA") < texto_laboratorio[0].index("Resultado")
+    assert texto_laboratorio[0].index("Resultado") < texto_laboratorio[0].index("HEMATOLOGIA")
     laboratorio.close()
 
     ecocardiograma = pymupdf.open(rutas["ecocardiograma"])
@@ -130,14 +130,14 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
         "laboratorio": (
             "Apellido y Nombre:",
             "DNI:",
-            "Fecha de Nacimiento:",
+            "F.Nacimiento :",
             "Edad:",
-            "Medico Derivante:",
-            "Nro. de Peticion:",
+            "Medico:",
+            "No Peticion:",
             "Fecha:",
             "Hora de Extraccion:",
             "Origen:",
-            "Determinacion",
+            "Pruebas",
             "Resultado",
             "Unidades",
             "Valores de Referencia",
