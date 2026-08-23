@@ -10,6 +10,11 @@ htmlcov/
 .venv/
 venv/
 
+# Artefactos locales y worktrees auxiliares
+/tmp/
+/.local-backups/
+/.worktrees/
+
 # PDFs reales o de prueba manual -- nunca deben vivir dentro del repo,
 # ver scripts/procesar_carpeta.py. Segunda defensa además de "usar una
 # carpeta fuera del repo": si alguna vez cae acá adentro, git la ignora.
