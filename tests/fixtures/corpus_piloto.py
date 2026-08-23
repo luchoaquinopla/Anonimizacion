@@ -29,6 +29,7 @@ class ResumenPiloto:
     registros_inspeccionados: int
     valores_pii_verificados: int
     pii_en_salida: int
+    reintentos: int
 
     def como_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -87,12 +88,14 @@ def _copiar(ruta: Path, entrada: Path, nombre: str) -> Path:
     return destino
 
 
-def _crear_entrada(directorio: Path, semilla: int) -> tuple[Path, int, list[str]]:
+def _crear_entrada(
+    directorio: Path, semilla: int, tipos_caso: tuple[str, ...], duplicados: int
+) -> tuple[Path, int, list[str]]:
     entrada = directorio / "entrada"
     generados = directorio / "generados"
     entrada.mkdir(parents=True)
     valores_pii: list[str] = []
-    for indice, tipo_caso in enumerate(_tipos_caso()):
+    for indice, tipo_caso in enumerate(tipos_caso):
         prefijo = f"caso-{indice:03d}"
         base = date(2024, 1, 1) + timedelta(days=indice * 20)
         fechas = _fechas(tipo_caso, base)
@@ -116,7 +119,7 @@ def _crear_entrada(directorio: Path, semilla: int) -> tuple[Path, int, list[str]
         if tipo_caso == "corrupto":
             corrupto = crear_pdf_corrupto(entrada / f"{prefijo}__ecocardiograma.pdf")
             corrupto.write_bytes(corrupto.read_bytes() + f"-{indice}".encode())
-        if indice < 5:
+        if indice < duplicados:
             _copiar(rutas["ecg"], entrada, f"zz-duplicado-{indice:03d}.pdf")
     return entrada, sum(1 for _ in entrada.glob("*.pdf")), valores_pii
 
@@ -131,19 +134,29 @@ def contar_coincidencias_pii(registros: list[object], valores_pii: list[str]) ->
     return sum(valor.casefold() in registro for registro in serializados for valor in valores_pii)
 
 
-def ejecutar_corpus_piloto(directorio: Path, *, semilla: int) -> ResumenPiloto:
-    entrada, archivos_en_disco, valores_pii = _crear_entrada(directorio, semilla)
+def ejecutar_corpus_sintetico(
+    directorio: Path, *, semilla: int, tipos_caso: tuple[str, ...], duplicados: int
+) -> ResumenPiloto:
+    entrada, archivos_en_disco, valores_pii = _crear_entrada(
+        directorio, semilla, tipos_caso, duplicados
+    )
     inventario = InventariadorDocumentos((directorio,), 10 * 1024 * 1024).inventariar(entrada)
     items = tuple(ItemLote(Path(artefacto.uri).stem, artefacto) for artefacto in inventario)
     destino = _DestinoMemoria()
     cuarentena = _CuarentenaMemoria()
+    reintentos = 0
+
+    def contar_reintento(_segundos: float) -> None:
+        nonlocal reintentos
+        reintentos += 1
+
     ejecutor = EjecutorPipeline(
         resolutor=object(),
         motor=_MotorPiiOffline(),
         pepper=b"pepper-piloto-sintetico",
         destino=destino,
         cuarentena=cuarentena,
-        dormir=lambda _segundos: None,
+        dormir=contar_reintento,
         resolver_claves=_resolver_claves,
         coordinar_episodios=coordinar_episodios,
     )
@@ -151,7 +164,7 @@ def ejecutar_corpus_piloto(directorio: Path, *, semilla: int) -> ResumenPiloto:
     codigos = Counter(error.codigo.value for error in cuarentena.errores)
     pii_en_salida = contar_coincidencias_pii(destino.registros, valores_pii)
     return ResumenPiloto(
-        casos=len(_tipos_caso()),
+        casos=len(tipos_caso),
         archivos_en_disco=archivos_en_disco,
         documentos_inventariados=len(items),
         episodios_aprobados=len(destino.episodios),
@@ -161,4 +174,11 @@ def ejecutar_corpus_piloto(directorio: Path, *, semilla: int) -> ResumenPiloto:
         registros_inspeccionados=len(destino.registros),
         valores_pii_verificados=len(valores_pii),
         pii_en_salida=pii_en_salida,
+        reintentos=reintentos,
+    )
+
+
+def ejecutar_corpus_piloto(directorio: Path, *, semilla: int) -> ResumenPiloto:
+    return ejecutar_corpus_sintetico(
+        directorio, semilla=semilla, tipos_caso=_tipos_caso(), duplicados=5
     )

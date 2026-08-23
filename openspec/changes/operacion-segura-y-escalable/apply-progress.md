@@ -261,3 +261,15 @@ La verificación de privacidad ahora captura en memoria los valores sintéticos 
 El RED ampliado encontró que el nombre del técnico ECG sobrevivía dentro de `adicionales`. El constructor final ahora retira también esa clave de personal; el piloto recalibrado vuelve a cero coincidencias sin reducir el conjunto inspeccionado.
 
 También se agregaron regresiones Eco: una asociación estructurada válida prevalece ante una repetición incidental y dos filas estructuradas iguales siguen en cuarentena por la cobertura independiente. Verificación final corregida: 33 pruebas focales y suite completa con `419 passed, 1 skipped`.
+
+## Entrega 13 — Primer escalón de carga de 1.000 PDFs
+
+Se agregó un runner reproducible que reutiliza las plantillas calibradas y el pipeline del piloto. El plan contiene 333 casos y exactamente 1.000 archivos: 320 completos, 4 en el límite de siete días, 3 separados por ocho días, 3 faltantes, 2 ambiguos, 1 corrupto y 2 duplicados intencionales. Cada generación usa semilla/fecha propias; los duplicados no sustituyen el volumen.
+
+| Tarea | Safety net | RED | GREEN | Triangulación / refactor |
+|---|---|---|---|---|
+| 4.3a, carga 1k | Las 3 pruebas del piloto pasaban en 70,26 s. | Primero faltaba `tests.carga.ejecutar_corpus`; la auditoría posterior exigió CLI reejecutable, oráculo completo y métricas no ambiguas. | Cinco pruebas cubren plan/oráculo exactos, desvío rechazado, corrida real pequeña y dos ejecuciones aisladas con reporte agregado. | La generación/ejecución común se extrajo del piloto; memoria y throughput explicitan su denominador/alcance y 10k/100k quedan fuera. |
+
+La ejecución corregida produjo 1.000 PDFs físicos y 998 únicos: 324 episodios/972 documentos aprobados; 26 cuarentenas esperadas (`cobertura_ambigua`: 8, `cobertura_incompleta`: 17, `parseo_incompleto`: 1), 0 fallos inesperados, 2 duplicados, 0 reintentos y 0 PII. Duró 226,541137 s, con 4,414 archivos físicos/s, 4,405 únicos/s y pico lifetime de 145.432.576 bytes. Cada corrida usa un UUID y el reporte estable agrega historiales.
+
+La medición ejecuta extracción, detección, parser, reconciliación, coordinación y constructor reales. Usa motor PII offline y resolutor determinista; no mide Presidio-spaCy, HMAC real, Celery/Redis, PostgreSQL ni storage productivo. Los literales sintéticos efímeros se contrastan contra los registros finales, sin presentar ese control como evaluación del NER institucional.

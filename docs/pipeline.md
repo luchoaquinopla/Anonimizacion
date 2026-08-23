@@ -61,6 +61,25 @@ Esto demuestra el comportamiento funcional del lote y su aislamiento de fallos, 
 institucional. El rendimiento y los límites de CPU, memoria y almacenamiento deben medirse todavía
 en los escalones 1k/10k/100k sobre hardware representativo.
 
+## Primer escalón de carga: 1.000 PDFs
+
+El runner reejecutable `tests/carga/ejecutar_corpus.py` genera 1.000 PDFs distintos salvo dos duplicados
+intencionales para probar idempotencia. La mezcla contiene 320 episodios completos, límites de
+siete y ocho días, faltantes, asociaciones ambiguas y un archivo corrupto. En la ejecución local
+del 23 de agosto de 2026 se inventariaron 998 documentos únicos: 972 fueron aprobados dentro de
+324 episodios y 26 quedaron en cuarentena según el oráculo; no hubo reintentos ni PII en salida.
+
+La corrida corregida tardó 226,54 segundos: 4,414 archivos físicos/s y 4,405 documentos únicos/s.
+El pico *lifetime* del proceso fue 145.432.576 bytes. Cada ejecución usa un directorio UUID aislado
+y agrega sus métricas al reporte estable, por lo que puede repetirse sin mezclar corpus anteriores.
+
+Son reales la extracción PyMuPDF, detección, parser, reconciliación, coordinación y construcción
+anonimizada. El motor PII/Presidio-spaCy, HMAC/resolutor, cola, PostgreSQL y almacenamiento productivo
+se reemplazan por adaptadores offline o no participan. La compuerta compara todos los literales
+sintéticos efímeros contra los registros finales, pero **no valida el NER institucional**. Por eso
+esta medición no demuestra todavía capacidad institucional. 10k/100k siguen pendientes y 100k no
+se ejecutará en CI.
+
 ## Librerías principales
 
 Para cada una: **qué es**, **cómo la usamos**, **por qué la elegimos** y **qué descartamos**.
