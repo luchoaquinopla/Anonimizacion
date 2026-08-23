@@ -51,7 +51,7 @@ from anonimizacion.salida.modelos_salida import (
 
 _CLAVE_MEDICO_DERIVANTE = "medico_derivante"
 _CLAVE_MEDICO_SOLICITANTE = "medico_solicitante"
-_CLAVES_MEDICO = (_CLAVE_MEDICO_DERIVANTE, _CLAVE_MEDICO_SOLICITANTE)
+_CLAVES_PERSONAL = (_CLAVE_MEDICO_DERIVANTE, _CLAVE_MEDICO_SOLICITANTE, "tecnico")
 
 
 def _pseudonimizar_medico_de_adicionales(
@@ -64,8 +64,8 @@ def _pseudonimizar_medico_de_adicionales(
     return generar_id_medico(pepper, str(nombre))
 
 
-def _adicionales_sin_medico(adicionales: dict) -> dict:
-    return {clave: valor for clave, valor in adicionales.items() if clave not in _CLAVES_MEDICO}
+def _adicionales_sin_personal(adicionales: dict) -> dict:
+    return {clave: valor for clave, valor in adicionales.items() if clave not in _CLAVES_PERSONAL}
 
 
 def _parsear_float(texto: str) -> float | None:
@@ -195,5 +195,5 @@ def construir_registro(
         version_esquema=documento.version_esquema,
         fecha_estudio=documento.fecha_estudio,
         contenido=contenido,
-        adicionales=_adicionales_sin_medico(adicionales),
+        adicionales=_adicionales_sin_personal(adicionales),
     )

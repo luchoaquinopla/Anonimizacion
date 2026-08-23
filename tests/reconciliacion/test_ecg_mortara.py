@@ -83,6 +83,16 @@ def test_aprueba_medida_ecg_en_linea_vecina_a_su_etiqueta() -> None:
     )
 
 
+def test_aprueba_medida_asociada_aunque_el_numero_aparezca_en_otro_campo() -> None:
+    fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
+    documento = _documento("68", (fuente,))
+
+    ReconciliadorEcgMortara().reconciliar(
+        documento,
+        TextoExtraido(("Codigo auxiliar 6800\nVent. rate 68",)),
+    )
+
+
 def test_aprueba_ejes_ecg_en_lineas_posteriores_a_la_etiqueta() -> None:
     fuente = ReferenciaCampo("ecg.ejes", 1, "ecg.ejes")
     documento = DocumentoParseado(

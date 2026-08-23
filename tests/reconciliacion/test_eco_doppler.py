@@ -7,10 +7,17 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
-from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
+from anonimizacion.parseo.eco_doppler import (
+    ContenidoEco,
+    FirmaMedico,
+    MedidaEco,
+    SeccionTextoEco,
+)
 from anonimizacion.reconciliacion.base import ReferenciaCampo
-from anonimizacion.reconciliacion.eco_doppler import ReconciliadorEcoDoppler
-from anonimizacion.reconciliacion.eco_doppler import _seccion_anclada
+from anonimizacion.reconciliacion.eco_doppler import (
+    ReconciliadorEcoDoppler,
+    _seccion_anclada,
+)
 
 
 def _documento(fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
@@ -257,6 +264,25 @@ def test_reconcilia_seccion_que_continua_en_la_pagina_siguiente() -> None:
     documento = ParseadorEcoDoppler().parsear(texto)
 
     ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_aprueba_medida_eco_asociada_aunque_el_valor_aparezca_fuera_de_la_tabla() -> None:
+    documento = _documento((ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),))
+
+    ReconciliadorEcoDoppler().reconciliar(
+        documento,
+        TextoExtraido(("MEDIDAS\nAO 28 mm\nComentario libre: AO 28 mm",)),
+    )
+
+
+def test_rechaza_medida_eco_con_dos_asociaciones_estructuradas() -> None:
+    documento = _documento((ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),))
+
+    with pytest.raises(ErrorParseo):
+        ReconciliadorEcoDoppler().reconciliar(
+            documento,
+            TextoExtraido(("MEDIDAS\nAO 28 mm\nAO 28 mm",)),
+        )
 
 
 def test_valida_contenido_de_seccion_que_solo_continua_en_la_pagina_siguiente() -> None:

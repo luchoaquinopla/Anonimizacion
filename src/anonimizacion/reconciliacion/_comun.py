@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo, EtapaDocumento
+from anonimizacion.dominio.errores import (
+    CodigoErrorDocumento,
+    ErrorParseo,
+    EtapaDocumento,
+)
 from anonimizacion.dominio.modelos import DocumentoParseado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 
-from .normalizacion import normalizar_texto
 from .base import HallazgoCobertura, ReferenciaCampo
 from .inventario import verificar_cobertura
+from .normalizacion import normalizar_texto
 
 
 def reconciliar_referencias(
@@ -37,14 +41,19 @@ def reconciliar_referencias(
         paginas = texto.paginas if documento.tipo_documento is TipoDocumento.ECG else texto.paginas_ordenadas
         pagina_original = paginas[referencia.pagina - 1]
         pagina = normalizar_texto(pagina_original).replace(",", ".")
-        requiere_evidencia_compuesta = referencia.id_campo == "eco.seccion" and validador_asociacion is not None
+        asociacion_valida = (
+            validador_asociacion(referencia, valor, pagina_original)
+            if validador_asociacion is not None
+            else False
+        )
+        requiere_evidencia_compuesta = referencia.id_campo == "eco.seccion" or asociacion_valida
         ocurrencias = pagina.count(valor)
         if not requiere_evidencia_compuesta and ocurrencias != 1:
             codigo = CodigoErrorDocumento.EVIDENCIA_AMBIGUA if ocurrencias > 1 else CodigoErrorDocumento.VALOR_DISCREPANTE
             if not any(caracter.isdigit() for caracter in pagina):
                 codigo = CodigoErrorDocumento.EVIDENCIA_AUSENTE
             raise ErrorParseo(codigo, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
-        if validador_asociacion is not None and not validador_asociacion(referencia, valor, pagina_original):
+        if validador_asociacion is not None and not asociacion_valida:
             codigo = CodigoErrorDocumento.EVIDENCIA_AUSENTE if referencia.id_campo == "eco.seccion" else CodigoErrorDocumento.VALOR_DISCREPANTE
             raise ErrorParseo(codigo, EtapaDocumento.RECONCILIACION, referencia.id_campo, referencia.pagina)
 

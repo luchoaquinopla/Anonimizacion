@@ -113,6 +113,7 @@ def test_ecg_pseudonimiza_medico_y_arma_contenido_ancho() -> None:
         ),
         adicionales={
             "medico_derivante": "Dr. Ana Lopez",
+            "tecnico": "Operador Sintetico",
             "institucion": "Clinica Central",
             "advertencia_equipo": "PID_NAME_MISMATCH",
         },
@@ -127,6 +128,7 @@ def test_ecg_pseudonimiza_medico_y_arma_contenido_ancho() -> None:
 
     assert "medico_derivante" not in registro.adicionales
     assert "Dr. Ana Lopez" not in str(registro.adicionales)
+    assert "Operador Sintetico" not in str(registro.adicionales)
     assert registro.adicionales["institucion"] == "Clinica Central"
     assert registro.adicionales["advertencia_equipo"] == "PID_NAME_MISMATCH"
 

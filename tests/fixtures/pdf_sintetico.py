@@ -9,6 +9,7 @@ dependencia de test adicional (p. ej. reportlab).
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from itertools import pairwise
@@ -84,6 +85,11 @@ _TAMANO_LABORATORIO = (595, 842)
 _TAMANO_ECO = (616, 862)
 _NOMBRE_SINTETICO = "Paciente Sintetico"
 _FECHA_SINTETICA = date(2024, 1, 15).isoformat()
+_MESES_ECG = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def _fecha_ecg(fecha: date) -> str:
+    return f"{fecha.day:02d}-{_MESES_ECG[fecha.month - 1]}-{fecha.year}"
 
 
 def _insertar_texto(pagina: pymupdf.Page, punto: tuple[float, float], texto: str, tamano: float = 8) -> None:
@@ -128,13 +134,13 @@ def _tabla(
             )
 
 
-def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
+def _crear_ecg(documento: pymupdf.Document, dni: str, fecha: date) -> None:
     pagina = documento.new_page(width=_TAMANO_ECG[0], height=_TAMANO_ECG[1])
     _insertar_texto(pagina, (34, 26), "MORTARA ELI 380 - 12SL ECG REPORT", 11)
     _insertar_texto(
         pagina,
         (34, 46),
-        f"{_NOMBRE_SINTETICO}~,      ID:ECG-SINT-{dni[-4:]}      15-JAN-2024  08:30:00      INSTITUTO FICTICIO   ROUTINE RECORD",
+        f"{_NOMBRE_SINTETICO}~,      ID:ECG-SINT-{dni[-4:]}      {_fecha_ecg(fecha)}  08:30:00      INSTITUTO FICTICIO   ROUTINE RECORD",
         7,
     )
     _insertar_texto(pagina, (34, 62), "02-FEB-1980 (43 yr)      Female      Unknown", 7)
@@ -170,12 +176,12 @@ def _crear_ecg(documento: pymupdf.Document, dni: str) -> None:
     _pie_pagina(pagina, 1, 1)
 
 
-def _encabezado_laboratorio(pagina: pymupdf.Page, dni: str) -> None:
+def _encabezado_laboratorio(pagina: pymupdf.Page, dni: str, fecha: date) -> None:
     _insertar_texto(pagina, (42, 38), "LABORATORIO DE ANALISIS CLINICOS", 13)
     _insertar_texto(pagina, (42, 58), "Apellido y Nombre: " + _NOMBRE_SINTETICO, 8)
     _insertar_texto(pagina, (42, 72), "DNI: " + dni + "    F.Nacimiento : 02/02/1980    Edad: 44", 8)
     _insertar_texto(pagina, (42, 86), "Medico: Profesional Sintetico    No Peticion: PET-SINT-001", 8)
-    _insertar_texto(pagina, (42, 100), "Fecha: 15/01/2024    Hora de Extraccion: 08:30    Origen: Ambulatorio", 8)
+    _insertar_texto(pagina, (42, 100), f"Fecha: {fecha:%d/%m/%Y}    Hora de Extraccion: 08:30    Origen: Ambulatorio", 8)
     pagina.draw_line((42, 110), (553, 110), color=(0.2, 0.2, 0.2), width=0.6)
 
 
@@ -208,7 +214,7 @@ def _tabla_laboratorio(
                 )
 
 
-def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
+def _crear_laboratorio(documento: pymupdf.Document, dni: str, fecha: date) -> None:
     paginas: tuple[tuple[tuple[str, str, str, str], ...], ...] = (
         (
             ("HEMATOLOGIA", "", "", ""),
@@ -262,19 +268,19 @@ def _crear_laboratorio(documento: pymupdf.Document, dni: str) -> None:
     limites = ((130, 720), (130, 520), (130, 310))
     for numero, filas in enumerate(paginas, start=1):
         pagina = documento.new_page(width=_TAMANO_LABORATORIO[0], height=_TAMANO_LABORATORIO[1])
-        _encabezado_laboratorio(pagina, dni)
+        _encabezado_laboratorio(pagina, dni, fecha)
         _tabla_laboratorio(pagina, filas, y_inicio=limites[numero - 1][0], y_fin=limites[numero - 1][1])
         _insertar_texto(pagina, (42, limites[numero - 1][1] + 25), "Resultados sinteticos para validacion de parser", 8)
         _pie_pagina(pagina, numero, len(paginas))
 
 
-def _encabezado_eco(pagina: pymupdf.Page, dni: str) -> None:
+def _encabezado_eco(pagina: pymupdf.Page, dni: str, fecha: date) -> None:
     _insertar_texto(pagina, (180, 35), "SERVICIO DE ECOCARDIOGRAFIA", 13)
     _insertar_texto(pagina, (170, 55), "ECOGRAFIA DOPPLER COLOR CARDIACA", 11)
     _insertar_texto(
         pagina,
         (42, 76),
-        f"PACIENTE: {_NOMBRE_SINTETICO}      Documento: {dni}      Fecha Estudio: 15/01/2024",
+        f"PACIENTE: {_NOMBRE_SINTETICO}      Documento: {dni}      Fecha Estudio: {fecha:%d/%m/%Y}",
         8,
     )
     _insertar_texto(
@@ -287,9 +293,9 @@ def _encabezado_eco(pagina: pymupdf.Page, dni: str) -> None:
     pagina.draw_line((42, 112), (574, 112), color=(0.2, 0.2, 0.2), width=0.6)
 
 
-def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
+def _crear_ecocardiograma(documento: pymupdf.Document, dni: str, fecha: date) -> None:
     primera = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
-    _encabezado_eco(primera, dni)
+    _encabezado_eco(primera, dni, fecha)
     _insertar_texto(primera, (250, 128), "VALORES HALLADOS", 9)
     _tabla(
         primera,
@@ -325,7 +331,7 @@ def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
     _pie_pagina(primera, 1, 2)
 
     segunda = documento.new_page(width=_TAMANO_ECO[0], height=_TAMANO_ECO[1])
-    _encabezado_eco(segunda, dni)
+    _encabezado_eco(segunda, dni, fecha)
     _insertar_texto(segunda, (62, 135), "Descripcion sintetica del flujo pulmonar.", 7)
     _insertar_texto(segunda, (42, 165), "FLUJO TRICUSPIDEO", 8)
     _insertar_texto(segunda, (62, 180), "Descripcion sintetica del flujo tricuspideo.", 7)
@@ -337,11 +343,26 @@ def _crear_ecocardiograma(documento: pymupdf.Document, dni: str) -> None:
     _pie_pagina(segunda, 2, 2)
 
 
-def generar_corpus_clinico(directorio: Path, *, semilla: int) -> CorpusClinicoSintetico:
+def generar_corpus_clinico(
+    directorio: Path,
+    *,
+    semilla: int,
+    fechas_estudio: dict[str, date] | None = None,
+    registrar_pii: Callable[[tuple[str, ...]], None] | None = None,
+) -> CorpusClinicoSintetico:
     """Genera un episodio sintético local con su oráculo libre de PII."""
     directorio.mkdir(parents=True, exist_ok=True)
     rng = random.Random(semilla)
     dni = str(rng.randint(10_000_000, 49_999_999))
+    if registrar_pii is not None:
+        registrar_pii((
+            _NOMBRE_SINTETICO, dni, "02/02/1980", "02-FEB-1980", f"ECG-SINT-{dni[-4:]}",
+            "PET-SINT-001", "ECO-SINT-001", "Profesional Sintetico",
+            "Profesional Medico Sintetico", "Operador Sintetico", "W 9001",
+        ))
+    fecha_base = date.fromisoformat(_FECHA_SINTETICA)
+    fechas = {tipo: fecha_base for tipo in ("ecg", "laboratorio", "ecocardiograma")}
+    fechas.update(fechas_estudio or {})
     generadores = {
         "ecg": _crear_ecg,
         "laboratorio": _crear_laboratorio,
@@ -351,12 +372,12 @@ def generar_corpus_clinico(directorio: Path, *, semilla: int) -> CorpusClinicoSi
     for tipo, generador in generadores.items():
         ruta = directorio / f"{tipo}.pdf"
         documento = pymupdf.open()
-        generador(documento, dni)
+        generador(documento, dni, fechas[tipo])
         documento.save(ruta)
         documento.close()
         documentos.append(DocumentoSintetico(tipo, ruta))
     oraculo = {
-        tipo: {"tipo": tipo, "fecha_estudio": _FECHA_SINTETICA, "resultado_esperado": "aprobado"}
+        tipo: {"tipo": tipo, "fecha_estudio": fechas[tipo].isoformat(), "resultado_esperado": "aprobado"}
         for tipo in generadores
     }
     return CorpusClinicoSintetico(tuple(documentos), oraculo)

@@ -42,6 +42,25 @@ documento inválido (layout no reconocido, PII sin resolver) se aísla en **cuar
 el lote, y cada **PDF original** se retiene cifrado aparte como fuente de verdad para reprocesar
 — nunca se mezcla con el dataset anonimizado. Detalle completo en `design.md`.
 
+## Validación piloto antes de escalar
+
+Antes de medir 1k, 10k o 100k documentos, el repositorio ejecuta un piloto offline de 50 casos
+sintéticos deterministas. Incluye episodios completos, el límite exacto de siete días, separación
+a ocho días, estudios faltantes, asociaciones ambiguas, duplicados por huella y PDFs corruptos.
+Los 154 archivos físicos se reducen a 149 entradas únicas y recorren el pipeline real hasta una
+salida temporal en memoria; el oráculo conserva sólo estados y conteos, nunca nombres, DNI ni
+fechas de nacimiento.
+
+La compuerta mantiene los valores identificatorios ficticios únicamente en memoria durante la
+corrida y contrasta cada uno contra los 120 registros anonimizados reales. El reporte persiste
+sólo la cantidad inspeccionada y el resultado agregado; no conserva esos valores transitorios.
+La construcción final elimina además el nombre del técnico ECG antes de escribir la salida.
+
+El piloto aprobado produce 40 episodios, 120 documentos publicables y 29 cuarentenas esperadas.
+Esto demuestra el comportamiento funcional del lote y su aislamiento de fallos, **no** capacidad
+institucional. El rendimiento y los límites de CPU, memoria y almacenamiento deben medirse todavía
+en los escalones 1k/10k/100k sobre hardware representativo.
+
 ## Librerías principales
 
 Para cada una: **qué es**, **cómo la usamos**, **por qué la elegimos** y **qué descartamos**.

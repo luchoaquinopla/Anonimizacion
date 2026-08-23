@@ -243,3 +243,21 @@ La referencia autorizada se procesó sólo localmente y se resumió sin valores.
 La equivalencia segura cubre los campos de cabecera, cinco métricas en orden (`Vent. rate`, PR, QRS, QT/QTc y P-R-T), su normalización numérica escalar/par/triple, procedencia en página 1, `PID / NAME MISMATCH`, categorías y conteos PII y decisión final. La imagen de trazado queda declarada fuera del contrato clínico: sólo se prueba la presencia de una grilla y figura no clínica, nunca equivalencia de señal o interpretación médica. Reporte local seguro: `tmp/calibracion_ecg/reporte_seguro.json` (no versionado).
 
 Verificación final: 25 pruebas focales y la suite completa (`413 passed, 1 skipped`) sin regresiones; el único omitido requiere privilegios de enlaces simbólicos en Windows. Con laboratorio, ecocardiograma y ECG aprobados, la compuerta global 4.1a–4.1c queda completa. La prueba masiva 4.2 continúa pendiente y no se inició en esta entrega.
+
+## Entrega 12 — Corpus piloto adversarial
+
+Se incorporó una etapa intermedia de 50 casos deterministas antes de las pruebas de 1k/10k/100k. Los PDFs se generan sólo en el temporal de pytest y atraviesan inventario por huella, extracción, detección, parseo, reconciliación, política PII, coordinación de episodios, anonimización y un destino seguro en memoria. La resolución de identidad usa un adaptador determinista del test para aislar el comportamiento del lote sin conservar identificadores del PDF en el oráculo.
+
+| Tarea | Safety net | RED | GREEN | Triangulación / refactor |
+|---|---|---|---|---|
+| 4.2a, piloto adversarial | 31 pruebas relevantes pasaban; 1 omitida por privilegios de symlink en Windows. | El test falló porque no existía `tests.fixtures.corpus_piloto`; luego tres ECG válidos expusieron `evidencia_ambigua` por repetir una cifra fuera de su campo. | El piloto produce 40 episodios aprobados, 120 documentos publicados y 29 cuarentenas esperadas. | Dos corridas completas con la misma semilla coinciden; la red se bloquea, el oráculo no contiene PII y cinco copias se omiten por huella. La asociación estructural ahora prevalece sobre coincidencias numéricas incidentales. |
+
+Evidencia final del piloto: 154 archivos físicos, 149 documentos inventariados, 8 fallos de asociación ambigua, 19 por estudios faltantes y 2 PDFs corruptos. Las 17 pruebas focales pasan y la suite completa queda en `416 passed, 1 skipped`; el único omitido requiere privilegios de enlaces simbólicos en Windows. Este resultado valida decisiones y conteos funcionales, no capacidad: los escalones 1k/10k/100k de 4.3 siguen pendientes.
+
+### Corrección posterior a auditoría del piloto
+
+La verificación de privacidad ahora captura en memoria los valores sintéticos transitorios de cada generación —incluidos nombre, DNI, nacimiento, profesionales e identificadores de petición/estudio— y los compara contra los 120 `RegistroAnonimizado` reales. Sólo persiste el conteo de 572 comprobaciones, nunca sus valores. Una prueba de control demuestra que el detector reconoce fugas de todas las categorías.
+
+El RED ampliado encontró que el nombre del técnico ECG sobrevivía dentro de `adicionales`. El constructor final ahora retira también esa clave de personal; el piloto recalibrado vuelve a cero coincidencias sin reducir el conjunto inspeccionado.
+
+También se agregaron regresiones Eco: una asociación estructurada válida prevalece ante una repetición incidental y dos filas estructuradas iguales siguen en cuarentena por la cobertura independiente. Verificación final corregida: 33 pruebas focales y suite completa con `419 passed, 1 skipped`.
