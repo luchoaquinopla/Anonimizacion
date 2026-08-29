@@ -23,17 +23,17 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 ## Fase 1: dominio — `PrecisionHora` y campos nuevos
 
-- [ ] 1.1 RED: en `tests/dominio/test_modelos.py` (o archivo equivalente existente), test que instancia `DocumentoParseado` y `RegistroAnonimizado` con `hora_estudio: time | None` y `precision_hora: PrecisionHora`, y falla porque el dataclass todavía no acepta esos campos.
-- [ ] 1.2 RED: test que construye `DocumentoParseado` con `fecha_estudio` y `hora_estudio` ambos presentes y verifica que `fecha_estudio` sigue siendo `date` sin alteración (Requirement: "Campo de hora opcional, separado de la fecha", spec `momento-del-estudio`).
-- [ ] 1.3 GREEN: crear `src/anonimizacion/dominio/precision_hora.py` — `class PrecisionHora(str, Enum)` con `AUSENTE`, `MINUTO`, `SEGUNDO`.
-- [ ] 1.4 GREEN: en `dominio/modelos.py`, agregar `hora_estudio: time | None = None` y `precision_hora: PrecisionHora = PrecisionHora.AUSENTE` a `DocumentoParseado` y a `RegistroAnonimizado` (defaults para no romper construcciones existentes en tests de otras fases del pipeline).
-- [ ] 1.5 REFACTOR: revisar que ningún otro sitio del dominio asuma que estos dos dataclasses solo tienen los campos previos (p. ej. destructuring posicional); ajustar si aparece.
+- [x] 1.1 RED: en `tests/dominio/test_modelos.py` (o archivo equivalente existente), test que instancia `DocumentoParseado` y `RegistroAnonimizado` con `hora_estudio: time | None` y `precision_hora: PrecisionHora`, y falla porque el dataclass todavía no acepta esos campos.
+- [x] 1.2 RED: test que construye `DocumentoParseado` con `fecha_estudio` y `hora_estudio` ambos presentes y verifica que `fecha_estudio` sigue siendo `date` sin alteración (Requirement: "Campo de hora opcional, separado de la fecha", spec `momento-del-estudio`).
+- [x] 1.3 GREEN: crear `src/anonimizacion/dominio/precision_hora.py` — `class PrecisionHora(str, Enum)` con `AUSENTE`, `MINUTO`, `SEGUNDO`.
+- [x] 1.4 GREEN: en `dominio/modelos.py`, agregar `hora_estudio: time | None = None` y `precision_hora: PrecisionHora = PrecisionHora.AUSENTE` a `DocumentoParseado` y a `RegistroAnonimizado` (defaults para no romper construcciones existentes en tests de otras fases del pipeline).
+- [x] 1.5 REFACTOR: revisar que ningún otro sitio del dominio asuma que estos dos dataclasses solo tienen los campos previos (p. ej. destructuring posicional); ajustar si aparece. Confirmado: los nuevos campos van al final con defaults, todas las construcciones posicionales existentes (p. ej. `DocumentoParseado(TipoDocumento.ECG, 1, IdentidadCruda(...), date(...), ContenidoEcg(...), fuentes=fuentes)`) siguen funcionando sin cambios — verificado con la suite completa en verde.
 
 ## Fase 2: normalización de hora sin inferencia
 
-- [ ] 2.1 RED: en `tests/reconciliacion/test_normalizacion.py`, tabla de casos para una función `normalizar_hora_iso` que todavía no existe: acepta `"08:45:00"` → `"08:45:00"`, acepta `"08:45"` → `"08:45"`, rechaza `"8:45"` (sin cero relativo — confirmar contra el formato real del documento antes de decidir si se acepta; si el layout real trae hora sin cero relativo, agregarlo como caso aceptado en vez de rechazado), rechaza `"25:00"`, rechaza cualquier string no numérico.
-- [ ] 2.2 GREEN: `normalizar_hora_iso(valor: str) -> tuple[str, PrecisionHora]` en `reconciliacion/normalizacion.py`, espejo de `normalizar_fecha_iso`: prueba `%H:%M:%S` (devuelve `SEGUNDO`) y `%H:%M` (devuelve `MINUTO`) en ese orden, levanta `ValueError` si ninguno matchea. Cero inferencia, cero corrección de formatos ambiguos.
-- [ ] 2.3 REFACTOR: confirmar que la firma no colisiona con el patrón existente de `normalizar_fecha_iso` (misma convención de excepción, mismo estilo de docstring).
+- [x] 2.1 RED: en `tests/reconciliacion/test_normalizacion.py`, tabla de casos para una función `normalizar_hora_iso` que todavía no existe: acepta `"08:45:00"` → `"08:45:00"`, acepta `"08:45"` → `"08:45"`, rechaza `"8:45"` (sin cero relativo — confirmar contra el formato real del documento antes de decidir si se acepta; si el layout real trae hora sin cero relativo, agregarlo como caso aceptado en vez de rechazado), rechaza `"25:00"`, rechaza cualquier string no numérico. Decisión tomada: **rechazar** `"8:45"` — las muestras sintéticas calibradas (ECG `HH:MM:SS`, laboratorio `Hora de Extracción: HH:MM`) siempre usan dos dígitos; ver docstring de `normalizar_hora_iso`.
+- [x] 2.2 GREEN: `normalizar_hora_iso(valor: str) -> tuple[str, PrecisionHora]` en `reconciliacion/normalizacion.py`, espejo de `normalizar_fecha_iso`: prueba `%H:%M:%S` (devuelve `SEGUNDO`) y `%H:%M` (devuelve `MINUTO`) en ese orden, levanta `ValueError` si ninguno matchea. Cero inferencia, cero corrección de formatos ambiguos. Chequeo de ida y vuelta (`strftime(formato) == candidato`) para rechazar horas sin cero a la izquierda, ya que `strptime` por sí solo es laxo con eso.
+- [x] 2.3 REFACTOR: confirmar que la firma no colisiona con el patrón existente de `normalizar_fecha_iso` (misma convención de excepción, mismo estilo de docstring). Confirmado.
 
 ## Fase 3: ECG — dejar de truncar la hora
 
