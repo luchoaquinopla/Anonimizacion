@@ -7,9 +7,12 @@ reconciliarse en un único registro por Nº de Petición.
 
 from __future__ import annotations
 
+from datetime import time
+
 import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.laboratorio_general import ParseadorLaboratorioGeneral
@@ -71,7 +74,8 @@ def test_conserva_la_pagina_real_de_resultados_repetidos() -> None:
 
     documento = ParseadorLaboratorioGeneral().parsear(TextoExtraido(paginas))
 
-    assert [fuente.pagina for fuente in documento.fuentes] == [1, 2]
+    fuentes_resultado = [f for f in documento.fuentes if f.id_campo == "laboratorio.resultado"]
+    assert [fuente.pagina for fuente in fuentes_resultado] == [1, 2]
 
 
 def test_numero_peticion_inconsistente_entre_paginas_lanza_error_parseo() -> None:
@@ -102,6 +106,22 @@ def test_fecha_nacimiento_no_parseable_queda_en_none_sin_romper_el_parseo() -> N
     )
     resultado = ParseadorLaboratorioGeneral().parsear(texto)
     assert resultado.identidad.fecha_nac is None
+
+
+def test_hora_extraccion_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa() -> None:
+    """Requirement: "Hora ilegible va a cuarentena, no a ausencia silenciosa"
+    (spec `momento-del-estudio`) -- un valor de hora presente pero con
+    formato irreconocible debe apartar el documento a cuarentena, nunca
+    publicarse como `precision_hora = AUSENTE`."""
+    header_hora_ilegible = _HEADER.replace("Hora Extracción: 08:30", "Hora Extracción: 25:99")
+    texto = TextoExtraido(
+        paginas=(header_hora_ilegible + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
 
 
 def test_header_ausente_lanza_error_parseo() -> None:
@@ -137,7 +157,30 @@ def test_header_real_con_espacio_antes_de_dos_puntos_y_etiquetas_alternativas() 
 
     assert resultado.identidad.fecha_nac.get_secret_value() == "1980-05-01"
     assert resultado.adicionales["medico_derivante"] == "Dr. Gomez"
-    assert resultado.adicionales["hora_extraccion"] == "08:30"
+    # `hora_extraccion` está promovido a campo tipado (hora_estudio/precision_hora),
+    # ya no debe quedar en adicionales sin tipo (Requirement: "Laboratorio
+    # expone la hora de extracción como campo tipado", spec `momento-del-estudio`).
+    assert "hora_extraccion" not in resultado.adicionales
+    assert resultado.hora_estudio == time(8, 30)
+    assert resultado.precision_hora is PrecisionHora.MINUTO
+
+
+def test_hora_extraccion_ausente_produce_precision_ausente_sin_romper_el_parseo() -> None:
+    """Sin `Hora de Extracción:` en el header, `precision_hora` queda en
+    `AUSENTE` -- no hay muestra real sin el campo para calibrar contra ella
+    (ver Fase 5.5 de tasks.md); este test documenta la suposición con el
+    header sintético existente hasta que se confirme contra una muestra
+    real."""
+    header_sin_hora = _HEADER.replace("Hora Extracción: 08:30\n", "")
+    texto = TextoExtraido(
+        paginas=(header_sin_hora + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+
+    resultado = ParseadorLaboratorioGeneral().parsear(texto)
+
+    assert resultado.hora_estudio is None
+    assert resultado.precision_hora is PrecisionHora.AUSENTE
+    assert "hora_extraccion" not in resultado.adicionales
 
 
 def test_cuerpo_real_espaciado_sin_pipes_extrae_filas_con_seccion_y_subseccion() -> None:
@@ -213,7 +256,8 @@ def test_canonicaliza_ionograma_serico_y_conserva_pagina_y_ordinal() -> None:
     resultado = ParseadorLaboratorioGeneral().parsear(texto)
 
     assert [fila.seccion for fila in resultado.contenido.resultados] == ["HEMATOLOGIA", "IONOGRAMA"]
-    assert [(fuente.pagina, fuente.ordinal) for fuente in resultado.fuentes] == [(1, 0), (2, 1)]
+    fuentes_resultado = [f for f in resultado.fuentes if f.id_campo == "laboratorio.resultado"]
+    assert [(fuente.pagina, fuente.ordinal) for fuente in fuentes_resultado] == [(1, 0), (2, 1)]
 
 
 def test_conserva_seccion_para_resultados_que_continuan_en_la_pagina_siguiente() -> None:
@@ -231,7 +275,8 @@ def test_conserva_seccion_para_resultados_que_continuan_en_la_pagina_siguiente()
         ("FORMULA LEUCOCITARIA", "Monocitos"),
         ("HEMOSTASIA", "RIN"),
     ]
-    assert [(fuente.pagina, fuente.ordinal) for fuente in resultado.fuentes] == [(1, 0), (2, 1), (2, 2)]
+    fuentes_resultado = [f for f in resultado.fuentes if f.id_campo == "laboratorio.resultado"]
+    assert [(fuente.pagina, fuente.ordinal) for fuente in fuentes_resultado] == [(1, 0), (2, 1), (2, 2)]
 
 
 def test_nombre_de_prueba_partido_en_dos_lineas_por_parentesis_se_reconstruye() -> None:

@@ -94,12 +94,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from pydantic import SecretStr
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.contrato_laboratorio import (
@@ -109,6 +110,7 @@ from anonimizacion.parseo.contrato_laboratorio import (
     normalizar_seccion_laboratorio,
 )
 from anonimizacion.reconciliacion.base import ReferenciaCampo
+from anonimizacion.reconciliacion.normalizacion import normalizar_hora_iso
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
@@ -170,6 +172,19 @@ def _extraer_campos_header(pagina: str) -> dict[str, str]:
 
 def _parsear_fecha(texto: str) -> date:
     return datetime.strptime(texto.strip(), "%d/%m/%Y").date()
+
+
+def _parsear_hora_extraccion(texto: str) -> tuple[time, PrecisionHora]:
+    """Normaliza `Hora de Extracción:` con `normalizar_hora_iso` (Fase 2).
+
+    Cero inferencia: si el valor no matchea ningún formato de hora soportado,
+    el `ValueError` propaga hasta el llamador, que lo convierte en cuarentena
+    (Fase 8: "hora ilegible va a cuarentena, no a ausencia silenciosa") —
+    nunca se publica como `precision_hora = AUSENTE`.
+    """
+    hora_normalizada, precision = normalizar_hora_iso(texto.strip())
+    formato = "%H:%M:%S" if precision is PrecisionHora.SEGUNDO else "%H:%M"
+    return datetime.strptime(hora_normalizada, formato).time(), precision
 
 
 def _parsear_fecha_nacimiento(texto: str) -> str | None:
@@ -361,6 +376,7 @@ class ParseadorLaboratorioGeneral:
 
     def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
         header: dict[str, str] | None = None
+        pagina_header: int | None = None
         resultados: list[ResultadoLaboratorio] = []
         paginas_resultados: list[int] = []
         seccion_actual: str | None = None
@@ -372,6 +388,7 @@ class ParseadorLaboratorioGeneral:
             if numero_peticion_pagina:
                 if header is None:
                     header = campos_pagina
+                    pagina_header = numero_pagina
                 elif numero_peticion_pagina != header.get("numero_peticion"):
                     raise ErrorParseo(
                         codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
@@ -391,6 +408,19 @@ class ParseadorLaboratorioGeneral:
                 codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
             ) from _exc
 
+        hora_estudio: time | None = None
+        precision_hora = PrecisionHora.AUSENTE
+        if header.get("hora_extraccion"):
+            try:
+                hora_estudio, precision_hora = _parsear_hora_extraccion(header["hora_extraccion"])
+            except ValueError as _exc:
+                # Hora presente pero ilegible: cuarentena, no ausencia
+                # silenciosa (Fase 8, Requirement: "Hora ilegible va a
+                # cuarentena, no a ausencia silenciosa").
+                raise ErrorParseo(
+                    codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                ) from _exc
+
         fecha_nac_normalizada = (
             _parsear_fecha_nacimiento(header["fecha_nac"]) if header.get("fecha_nac") else None
         )
@@ -409,14 +439,20 @@ class ParseadorLaboratorioGeneral:
         adicionales = {
             clave: valor
             for clave, valor in header.items()
-            if clave not in ("nombre", "dni", "fecha_nac", "fecha", "numero_peticion")
+            if clave not in ("nombre", "dni", "fecha_nac", "fecha", "numero_peticion", "hora_extraccion")
         }
 
         contenido = ContenidoLaboratorio(
             numero_peticion=header.get("numero_peticion", ""),
             resultados=tuple(resultados),
         )
-        fuentes = tuple(
+        fuentes = (
+            *(
+                (ReferenciaCampo("laboratorio.hora_extraccion", pagina_header, "laboratorio.hora_extraccion"),)
+                if hora_estudio is not None
+                else ()
+            ),
+        ) + tuple(
             ReferenciaCampo(
                 "laboratorio.resultado",
                 paginas_resultados[ordinal],
@@ -431,6 +467,8 @@ class ParseadorLaboratorioGeneral:
             version_esquema=_VERSION_ESQUEMA,
             identidad=identidad,
             fecha_estudio=fecha_estudio,
+            hora_estudio=hora_estudio,
+            precision_hora=precision_hora,
             contenido=contenido,
             adicionales=adicionales,
             fuentes=fuentes,
