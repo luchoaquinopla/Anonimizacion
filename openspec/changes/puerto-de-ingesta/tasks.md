@@ -76,12 +76,14 @@ Comando de test del proyecto: `pytest` (`pyproject.toml`, `testpaths = ["tests"]
 
 ## Fase 8: migración de consumidores
 
-- [ ] 8.1 `scripts/procesar_carpeta.py` — `FuenteArtefacto(...).listar()` → `list(FuenteLocal(...).listar())`, conserva guardia `if not artefactos`.
-- [ ] 8.2 `tests/fixtures/corpus_piloto.py:143` — `InventariadorDocumentos(...).inventariar(entrada)` → `tuple(FuenteLocal(raices=(directorio,), directorio=entrada, tope_bytes=10*1024*1024, huellas=HuellasEnMemoria(), cuarentena=_CuarentenaMemoria()).listar())`.
-- [ ] 8.3 Test de payload de cola: confirmar `{id_documento, uri, sha256}` exacto tras el cambio (`tests/trabajadores/`).
+- [x] 8.1 `scripts/procesar_carpeta.py` — `FuenteArtefacto(...).listar()` → `list(FuenteLocal(...).listar())`, conserva guardia `if not artefactos`. **Ya migrado en Lote 2 (PR2)**, confirmado en PR4 con grep — sin cambios adicionales.
+- [x] 8.2 `tests/fixtures/corpus_piloto.py:143` — `InventariadorDocumentos(...).inventariar(entrada)` → `tuple(FuenteLocal(raices=(directorio,), directorio=entrada, tope_bytes=10*1024*1024, huellas=HuellasEnMemoria(), cuarentena=_CuarentenaMemoria()).listar())`. **Ya migrado en Lote 2 (PR2)** con la firma exacta descripta; confirmado en PR4 con grep — sin cambios adicionales.
+- [x] 8.3 Test de payload de cola: confirmar `{id_documento, uri, sha256}` exacto tras el cambio (`tests/trabajadores/`). **Ya existía**: `test_procesar_documento_solo_recibe_id_uri_sha256` (`tests/trabajadores/test_tareas.py`) afirma por construcción sobre la firma de `tareas.procesar_documento.run` (`["id_documento", "uri", "sha256"]`). Se auditó en PR4 y se confirmó que cubre el requisito completo de la spec — no se duplicó cobertura con un test nuevo.
+
+Auditoría PR4: `grep -rn "FuenteArtefacto|InventariadorDocumentos"` sobre todo el repo confirma cero usos en código de producción, scripts, tests o fixtures — las únicas coincidencias son documentación histórica (`openspec/changes/*/`) y el docstring de `fuente.py` que documenta su eliminación.
 
 ## Fase 9: ensayos de carga y suite completa
 
-- [ ] 9.1 Correr `pytest tests/carga/test_ejecutar_corpus.py` (1.000 PDFs) contra `ORACULO_CARGA_1000`; si el pico de memoria baja, actualizar `memoria_estimada` en `evaluar_preflight`.
-- [ ] 9.2 Correr `tests/carga/ejecutar_corpus_10000.py` (10.000 PDFs); confirmar sin regresión de tiempo/memoria.
-- [ ] 9.3 `pytest` completo en verde.
+- [x] 9.1 Correr `pytest tests/carga/test_ejecutar_corpus.py` (1.000 PDFs) contra `ORACULO_CARGA_1000`; si el pico de memoria baja, actualizar `memoria_estimada` en `evaluar_preflight`. Corrido también `python -m tests.carga.ejecutar_corpus` (el runner real, no solo la suite unitaria) — composición del corpus idéntica a la referencia (998 únicos, 2 duplicados, 972 aprobados, 324 episodios, 26 cuarentenas: 8 ambiguos/17 incompletos/1 dañado), `oraculo_validado: true`. Tiempo 218,64 s (antes 226,54 s, mejora ~3,5 %) y memoria pico 145.698.816 B (antes 145.432.576 B, +0,18 %, ruido de medición). Se actualizaron `memoria_estimada`/`tiempo_estimado` en `evaluar_preflight` (`tests/carga/ejecutar_corpus.py`) y `docs/pipeline.md` con los valores medidos reales.
+- [ ] 9.2 Correr `tests/carga/ejecutar_corpus_10000.py` (10.000 PDFs); confirmar sin regresión de tiempo/memoria. **NO ejecutado en este lote** — tarda ~48 minutos, excede el límite de llamada del agente. El orquestador lo corre por separado en segundo plano.
+- [x] 9.3 `pytest` completo en verde.
