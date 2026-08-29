@@ -65,8 +65,8 @@ Comando de test del proyecto: `pytest` (`pyproject.toml`, `testpaths = ["tests"]
 
 ## Fase 6: `extraer_texto_de_flujo`
 
-- [ ] 6.1 RED: tests con PDF sintético en `BytesIO` — válido multipágina, corrupto (`PARSEO_INCOMPLETO`), vacío (`pymupdf.EmptyFileError` mapeado).
-- [ ] 6.2 GREEN: `extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido` en `texto_pymupdf.py`; `extraer_texto(ruta)` pasa a envoltorio delgado.
+- [x] 6.1 RED: tests con PDF sintético en `BytesIO` — válido multipágina, corrupto (`PARSEO_INCOMPLETO`), vacío (`pymupdf.EmptyFileError` mapeado).
+- [x] 6.2 GREEN: `extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido` en `texto_pymupdf.py`; `extraer_texto(ruta)` pasa a envoltorio delgado.
 
 ## Fase 7: rewiring del pipeline
 
