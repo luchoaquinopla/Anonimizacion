@@ -526,3 +526,33 @@ documentación y marcado de tareas en el mismo commit.
 - Tras 9.2: si el oráculo de 10.000 valida y no hay regresión de
   tiempo/memoria a esa escala, el cambio `puerto-de-ingesta` está listo
   para `sdd-verify` y cierre del PR4/archivo del cambio.
+
+## Lote 6 — ensayo de 10.000 documentos (tarea 9.2)
+
+Ejecutado por el orquestador en segundo plano (~41 minutos), fuera del
+límite de llamada de un sub-agente.
+
+| Métrica | Referencia | Esta corrida | Diferencia |
+|---|---|---|---|
+| Tiempo total | 47,9 min | 40,6 min (2.438,8 s) | **−15,2 %** |
+| Throughput | 3,479 PDFs/s | 4,1 PDFs/s | **+17,8 %** |
+| Memoria pico | ~301 MiB | 301,3 MiB (315.965.440 B) | sin cambio |
+| Documentos únicos | 9.980 | 9.980 | igual |
+| Duplicados omitidos | 20 | 20 | igual |
+| Aprobados / episodios | 9.720 / 3.240 | 9.720 / 3.240 | igual |
+| Cuarentenas | 260 | 260 (80/170/10) | igual |
+| Fallos / reintentos | 0 / 0 | 0 / 0 | igual |
+| PII en salida | 0 | 0 | igual |
+
+`oraculo_validado: true`. La composición reproduce la referencia de forma
+exacta, así que el cambio no alteró ninguna decisión funcional del
+pipeline a escala.
+
+La mejora de tiempo es mayor que la observada a 1.000 documentos (−3,5 %),
+lo cual es coherente con la enumeración perezosa: cuanto más grande el
+corpus, más pesa no construir el inventario completo antes de empezar a
+procesar. La memoria pico no bajó porque no era el inventario lo que la
+dominaba, sino el procesamiento de cada documento.
+
+Con esto la Fase 9 queda cerrada y el cambio `puerto-de-ingesta` completo.
+
