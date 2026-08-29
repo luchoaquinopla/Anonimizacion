@@ -1,4 +1,4 @@
-"""Tests de `FuenteArtefacto`: adaptador que lista artefactos desde un filesystem local."""
+"""Tests de `FuenteLocal`: adaptador unificado de ingesta local (filesystem)."""
 
 from __future__ import annotations
 
@@ -9,13 +9,12 @@ from typing import BinaryIO
 
 import pytest
 
+from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento, EtapaDocumento
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.ingesta.fuente import (
-    FuenteArtefacto,
     FuenteDeArtefactos,
     FuenteLocal,
     HuellasEnMemoria,
-    InventariadorDocumentos,
 )
 
 
@@ -24,113 +23,23 @@ def _crear_pdf_falso(ruta: Path, contenido: bytes) -> str:
     return hashlib.sha256(contenido).hexdigest()
 
 
-def test_fuente_artefacto_lista_pdfs_de_un_directorio(tmp_path: Path) -> None:
-    sha_esperado = _crear_pdf_falso(tmp_path / "doc001.pdf", b"%PDF-1.4 contenido sintetico")
+class _CuarentenaFalsa:
+    """Doble de `SumideroCuarentena`: acumula errores en memoria para asertar."""
 
-    fuente = FuenteArtefacto(directorio=tmp_path)
-    artefactos = list(fuente.listar())
+    def __init__(self) -> None:
+        self.errores: list[ErrorDocumento] = []
 
-    assert len(artefactos) == 1
-    (artefacto,) = artefactos
-    assert artefacto.formato is FormatoArtefacto.PDF
-    assert artefacto.sha256 == sha_esperado
-    assert artefacto.uri.endswith("doc001.pdf")
-
-
-def test_fuente_artefacto_ignora_archivos_no_pdf(tmp_path: Path) -> None:
-    (tmp_path / "notas.txt").write_text("no es un pdf")
-    _crear_pdf_falso(tmp_path / "doc002.pdf", b"%PDF-1.4 otro contenido")
-
-    fuente = FuenteArtefacto(directorio=tmp_path)
-    artefactos = list(fuente.listar())
-
-    assert len(artefactos) == 1
-    assert artefactos[0].uri.endswith("doc002.pdf")
-
-
-def test_fuente_artefacto_directorio_vacio_no_produce_artefactos(tmp_path: Path) -> None:
-    fuente = FuenteArtefacto(directorio=tmp_path)
-    assert list(fuente.listar()) == []
-
-
-def test_fuente_artefacto_directorio_inexistente_falla_explicito(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        FuenteArtefacto(directorio=tmp_path / "no_existe").listar()
-
-
-
-def test_inventariador_rechaza_ruta_fuera_de_raices_autorizadas(tmp_path: Path) -> None:
-    entrada_autorizada = tmp_path / "entrada"
-    entrada_autorizada.mkdir()
-    ruta_no_autorizada = tmp_path / "otra_entrada"
-    ruta_no_autorizada.mkdir()
-
-    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada_autorizada,), tamano_maximo_bytes=1024)
-
-    with pytest.raises(PermissionError):
-        inventariador.inventariar(ruta_no_autorizada)
-
-
-def test_inventariador_inventaria_recursivamente_y_descarta_huellas_duplicadas(tmp_path: Path) -> None:
-    entrada = tmp_path / "entrada"
-    subdirectorio = entrada / "subdirectorio"
-    subdirectorio.mkdir(parents=True)
-    _crear_pdf_falso(entrada / "original.pdf", b"%PDF-1.4 contenido repetido")
-    _crear_pdf_falso(subdirectorio / "copia.pdf", b"%PDF-1.4 contenido repetido")
-    (subdirectorio / "notas.txt").write_text("ignorar")
-
-    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=1024)
-
-    artefactos = inventariador.inventariar(entrada)
-
-    assert len(artefactos) == 1
-    assert artefactos[0].uri.endswith("original.pdf")
-
-
-def test_inventariador_rechaza_pdf_que_supera_tamano_maximo(tmp_path: Path) -> None:
-    entrada = tmp_path / "entrada"
-    entrada.mkdir()
-    _crear_pdf_falso(entrada / "grande.pdf", b"x" * 9)
-    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=8)
-
-    with pytest.raises(ValueError, match="tamano"):
-        inventariador.inventariar(entrada)
-
-
-def test_inventariador_omite_enlace_simbolico_que_resuelve_fuera_de_la_raiz(tmp_path: Path) -> None:
-    entrada = tmp_path / "entrada"
-    entrada.mkdir()
-    externo = tmp_path / "afuera.pdf"
-    _crear_pdf_falso(externo, b"%PDF-1.4 externo")
-    enlace = entrada / "enlace.pdf"
-    try:
-        enlace.symlink_to(externo)
-    except OSError as error:
-        pytest.skip(f"el entorno no permite enlaces simbolicos: {error}")
-
-    inventariador = InventariadorDocumentos(raices_autorizadas=(entrada,), tamano_maximo_bytes=1024)
-
-    assert inventariador.inventariar(entrada) == []
-
-
-def test_inventariador_detecta_destino_resuelto_fuera_de_la_raiz(tmp_path: Path) -> None:
-    entrada = tmp_path / "entrada"
-    entrada.mkdir()
-    destino_externo = tmp_path / "afuera.pdf"
-    _crear_pdf_falso(destino_externo, b"%PDF-1.4 externo")
-
-    assert InventariadorDocumentos._esta_dentro_de_raiz(destino_externo, entrada) is False
+    def registrar(self, error: ErrorDocumento) -> None:
+        self.errores.append(error)
 
 
 # --- Fase 1: `Protocol FuenteDeArtefactos` -----------------------------------
 #
-# `FuenteLocal` todavía no implementa `abrir()` (llega en la Fase 5, PR2), así
-# que el contrato se prueba acá contra dobles mínimos definidos en el propio
-# test, no contra `FuenteLocal`. Es una desviación deliberada de la redacción
-# literal de tasks.md 1.1 ("FuenteLocal debe satisfacer..."): probar el
-# contrato contra `FuenteLocal` en esta fase daría un falso rechazo porque el
-# `Protocol` exige `listar()` Y `abrir()`, y `abrir()` no existe todavía. Ver
-# apply-progress.md para el detalle de la desviación.
+# Deuda de PR1 saldada: `FuenteLocal.abrir()` ya existe (Fase 5), así que el
+# contrato se verifica también contra la implementación real, no solo contra
+# dobles mínimos. Se conservan los dobles porque siguen probando el rechazo
+# estructural de un adaptador incompleto, algo que la implementación real no
+# puede ejercitar por construcción.
 
 
 class _FuenteDobleCompleta:
@@ -156,6 +65,15 @@ def test_protocolo_fuente_de_artefactos_acepta_adaptador_conforme() -> None:
 
 def test_protocolo_fuente_de_artefactos_rechaza_adaptador_sin_abrir() -> None:
     assert not isinstance(_FuenteDobleIncompleta(), FuenteDeArtefactos)
+
+
+def test_protocolo_fuente_de_artefactos_acepta_fuente_local_real(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+
+    assert isinstance(fuente, FuenteDeArtefactos)
 
 
 # --- Fase 2: trampa del generador perezoso -----------------------------------
@@ -200,6 +118,28 @@ def test_fuente_local_lista_pdfs_de_directorio_autorizado(tmp_path: Path) -> Non
     assert artefacto.sha256 == sha_esperado
 
 
+def test_fuente_local_directorio_vacio_no_produce_artefactos(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+
+    assert list(fuente.listar()) == []
+
+
+def test_fuente_local_ignora_archivos_no_pdf(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    (entrada / "notas.txt").write_text("no es un pdf")
+    _crear_pdf_falso(entrada / "doc002.pdf", b"%PDF-1.4 otro contenido")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].uri.endswith("doc002.pdf")
+
+
 # --- Fase 3: deduplicación delegada ------------------------------------------
 
 
@@ -221,3 +161,160 @@ def test_fuente_local_omite_contenido_duplicado_via_registro_de_huellas(tmp_path
     artefactos = list(fuente.listar())
 
     assert len(artefactos) == 1
+
+
+# --- Fase 4: `FuenteLocal` -- pereza, hasheo, tope, cuarentena ---------------
+
+
+def test_fuente_local_es_perezosa_no_hashea_mas_de_lo_necesario(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    for nombre in ("a.pdf", "b.pdf", "c.pdf"):
+        _crear_pdf_falso(entrada / nombre, f"contenido-{nombre}".encode())
+
+    original = FuenteLocal._calcular_huella
+    llamados: list[Path] = []
+
+    def _huella_contada(ruta: Path) -> str:
+        llamados.append(ruta)
+        return original(ruta)
+
+    monkeypatch.setattr(FuenteLocal, "_calcular_huella", staticmethod(_huella_contada))
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    iterador = fuente.listar()
+    next(iterador)
+
+    assert len(llamados) == 1
+
+
+def test_fuente_local_hasheo_por_bloques_coincide_con_hash_completo(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    # Mayor a un bloque (1 MiB) para forzar más de una iteración de lectura.
+    contenido = b"%PDF-1.4" + b"x" * (3 * 1024 * 1024)
+    ruta = entrada / "grande.pdf"
+    ruta.write_bytes(contenido)
+    esperado = hashlib.sha256(contenido).hexdigest()
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    (artefacto,) = list(fuente.listar())
+
+    assert artefacto.sha256 == esperado
+
+
+def test_fuente_local_omite_enlace_simbolico_que_resuelve_fuera_de_la_raiz(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    externo = tmp_path / "afuera.pdf"
+    _crear_pdf_falso(externo, b"%PDF-1.4 externo")
+    enlace = entrada / "enlace.pdf"
+    try:
+        enlace.symlink_to(externo)
+    except OSError as error:
+        pytest.skip(f"el entorno no permite enlaces simbolicos: {error}")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+
+    assert list(fuente.listar()) == []
+
+
+def test_fuente_local_rechaza_ruta_fuera_de_raices_autorizadas(tmp_path: Path) -> None:
+    entrada_autorizada = tmp_path / "entrada"
+    entrada_autorizada.mkdir()
+    ruta_no_autorizada = tmp_path / "otra_entrada"
+    ruta_no_autorizada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada_autorizada,), directorio=ruta_no_autorizada)
+
+    with pytest.raises(PermissionError):
+        fuente.listar()
+
+
+def test_fuente_local_tope_por_defecto_es_50_mebibytes(tmp_path: Path) -> None:
+    fuente = FuenteLocal(raices=(tmp_path,), directorio=tmp_path)
+
+    assert fuente.tope_bytes == 50 * 1024 * 1024
+
+
+def test_fuente_local_archivo_sobretamano_va_a_cuarentena_y_continua_el_lote(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    _crear_pdf_falso(entrada / "grande.pdf", b"x" * 20)
+    sha_valido = _crear_pdf_falso(entrada / "valido.pdf", b"x" * 5)
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, tope_bytes=10, cuarentena=cuarentena)
+
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].sha256 == sha_valido
+    assert len(cuarentena.errores) == 1
+    (error,) = cuarentena.errores
+    assert error.codigo is CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO
+    assert error.etapa is EtapaDocumento.INGESTA
+    assert error.tamano_bytes == 20
+    assert error.tope_bytes == 10
+
+
+def test_fuente_local_tope_de_tamano_es_frontera_exacta(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    _crear_pdf_falso(entrada / "limite.pdf", b"x" * 10)
+    _crear_pdf_falso(entrada / "excede.pdf", b"x" * 11)
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, tope_bytes=10, cuarentena=cuarentena)
+
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].uri.endswith("limite.pdf")
+    assert len(cuarentena.errores) == 1
+
+
+# --- Fase 5: `abrir()` -- revalidación y verificación ------------------------
+
+
+def test_fuente_local_abrir_retorna_flujo_legible_con_contenido_real(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    contenido = b"%PDF-1.4 contenido real"
+    _crear_pdf_falso(entrada / "doc.pdf", contenido)
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    (artefacto,) = list(fuente.listar())
+
+    with fuente.abrir(artefacto) as flujo:
+        assert flujo.read() == contenido
+
+
+def test_fuente_local_abrir_rechaza_uri_fuera_de_raices_autorizadas(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    externo = tmp_path / "afuera.pdf"
+    sha = _crear_pdf_falso(externo, b"%PDF-1.4 externo")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    # Simula una cola envenenada: un `ArtefactoCrudo` con `uri` fuera de las
+    # raíces autorizadas del adaptador, como si viniera de un mensaje manipulado.
+    artefacto_envenenado = ArtefactoCrudo(uri=str(externo), sha256=sha, formato=FormatoArtefacto.PDF)
+
+    with pytest.raises(PermissionError):
+        fuente.abrir(artefacto_envenenado)
+
+
+def test_fuente_local_abrir_rechaza_sha256_que_no_coincide_con_contenido_real(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    ruta = entrada / "doc.pdf"
+    _crear_pdf_falso(ruta, b"%PDF-1.4 contenido real")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    artefacto_falsificado = ArtefactoCrudo(uri=str(ruta), sha256="a" * 64, formato=FormatoArtefacto.PDF)
+
+    with pytest.raises(ValueError, match="sha256"):
+        fuente.abrir(artefacto_falsificado)

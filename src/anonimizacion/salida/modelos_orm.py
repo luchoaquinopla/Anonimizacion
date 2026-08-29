@@ -184,6 +184,11 @@ class Cuarentena(Base):
     campo: Mapped[str | None] = mapped_column(String, nullable=True)
     pagina: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tipo_documento: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Exclusivos de `ARTEFACTO_SOBRETAMANO` (ver `dominio/errores.py::ErrorDocumento`):
+    # números, no mensajes crudos. Permiten ajustar el tope de tamaño leyendo
+    # este reporte, sin adivinar ni re-derivar nada del filesystem.
+    tamano_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tope_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
 
 

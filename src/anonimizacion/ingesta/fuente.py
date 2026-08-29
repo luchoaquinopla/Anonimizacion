@@ -1,4 +1,4 @@
-"""Puerto de ingesta y sus adaptadores locales (filesystem).
+"""Puerto de ingesta y su adaptador local (filesystem).
 
 `FuenteDeArtefactos` es el `Protocol` del puerto (simétrico a
 `DestinoEscritura`/`DestinoCuarentena` de `pipeline/ejecutor.py`):
@@ -6,12 +6,15 @@
 Ningún consumidor del pipeline debe leer bytes de artefactos por otra vía
 (spec `ingesta-de-artefactos`).
 
-`FuenteLocal` es el adaptador unificado que reemplazará a `FuenteArtefacto`
-e `InventariadorDocumentos` (openspec `puerto-de-ingesta`); por ahora
-conviven mientras se completa la migración por fases (ver tasks.md). Agregar
+`FuenteLocal` es el adaptador unificado (openspec `puerto-de-ingesta`) que
+reemplaza a los antiguos `FuenteArtefacto`/`InventariadorDocumentos`. Agregar
 una fuente nueva (un bucket u otro origen) implica una clase nueva que
 satisfaga el mismo `Protocol`, no tocar el core del pipeline (mismo
 principio que los parsers de Fase 4, ver design.md).
+
+`FuenteLocal` no importa `pipeline`: declara su propio `Protocol
+SumideroCuarentena`, satisfecho por tipado estructural por
+`EscritorCuarentena` (`salida/cuarentena.py`) sin acoplamiento de módulos.
 """
 
 from __future__ import annotations
@@ -22,88 +25,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Protocol, runtime_checkable
 
+from ..dominio.errores import CodigoErrorDocumento, ErrorDocumento, EtapaDocumento
 from .artefacto import ArtefactoCrudo, FormatoArtefacto
 
 _EXTENSIONES_SOPORTADAS = {".pdf": FormatoArtefacto.PDF}
 _TAMANO_BLOQUE_HUELLA = 1024 * 1024
-
-
-@dataclass(frozen=True)
-class FuenteArtefacto:
-    """Lista `ArtefactoCrudo` a partir de los archivos de un directorio local."""
-
-    directorio: Path
-
-    def listar(self) -> list[ArtefactoCrudo]:
-        if not self.directorio.is_dir():
-            raise FileNotFoundError(f"directorio de ingesta inexistente: {self.directorio}")
-
-        artefactos = []
-        for ruta in sorted(self.directorio.iterdir()):
-            formato = _EXTENSIONES_SOPORTADAS.get(ruta.suffix.lower())
-            if formato is None or not ruta.is_file():
-                continue
-            sha256 = hashlib.sha256(ruta.read_bytes()).hexdigest()
-            artefactos.append(ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato))
-        return artefactos
-
-
-@dataclass(frozen=True)
-class InventariadorDocumentos:
-    """Inventaría PDFs de una raíz autorizada sin repetir el mismo contenido."""
-
-    raices_autorizadas: tuple[Path, ...]
-    tamano_maximo_bytes: int
-
-    def __post_init__(self) -> None:
-        if not self.raices_autorizadas:
-            raise ValueError("debe configurarse al menos una raiz autorizada")
-        if self.tamano_maximo_bytes <= 0:
-            raise ValueError("tamano_maximo_bytes debe ser positivo")
-
-    def inventariar(self, directorio: Path) -> list[ArtefactoCrudo]:
-        ruta_raiz = directorio.resolve()
-        if not ruta_raiz.is_dir():
-            raise FileNotFoundError("directorio de ingesta inexistente")
-        if not self._es_ruta_autorizada(ruta_raiz):
-            raise PermissionError("la ruta de ingesta no esta autorizada")
-
-        artefactos: list[ArtefactoCrudo] = []
-        huellas_vistas: set[str] = set()
-        for ruta in sorted(ruta_raiz.rglob("*")):
-            formato = _EXTENSIONES_SOPORTADAS.get(ruta.suffix.lower())
-            if formato is None or not ruta.is_file():
-                continue
-            if not self._esta_dentro_de_raiz(ruta, ruta_raiz):
-                continue
-            if ruta.stat().st_size > self.tamano_maximo_bytes:
-                raise ValueError("archivo PDF supera el tamano maximo permitido")
-
-            sha256 = self._calcular_huella(ruta)
-            if sha256 in huellas_vistas:
-                continue
-            huellas_vistas.add(sha256)
-            artefactos.append(ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato))
-        return artefactos
-
-    def _es_ruta_autorizada(self, ruta: Path) -> bool:
-        return any(self._esta_dentro_de_raiz(ruta, raiz) for raiz in self.raices_autorizadas)
-
-    @staticmethod
-    def _esta_dentro_de_raiz(ruta: Path, raiz: Path) -> bool:
-        try:
-            ruta.resolve().relative_to(raiz.resolve())
-        except ValueError:
-            return False
-        return True
-
-    @staticmethod
-    def _calcular_huella(ruta: Path) -> str:
-        digest = hashlib.sha256()
-        with ruta.open("rb") as archivo:
-            while bloque := archivo.read(_TAMANO_BLOQUE_HUELLA):
-                digest.update(bloque)
-        return digest.hexdigest()
+# Provisional (design.md, "Preguntas abiertas"): a la espera de medir la
+# distribución real de tamaños de PDF del instituto. Ajustar acá cuando esa
+# medición exista -- es lo único que hay que tocar.
+_TOPE_BYTES_PROVISIONAL = 50 * 1024 * 1024
 
 
 @runtime_checkable
@@ -137,6 +67,19 @@ class RegistroDeHuellas(Protocol):
         ...
 
 
+@runtime_checkable
+class SumideroCuarentena(Protocol):
+    """`Protocol` propio de `ingesta`, NO el de `pipeline/ejecutor.py`
+    (design.md, Decisión 3): este módulo no debe depender de `pipeline`.
+    `EscritorCuarentena` (`salida/cuarentena.py`) lo satisface por tipado
+    estructural sin que exista un import cruzado.
+    """
+
+    def registrar(self, error: ErrorDocumento) -> None:
+        """Aparta un documento a cuarentena con su motivo terminal."""
+        ...
+
+
 @dataclass
 class HuellasEnMemoria:
     """Implementación por default de `RegistroDeHuellas`: un `set` de sha256
@@ -155,24 +98,45 @@ class HuellasEnMemoria:
         return True
 
 
+@dataclass
+class _CuarentenaNula:
+    """Default no-op de `SumideroCuarentena`: descarta los errores.
+
+    Existe solo para que `FuenteLocal` sea instanciable en tests que no
+    ejercitan el camino de sobretamaño sin forzar a cada test a construir un
+    sumidero. Producción MUST inyectar un sumidero real (p. ej.
+    `EscritorCuarentena`) -- descartar cuarentenas en silencio en producción
+    perdería documentos sin dejar rastro.
+    """
+
+    def registrar(self, error: ErrorDocumento) -> None:
+        return None
+
+
 @dataclass(frozen=True)
 class FuenteLocal:
     """Adaptador unificado de ingesta local (`FuenteDeArtefactos`).
 
-    Construcción incremental entre PRs (ver tasks.md, unidades de trabajo):
-    esta versión cubre `listar()` con validación ansiosa de raíz autorizada
-    y deduplicación delegada a `RegistroDeHuellas`. El tope de tamaño con
-    cuarentena (`Protocol SumideroCuarentena` propio) y `abrir()` con
-    revalidación de `uri` llegan en la Fase 4-5 (PR2, design.md Decisión 2-3).
+    Cubre las cinco garantías de la spec `ingesta-de-artefactos`: pereza
+    (`listar()` valida ansiosamente y devuelve un generador), raíz autorizada
+    como falla dura, cuarentena por sobretamaño sin frenar el lote,
+    deduplicación por contenido delegada, y hasheo por bloques. `abrir()`
+    revalida la `uri` (puede venir de una cola envenenada) y verifica que el
+    sha256 declarado coincida con el contenido real antes de entregar el
+    flujo (design.md, Decisión 2).
     """
 
     raices: tuple[Path, ...]
     directorio: Path
     huellas: RegistroDeHuellas = field(default_factory=HuellasEnMemoria)
+    tope_bytes: int = _TOPE_BYTES_PROVISIONAL
+    cuarentena: SumideroCuarentena = field(default_factory=_CuarentenaNula)
 
     def __post_init__(self) -> None:
         if not self.raices:
             raise ValueError("debe configurarse al menos una raiz autorizada")
+        if self.tope_bytes <= 0:
+            raise ValueError("tope_bytes debe ser positivo")
 
     def listar(self) -> Iterator[ArtefactoCrudo]:
         """Valida raíz y directorio de forma ANSIOSA antes de retornar el
@@ -195,10 +159,64 @@ class FuenteLocal:
                 continue
             if not self._esta_dentro_de_raiz(ruta, ruta_raiz):
                 continue
+
+            tamano_bytes = ruta.stat().st_size
+            if tamano_bytes > self.tope_bytes:
+                self._apartar_por_sobretamano(ruta, tamano_bytes)
+                continue
+
             sha256 = self._calcular_huella(ruta)
             if not self.huellas.es_nueva(sha256):
                 continue
             yield ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato)
+
+    def _apartar_por_sobretamano(self, ruta: Path, tamano_bytes: int) -> None:
+        # `id_documento` es el sha256 de la RUTA, no del contenido: el nombre
+        # de archivo puede llevar PII (nombre del paciente) y no se propaga;
+        # el contenido no se lee -- es exactamente la lectura que evitamos
+        # (design.md, Decisión 3).
+        id_documento = hashlib.sha256(str(ruta).encode("utf-8")).hexdigest()
+        self.cuarentena.registrar(
+            ErrorDocumento(
+                id_documento=id_documento,
+                etapa=EtapaDocumento.INGESTA,
+                codigo=CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO,
+                tamano_bytes=tamano_bytes,
+                tope_bytes=self.tope_bytes,
+            )
+        )
+
+    def abrir(self, artefacto: ArtefactoCrudo) -> BinaryIO:
+        """Abre el artefacto revalidando su `uri` y verificando su `sha256`.
+
+        Ciclo de vida (design.md, Decisión 2): retorna un `BinaryIO` fresco e
+        independiente; el LLAMADOR lo cierra con `with` -- un objeto de
+        archivo ya es context manager, no hace falta un envoltorio.
+
+        La `uri` llega desde la cola de Celery, potencialmente manipulada:
+        revalidarla acá (no solo en `listar()`) cierra un agujero real, no
+        una formalidad. La verificación de sha256 se hace sobre los mismos
+        bytes que se le van a entregar a PyMuPDF, que de todos modos necesita
+        el buffer completo -- el segundo pase de hash es despreciable frente
+        al parseo.
+        """
+        ruta = Path(artefacto.uri).resolve()
+        if not self._es_ruta_autorizada(ruta):
+            raise PermissionError(f"la uri del artefacto no esta autorizada: {artefacto.uri}")
+
+        flujo = ruta.open("rb")
+        digest = hashlib.sha256()
+        while bloque := flujo.read(_TAMANO_BLOQUE_HUELLA):
+            digest.update(bloque)
+        sha256_real = digest.hexdigest()
+        if sha256_real != artefacto.sha256:
+            flujo.close()
+            raise ValueError(
+                f"el contenido de {artefacto.uri} no coincide con el sha256 esperado "
+                f"(esperado={artefacto.sha256}, real={sha256_real})"
+            )
+        flujo.seek(0)
+        return flujo
 
     def _es_ruta_autorizada(self, ruta: Path) -> bool:
         return any(self._esta_dentro_de_raiz(ruta, raiz) for raiz in self.raices)

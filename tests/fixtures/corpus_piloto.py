@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from anonimizacion.dominio.modelos import ClavesPaciente, RegistroAnonimizado
-from anonimizacion.ingesta.fuente import InventariadorDocumentos
+from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria
 from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento
@@ -140,7 +140,15 @@ def ejecutar_corpus_sintetico(
     entrada, pdfs_entrada, valores_pii = _crear_entrada(
         directorio, semilla, tipos_caso, duplicados
     )
-    inventario = InventariadorDocumentos((directorio,), 10 * 1024 * 1024).inventariar(entrada)
+    inventario = tuple(
+        FuenteLocal(
+            raices=(directorio,),
+            directorio=entrada,
+            tope_bytes=10 * 1024 * 1024,
+            huellas=HuellasEnMemoria(),
+            cuarentena=_CuarentenaMemoria(),
+        ).listar()
+    )
     items = tuple(ItemLote(Path(artefacto.uri).stem, artefacto) for artefacto in inventario)
     destino = _DestinoMemoria()
     cuarentena = _CuarentenaMemoria()

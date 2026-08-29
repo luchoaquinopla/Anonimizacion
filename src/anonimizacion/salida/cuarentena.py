@@ -33,5 +33,7 @@ class EscritorCuarentena:
                     campo=error.campo,
                     pagina=error.pagina,
                     tipo_documento=error.tipo_documento.value if error.tipo_documento else None,
+                    tamano_bytes=error.tamano_bytes,
+                    tope_bytes=error.tope_bytes,
                 )
             )

@@ -65,3 +65,198 @@ en `test_inventariador_omite_enlace_simbolico_que_resuelve_fuera_de_la_raiz`).
 Ver `git log` en la rama `feat/puerto-ingesta-protocolo`: unidad de trabajo
 única (Protocol + trampa del generador + costura de dedup), tests incluidos
 en el mismo commit que el comportamiento que verifican.
+
+## Lote 2 (PR2) — Fases 4 y 5
+
+Rama: `feat/puerto-ingesta-fuente-local`, apilada sobre
+`feat/puerto-ingesta-protocolo` (PR1, en revisión).
+
+Estado: **completo**. `pytest` completo: 437 passed, 1 skipped (mismo skip
+preexistente de PR1, no relacionado: symlinks sin privilegio elevado en
+Windows).
+
+### Hecho
+
+- **Fase 4** — `FuenteLocal.listar()` ahora aplica el tope de tamaño
+  (`tope_bytes`, default 50 MiB provisional — ver "Preguntas abiertas" de
+  design.md) y aparta a **cuarentena** el archivo que lo supera, en vez de
+  lanzar `ValueError` y abortar el lote: se agrega
+  `CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO`, `EtapaDocumento.INGESTA` y
+  los campos opcionales `tamano_bytes`/`tope_bytes` en `ErrorDocumento`
+  (`dominio/errores.py`). `id_documento` del artefacto rechazado es el
+  sha256 de la RUTA (no del contenido, que nunca se lee) porque el nombre de
+  archivo puede llevar PII. La iteración **continúa** tras un sobretamaño:
+  el resto de los archivos válidos del directorio se siguen listando. Se
+  agrega `Protocol SumideroCuarentena` propio en `ingesta/fuente.py`
+  (`registrar(error)`) — `ingesta` sigue sin importar `pipeline`;
+  `EscritorCuarentena` lo satisface por tipado estructural.
+- **Fase 5** — `FuenteLocal.abrir(artefacto) -> BinaryIO`: revalida la `uri`
+  contra `raices` (rechaza con `PermissionError` si está fuera — simula una
+  cola envenenada, ya que la `uri` viaja en el mensaje de Celery y hasta
+  ahora nadie la revalidaba del lado del worker) y verifica que el sha256
+  del contenido real coincida con `artefacto.sha256` antes de entregar el
+  flujo (`ValueError` explícito si no coincide). Contrato de ciclo de vida
+  documentado en el docstring: `abrir()` retorna un `BinaryIO` fresco e
+  independiente; el LLAMADOR lo cierra con `with` (un objeto de archivo ya
+  es context manager).
+- **Asimetría preservada**: ruta fuera de raíces autorizadas en `listar()`
+  sigue siendo `PermissionError` (falla dura, detiene la iteración) — no se
+  convirtió en cuarentena. Es deliberado (design.md, Decisión 5): indica una
+  configuración de seguridad incorrecta, no un documento individual
+  defectuoso.
+- **REFACTOR (4.5)** — se eliminaron `FuenteArtefacto` e
+  `InventariadorDocumentos` de `ingesta/fuente.py`, junto con su
+  duplicación de `_calcular_huella`/`_esta_dentro_de_raiz`. Se actualizó el
+  docstring del módulo para reflejar que `FuenteLocal` es ahora el único
+  adaptador.
+- **Deuda de PR1 saldada** — el test de contrato del `Protocol
+  FuenteDeArtefactos` ahora también corre contra `FuenteLocal` real
+  (`test_protocolo_fuente_de_artefactos_acepta_fuente_local_real`), no solo
+  contra los dobles mínimos: `abrir()` ya existe, así que el falso rechazo
+  que motivó la desviación de PR1 ya no aplica. Los tests contra dobles se
+  conservan porque siguen probando el rechazo estructural de un adaptador
+  incompleto (algo que la implementación real no puede ejercitar).
+
+### Adelanto de la Fase 8 (fuera del alcance formal de este lote)
+
+Eliminar `FuenteArtefacto`/`InventariadorDocumentos` en 4.5 rompía sus dos
+consumidores productivos. Para no dejar la suite en rojo (regla no
+negociable de TDD estricto), se migraron ambos ya en este lote, **antes**
+de lo previsto en el plan (la migración formal es la Fase 8, PR4):
+
+- `scripts/procesar_carpeta.py` — `FuenteArtefacto(args.entrada).listar()`
+  (retornaba `list`) pasa a
+  `list(FuenteLocal(raices=(args.entrada,), directorio=args.entrada,
+  cuarentena=cuarentena).listar())`, reutilizando el `EscritorCuarentena`
+  que el script ya construye para el pipeline. Se conserva el guardia
+  `if not artefactos`.
+- `tests/fixtures/corpus_piloto.py:143` —
+  `InventariadorDocumentos((directorio,), 10 MiB).inventariar(entrada)`
+  pasa a `tuple(FuenteLocal(raices=(directorio,), directorio=entrada,
+  tope_bytes=10*1024*1024, huellas=HuellasEnMemoria(),
+  cuarentena=_CuarentenaMemoria()).listar())` — exactamente la firma que
+  design.md ya proponía para esta migración. `_CuarentenaMemoria()` es una
+  instancia dedicada al inventario, distinta de la que usa el ejecutor del
+  pipeline para errores de procesamiento; no hay colisión porque ningún
+  caso del corpus piloto supera 10 MiB (documentado en design.md).
+
+**Qué queda todavía para la Fase 8 formal (PR4)**, y por qué no se adelantó:
+
+- 8.3 — test de payload de cola (`{id_documento, uri, sha256}` exacto) en
+  `tests/trabajadores/`: no se tocó nada del camino de despacho a cola en
+  este lote (eso es Fase 6-7, PR3), así que no hay nada nuevo que ese test
+  deba cubrir todavía.
+- Ninguna prueba dedicada nueva se agregó para la migración de
+  `procesar_carpeta.py`/`corpus_piloto.py` en sí misma (es un script manual
+  y un fixture de corpus, no código de producción con tests unitarios
+  propios) — la cobertura de que `FuenteLocal` se comporta bien ya vive en
+  `tests/ingesta/test_fuente.py`; la migración se valida indirectamente
+  porque `tests/carga/` y el corpus piloto siguen pasando con el nuevo
+  wiring.
+- Los ensayos de carga de 1.000 y 10.000 PDFs (9.1, 9.2) **no se
+  re-ejecutaron a propósito** en este lote — no cambia nada del camino de
+  hasheo/dedup que ejercitan (`tope_bytes` sigue en 10 MiB, `HuellasEnMemoria`
+  sigue siendo la misma implementación); design.md ya anticipa que
+  corresponde re-correrlos como parte de la Fase 9, no de esta migración
+  anticipada. `pytest` completo (incluida la suite de `tests/carga/` que
+  corre por default) sí pasó completo en este lote.
+
+### Qué queda (PR3 en adelante, fuera de este lote)
+
+- Fase 6: `extraer_texto_de_flujo` sobre `BytesIO`, `extraer_texto(ruta)`
+  como envoltorio delgado.
+- Fase 7: rewiring de `ejecutor.py` (parámetro `fuente`) y
+  `tareas.py:41` `configurar_ejecutor` (fábrica que construye e inyecta
+  `FuenteLocal`).
+- Fase 8: 8.3 (test de payload de cola) — 8.1 y 8.2 quedaron adelantados en
+  este lote, ver arriba.
+- Fase 9: ensayos de carga (1.000 y 10.000 PDFs) contra el wiring final del
+  pipeline (Fase 7), y `pytest` completo en verde una vez más.
+
+## Commits de este lote
+
+1. `feat(dominio): agrega ARTEFACTO_SOBRETAMANO y EtapaDocumento.INGESTA` —
+   vocabulario de dominio, prerequisito aislado antes de tocar `fuente.py`.
+2. `feat(ingesta): FuenteLocal unificado con tope, cuarentena y abrir()` —
+   `FuenteLocal` completo (tope+cuarentena+`abrir()`), eliminación de
+   `FuenteArtefacto`/`InventariadorDocumentos`, migración mínima de sus dos
+   consumidores y tests (RED+GREEN) en el mismo commit que el comportamiento
+   que verifican.
+
+## Lote 3 (PR2, corrección) — persistencia real de `tamano_bytes`/`tope_bytes`
+
+Rama: `feat/puerto-ingesta-fuente-local` (misma rama de PR2).
+
+Estado: **completo**. `pytest` completo: 438 passed, 1 skipped (mismo skip
+preexistente de symlinks en Windows).
+
+### Defecto encontrado
+
+La spec de `puerto-de-ingesta` exige que el motivo de cuarentena por
+sobretamaño incluya el tamaño real y el tope aplicado, justificado
+explícitamente como "que ajustar el límite sea leer un reporte y no
+adivinar". `FuenteLocal._apartar_por_sobretamano` sí completaba
+`ErrorDocumento(tamano_bytes=..., tope_bytes=...)` correctamente, pero:
+
+1. `EscritorCuarentena.registrar` construía la fila `Cuarentena(...)` sin
+   esos dos campos.
+2. El modelo ORM `Cuarentena` no tenía esas columnas.
+
+Los tests existentes pasaban porque afirmaban sobre el `ErrorDocumento` en
+memoria (`tests/ingesta/test_fuente.py`), nunca a través del escritor real
+— el valor se perdía silenciosamente al persistir. El requisito no se
+cumplía de punta a punta.
+
+### Corrección (TDD estricto)
+
+- **RED** — `tests/salida/test_cuarentena.py::test_registrar_persiste_tamano_y_tope_de_sobretamano`:
+  test end-to-end real (no doble) que arma un `FuenteLocal` con un archivo
+  sobredimensionado, un `EscritorCuarentena` sobre SQLite en memoria, corre
+  `listar()`, y lee la fila persistida. Confirmado en rojo:
+  `AttributeError: 'Cuarentena' object has no attribute 'tamano_bytes'`.
+- **GREEN**:
+  - `src/anonimizacion/salida/modelos_orm.py::Cuarentena` — se agregan
+    columnas `tamano_bytes: int | None` y `tope_bytes: int | None`
+    (`Integer`, nullable), documentadas como exclusivas de
+    `ARTEFACTO_SOBRETAMANO`.
+  - `src/anonimizacion/salida/cuarentena.py::EscritorCuarentena.registrar` —
+    pasa `error.tamano_bytes`/`error.tope_bytes` al constructor de
+    `Cuarentena`.
+  - `migrations/versions/0005_tamano_y_tope_cuarentena.py` — nueva
+    migración Alembic, `down_revision = "0004_fusion_corridas_cuarentena"`
+    (head único verificado con `alembic heads` antes de escribirla, dado
+    que hay dos `0002_*` y una fusión en `0004_*`). `upgrade()` agrega
+    ambas columnas; `downgrade()` las elimina en orden inverso.
+  - Se actualizó `test_registrar_persiste_solo_metadata_segura_de_reconciliacion`
+    (assert del set completo de columnas) para incluir las dos nuevas.
+- **REFACTOR**: ninguno necesario — cambio quirúrgico, sin duplicación
+  introducida.
+
+### Decisión evaluada y descartada: `CAMPOS_PERMITIDOS` en `bitacora_segura`
+
+Se evaluó si `tamano_bytes`/`tope_bytes` debían agregarse a
+`CAMPOS_PERMITIDOS` (`observabilidad/bitacora_segura.py`) ya que son
+enteros sin PII. **Se decidió NO agregarlos**: no existe hoy ningún punto
+del pipeline que arme un evento de bitácora (dict) a partir de un
+`ErrorDocumento` de sobretamaño — `BitacoraSegura`/`filtrar_y_redactar` no
+tienen ningún llamador que incluya esas claves. Agregarlas a la whitelist
+sin un caso de uso real sería un cambio especulativo, no verificable con
+un test que ejercite comportamiento real (violaría TDD estricto: no hay
+RED posible para algo que no se llama). Si una fase futura conecta eventos
+de cuarentena por sobretamaño a la bitácora segura, esta decisión debe
+revisarse en ese momento, con su propio test.
+
+### Verificación de coherencia esquema/migración
+
+`tests/salida/test_migraciones.py` (incluye
+`test_metadata_orm_coincide_con_la_migracion` y
+`test_migraciones_tienen_una_unica_cabecera`) corrido explícitamente junto
+con `tests/salida/test_cuarentena.py` y `tests/ingesta/test_fuente.py`
+antes de la corrida completa — todos en verde. No se creó ningún test
+nuevo de comparación esquema-vs-migración: ya existe y cubre el caso.
+
+## Commits de este lote
+
+3. `fix(cuarentena): persiste tamano_bytes y tope_bytes de sobretamano` —
+   modelo ORM + escritor + migración 0005, test RED end-to-end incluido en
+   el mismo commit que la corrección.

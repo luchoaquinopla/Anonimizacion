@@ -83,6 +83,8 @@ def test_registrar_persiste_solo_metadata_segura_de_reconciliacion() -> None:
         "campo",
         "pagina",
         "tipo_documento",
+        "tamano_bytes",
+        "tope_bytes",
         "creado_en",
     }
 
@@ -99,3 +101,30 @@ def test_registrar_persiste_tipo_documento_seguro() -> None:
         fila = sesion.scalars(sa.select(Cuarentena)).one()
 
     assert fila.tipo_documento == "laboratorio"
+
+
+def test_registrar_persiste_tamano_y_tope_de_sobretamano(tmp_path) -> None:
+    """Camino REAL de punta a punta: `FuenteLocal` aparta un artefacto
+    sobredimensionado y `EscritorCuarentena` persiste la fila -- el requisito
+    de la spec (`puerto-de-ingesta`) es que ajustar el tope sea leer un
+    reporte, no adivinar, y eso exige que `tamano_bytes`/`tope_bytes`
+    sobrevivan la escritura real, no solo el `ErrorDocumento` en memoria.
+    """
+    from anonimizacion.ingesta.fuente import FuenteLocal
+
+    motor = _motor()
+    escritor = EscritorCuarentena(motor)
+
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    (entrada / "grande.pdf").write_bytes(b"x" * 20)
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, tope_bytes=10, cuarentena=escritor)
+    list(fuente.listar())
+
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.scalars(sa.select(Cuarentena)).one()
+
+    assert fila.codigo == "artefacto_sobretamano"
+    assert fila.tamano_bytes == 20
+    assert fila.tope_bytes == 10
