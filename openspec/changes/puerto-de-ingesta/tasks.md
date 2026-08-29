@@ -51,17 +51,17 @@ Comando de test del proyecto: `pytest` (`pyproject.toml`, `testpaths = ["tests"]
 
 ## Fase 4: `FuenteLocal` — pereza, hasheo, tope, cuarentena
 
-- [ ] 4.1 RED: migrar y ampliar tests de `test_fuente.py`: pereza (primer artefacto sin hashear el resto), hasheo por bloques == hash completo, symlink fuera de raíz, dedup por contenido con nombres distintos.
-- [ ] 4.2 RED: test sobretamaño → cuarentena con `tamano_bytes`/`tope_bytes` reales (reemplaza `pytest.raises(ValueError)` actual).
-- [ ] 4.3 GREEN: `dominio/errores.py` — `ARTEFACTO_SOBRETAMANO`, `EtapaDocumento.INGESTA`, campos opcionales `tamano_bytes`/`tope_bytes` en `ErrorDocumento`.
-- [ ] 4.4 GREEN: implementar `FuenteLocal` unificado (reemplaza `FuenteArtefacto`+`InventariadorDocumentos`) con `Protocol SumideroCuarentena` propio, sin importar `pipeline`.
-- [ ] 4.5 REFACTOR: eliminar `FuenteArtefacto`/`InventariadorDocumentos`, actualizar docstring de `fuente.py`.
+- [x] 4.1 RED: migrar y ampliar tests de `test_fuente.py`: pereza (primer artefacto sin hashear el resto), hasheo por bloques == hash completo, symlink fuera de raíz, dedup por contenido con nombres distintos.
+- [x] 4.2 RED: test sobretamaño → cuarentena con `tamano_bytes`/`tope_bytes` reales (reemplaza `pytest.raises(ValueError)` actual).
+- [x] 4.3 GREEN: `dominio/errores.py` — `ARTEFACTO_SOBRETAMANO`, `EtapaDocumento.INGESTA`, campos opcionales `tamano_bytes`/`tope_bytes` en `ErrorDocumento`.
+- [x] 4.4 GREEN: implementar `FuenteLocal` unificado (reemplaza `FuenteArtefacto`+`InventariadorDocumentos`) con `Protocol SumideroCuarentena` propio, sin importar `pipeline`.
+- [x] 4.5 REFACTOR: eliminar `FuenteArtefacto`/`InventariadorDocumentos`, actualizar docstring de `fuente.py`. **Adelanto parcial de Fase 8**: se migraron `scripts/procesar_carpeta.py` y `tests/fixtures/corpus_piloto.py` a `FuenteLocal` para no dejar la suite en rojo — ver apply-progress.md para el detalle de qué queda para la Fase 8 formal (PR4).
 
 ## Fase 5: `abrir()` — revalidación y verificación
 
-- [ ] 5.1 RED: test `abrir()` con `uri` fuera de raíces autorizadas → `PermissionError` (simula cola envenenada).
-- [ ] 5.2 RED: test `abrir()` con sha256 que no coincide con el contenido real → error explícito.
-- [ ] 5.3 GREEN: implementar `abrir(artefacto) -> BinaryIO` en `FuenteLocal`.
+- [x] 5.1 RED: test `abrir()` con `uri` fuera de raíces autorizadas → `PermissionError` (simula cola envenenada).
+- [x] 5.2 RED: test `abrir()` con sha256 que no coincide con el contenido real → error explícito.
+- [x] 5.3 GREEN: implementar `abrir(artefacto) -> BinaryIO` en `FuenteLocal`.
 
 ## Fase 6: `extraer_texto_de_flujo`
 
