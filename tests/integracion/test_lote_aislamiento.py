@@ -17,6 +17,7 @@ from dataclasses import replace
 import sqlalchemy as sa
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento
+from anonimizacion.ingesta.fuente import FuenteLocal
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
@@ -79,6 +80,7 @@ def test_un_documento_con_layout_no_reconocido_en_lote_no_aborta_el_resto(tmp_pa
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=FuenteLocal(raices=(tmp_path,), directorio=tmp_path),
     )
 
     items = [
@@ -186,6 +188,7 @@ def test_omisiones_sinteticas_de_cada_tipo_van_a_cuarentena_antes_de_pii_y_salid
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=FuenteLocal(raices=(tmp_path,), directorio=tmp_path),
         obtener_parseador=lambda tipo: _ParseadorQueOmiteCampo(tipo),
     )
 

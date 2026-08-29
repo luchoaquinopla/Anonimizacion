@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from pathlib import Path
 
 from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
-from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
+from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria, RegistroDeHuellas
+from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pipeline.ejecutor import DestinoCuarentena, DestinoEscritura, EjecutorPipeline, ItemLote
+from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
 from anonimizacion.trabajadores.app import aplicar_configuracion_cola, app
 
 aplicar_configuracion_cola(os.environ)
@@ -52,6 +56,53 @@ def _obtener_ejecutor() -> EjecutorPipeline:
             "worker antes de procesar tareas."
         )
     return _fabrica_ejecutor()
+
+
+def construir_fabrica_ejecutor(
+    *,
+    raices: tuple[Path, ...],
+    resolutor: ResolutorClavesProtocol,
+    motor: MotorPii,
+    pepper: bytes,
+    destino: DestinoEscritura,
+    cuarentena: DestinoCuarentena,
+    tope_bytes: int | None = None,
+    huellas: RegistroDeHuellas | None = None,
+) -> FabricaEjecutor:
+    """Arma la `FabricaEjecutor` real para registrar con `configurar_ejecutor`.
+
+    Raíz de composición del worker (openspec `puerto-de-ingesta`, design.md
+    Decisión 2): la `FuenteLocal` se construye UNA sola vez acá, no en cada
+    tarea -- el worker solo llama `abrir()` sobre ella (nunca `listar()` ni
+    dedup: ver la decisión al inicio de tasks.md sobre por qué
+    `HuellasDeCorrida` queda fuera de este cambio). `EscritorCuarentena`
+    satisface tanto `DestinoCuarentena` (`pipeline/ejecutor.py`) como
+    `SumideroCuarentena` (`ingesta/fuente.py`) por tipado estructural, sin
+    que ninguno de los dos módulos importe al otro.
+
+    `directorio` de `FuenteLocal` se fija a la primera raíz autorizada: esta
+    fábrica nunca llama `listar()` (por eso no importa cuál), solo `abrir()`,
+    que valida contra el conjunto completo de `raices`.
+    """
+    fuente = FuenteLocal(
+        raices=raices,
+        directorio=raices[0],
+        huellas=huellas or HuellasEnMemoria(),
+        cuarentena=cuarentena,
+        **({"tope_bytes": tope_bytes} if tope_bytes is not None else {}),
+    )
+
+    def _fabrica() -> EjecutorPipeline:
+        return EjecutorPipeline(
+            resolutor=resolutor,
+            motor=motor,
+            pepper=pepper,
+            destino=destino,
+            cuarentena=cuarentena,
+            fuente=fuente,
+        )
+
+    return _fabrica
 
 
 @app.task(name="anonimizacion.procesar_documento")

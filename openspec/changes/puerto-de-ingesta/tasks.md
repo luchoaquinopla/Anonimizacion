@@ -70,9 +70,9 @@ Comando de test del proyecto: `pytest` (`pyproject.toml`, `testpaths = ["tests"]
 
 ## Fase 7: rewiring del pipeline
 
-- [ ] 7.1 RED: test de integración — pipeline procesa un artefacto vía adaptador en memoria, sin filesystem.
-- [ ] 7.2 GREEN: `ejecutor.py` — parámetro `fuente: FuenteDeArtefactos`; default `extraer` pasa a `extraer_texto_de_flujo(fuente.abrir(artefacto))`; quitar `Path`/`extraer_texto` de imports.
-- [ ] 7.3 GREEN: `tareas.py:41` `configurar_ejecutor` — la fábrica construye `FuenteLocal(raices=..., tope_bytes=..., huellas=HuellasEnMemoria(), cuarentena=...)` e inyecta en `EjecutorPipeline(fuente=...)`.
+- [x] 7.1 RED: test de integración — pipeline procesa un artefacto vía adaptador en memoria, sin filesystem.
+- [x] 7.2 GREEN: `ejecutor.py` — parámetro `fuente: FuenteDeArtefactos`; default `extraer` pasa a `extraer_texto_de_flujo(fuente.abrir(artefacto))`; quitar `Path`/`extraer_texto` de imports.
+- [x] 7.3 GREEN: `tareas.py:41` `configurar_ejecutor` — la fábrica construye `FuenteLocal(raices=..., tope_bytes=..., huellas=HuellasEnMemoria(), cuarentena=...)` e inyecta en `EjecutorPipeline(fuente=...)`. **Añadido**: `construir_fabrica_ejecutor(...)` (raíz de composición nueva, no había ningún call-site productivo de `configurar_ejecutor` en el repo) construye esa `FuenteLocal` y devuelve la `FabricaEjecutor` lista para registrar.
 
 ## Fase 8: migración de consumidores
 

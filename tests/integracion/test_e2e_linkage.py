@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 
+from anonimizacion.ingesta.fuente import FuenteLocal
 from anonimizacion.parseo.registro import obtener_parseador
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
@@ -92,6 +93,7 @@ def test_ecg_lab_eco_mismo_paciente_dentro_de_7_dias_terminan_con_mismo_paciente
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=FuenteLocal(raices=(tmp_path,), directorio=tmp_path),
         obtener_parseador=obtener_parseador,  # resolver REAL -- sin fakes/wrappers de test
     )
 

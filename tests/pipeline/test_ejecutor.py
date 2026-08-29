@@ -10,6 +10,8 @@ acá sería lento (carga spaCy) e irrelevante para lo que se prueba.
 
 from __future__ import annotations
 
+import io
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
 
@@ -18,11 +20,13 @@ import pytest
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import BACKOFF_SEGUNDOS, MAX_REINTENTOS, EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
 from anonimizacion.pseudonimizacion.vinculacion import MetadataEpisodio, ResultadoVinculacion
+from tests.fixtures.pdf_sintetico import crear_pdf_bytes_con_texto
 
 PEPPER = b"pepper-de-test-no-usar-en-produccion"
 
@@ -538,3 +542,102 @@ def test_lote_vacio_no_falla() -> None:
     assert ejecutor.procesar_lote([]) == ()
     assert escritor.escritos == []
     assert cuarentena.registrados == []
+
+
+# --- rewiring del puerto de ingesta (fase 7, openspec `puerto-de-ingesta`) --
+#
+# Prueba que `EjecutorPipeline` ya no necesita conocer el filesystem: el
+# `extraer` por defecto pasa por `fuente.abrir(artefacto)` +
+# `extraer_texto_de_flujo`, y un adaptador puramente en memoria (sin ninguna
+# ruta real de disco) alcanza para procesar el lote de punta a punta. Si el
+# ejecutor todavía hiciera `Path(artefacto.uri)` por su cuenta, este test
+# fallaría con `FileNotFoundError` porque `memoria://doc1.pdf` no existe en
+# el filesystem.
+
+
+@dataclass
+class _FuenteEnMemoria:
+    """`FuenteDeArtefactos` mínimo que nunca toca disco: `abrir()` sirve
+    bytes ya cargados en un diccionario, indexados por `uri`."""
+
+    contenidos: dict[str, bytes]
+
+    def listar(self) -> Iterator[ArtefactoCrudo]:
+        raise NotImplementedError("este test no ejercita listar()")
+
+    def abrir(self, artefacto: ArtefactoCrudo) -> io.BytesIO:
+        return io.BytesIO(self.contenidos[artefacto.uri])
+
+
+def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> None:
+    contenido_pdf = crear_pdf_bytes_con_texto(["HEMATOLOGIA\nHematocrito 42%"])
+    artefacto = ArtefactoCrudo(uri="memoria://doc1.pdf", sha256="a" * 64, formato=FormatoArtefacto.PDF)
+    fuente = _FuenteEnMemoria(contenidos={artefacto.uri: contenido_pdf})
+    escritor = _EscritorFake(escritos=[])
+    cuarentena = _CuarentenaFake(registrados=[])
+
+    texto_visto_por_el_parseador: list[str] = []
+
+    class _ParseadorFake:
+        def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
+            texto_visto_por_el_parseador.append(texto.texto_completo)
+            return _documento("paciente-1")
+
+    class _ReconciliadorFake:
+        def reconciliar(self, documento: object, texto: TextoExtraido) -> None:
+            return None
+
+    def resolver_claves(*_args: object, **_kwargs: object) -> ClavesPaciente:
+        return ClavesPaciente(id_paciente="paciente-1", id_alt_paciente=None, version_clave=1)
+
+    def vincular_episodios(documentos: list, pepper: bytes) -> ResultadoVinculacion:
+        return ResultadoVinculacion(
+            id_episodio_por_documento={d.id_documento: "episodio-1" for d in documentos},
+            metadata_por_episodio={
+                "episodio-1": MetadataEpisodio(id_paciente="paciente-1", fecha_ancla=date(2026, 1, 10))
+            },
+        )
+
+    def construir_registro(documento: DocumentoParseado, claves: ClavesPaciente, *, id_episodio, pepper, motor_pii=None):
+        return RegistroAnonimizado(
+            id_paciente=claves.id_paciente,
+            id_episodio=id_episodio,
+            tipo_documento=documento.tipo_documento,
+            version_esquema=documento.version_esquema,
+            fecha_estudio=documento.fecha_estudio,
+            contenido=object(),
+            adicionales={},
+        )
+
+    ejecutor = EjecutorPipeline(
+        resolutor=object(),
+        motor=object(),
+        pepper=PEPPER,
+        destino=escritor,
+        cuarentena=cuarentena,
+        fuente=fuente,
+        detectar_tipo=lambda texto: TipoDocumento.LABORATORIO,
+        obtener_parseador=lambda tipo: _ParseadorFake(),
+        obtener_reconciliador=lambda tipo: _ReconciliadorFake(),
+        resolver_claves=resolver_claves,
+        vincular_episodios=vincular_episodios,
+        construir_registro=construir_registro,
+        clasificar_pii=lambda documento, motor: None,
+    )
+
+    (resultado,) = ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=artefacto)])
+
+    assert isinstance(resultado, ExitoDocumento)
+    assert escritor.escritos[0].id_paciente == "paciente-1"
+    assert "HEMATOLOGIA" in texto_visto_por_el_parseador[0]
+
+
+def test_ejecutor_sin_fuente_ni_extraer_falla_explicito_en_la_construccion() -> None:
+    with pytest.raises(ValueError, match="fuente"):
+        EjecutorPipeline(
+            resolutor=object(),
+            motor=object(),
+            pepper=PEPPER,
+            destino=_EscritorFake(escritos=[]),
+            cuarentena=_CuarentenaFake(registrados=[]),
+        )
