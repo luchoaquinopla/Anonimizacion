@@ -69,6 +69,7 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "valor_discrepante",
         "cobertura_incompleta",
         "cobertura_ambigua",
+        "artefacto_sobretamano",
     }
 
 

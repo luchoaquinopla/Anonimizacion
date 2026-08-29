@@ -23,6 +23,7 @@ class EtapaDocumento(str, Enum):
     DETECCION_PII = "deteccion_pii"
     PSEUDONIMIZACION = "pseudonimizacion"
     SALIDA = "salida"
+    INGESTA = "ingesta"
 
 
 class CodigoErrorDocumento(str, Enum):
@@ -54,6 +55,11 @@ class CodigoErrorDocumento(str, Enum):
     VALOR_DISCREPANTE = "valor_discrepante"
     COBERTURA_INCOMPLETA = "cobertura_incompleta"
     COBERTURA_AMBIGUA = "cobertura_ambigua"
+    # Artefacto apartado en `FuenteLocal.listar()` (`ingesta/fuente.py`) por
+    # superar el tope de tamaño configurado. `id_documento` es el sha256 de la
+    # RUTA, no del contenido -- el archivo nunca se lee (ver `tamano_bytes`/
+    # `tope_bytes` abajo, y design.md "puerto de ingesta", Decisión 3).
+    ARTEFACTO_SOBRETAMANO = "artefacto_sobretamano"
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,11 @@ class ErrorDocumento:
     campo: str | None = None
     pagina: int | None = None
     tipo_documento: TipoDocumento | None = None
+    # Exclusivos de `ARTEFACTO_SOBRETAMANO` (ingesta): números, no mensajes
+    # crudos -- coherente con "sin PII en cola, logs ni DLQ". Permiten ajustar
+    # el tope de tamaño leyendo el reporte, sin re-derivar nada del filesystem.
+    tamano_bytes: int | None = None
+    tope_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if self.campo is not None:
