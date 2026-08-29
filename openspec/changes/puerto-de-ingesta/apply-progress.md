@@ -182,3 +182,81 @@ de lo previsto en el plan (la migración formal es la Fase 8, PR4):
    `FuenteArtefacto`/`InventariadorDocumentos`, migración mínima de sus dos
    consumidores y tests (RED+GREEN) en el mismo commit que el comportamiento
    que verifican.
+
+## Lote 3 (PR2, corrección) — persistencia real de `tamano_bytes`/`tope_bytes`
+
+Rama: `feat/puerto-ingesta-fuente-local` (misma rama de PR2).
+
+Estado: **completo**. `pytest` completo: 438 passed, 1 skipped (mismo skip
+preexistente de symlinks en Windows).
+
+### Defecto encontrado
+
+La spec de `puerto-de-ingesta` exige que el motivo de cuarentena por
+sobretamaño incluya el tamaño real y el tope aplicado, justificado
+explícitamente como "que ajustar el límite sea leer un reporte y no
+adivinar". `FuenteLocal._apartar_por_sobretamano` sí completaba
+`ErrorDocumento(tamano_bytes=..., tope_bytes=...)` correctamente, pero:
+
+1. `EscritorCuarentena.registrar` construía la fila `Cuarentena(...)` sin
+   esos dos campos.
+2. El modelo ORM `Cuarentena` no tenía esas columnas.
+
+Los tests existentes pasaban porque afirmaban sobre el `ErrorDocumento` en
+memoria (`tests/ingesta/test_fuente.py`), nunca a través del escritor real
+— el valor se perdía silenciosamente al persistir. El requisito no se
+cumplía de punta a punta.
+
+### Corrección (TDD estricto)
+
+- **RED** — `tests/salida/test_cuarentena.py::test_registrar_persiste_tamano_y_tope_de_sobretamano`:
+  test end-to-end real (no doble) que arma un `FuenteLocal` con un archivo
+  sobredimensionado, un `EscritorCuarentena` sobre SQLite en memoria, corre
+  `listar()`, y lee la fila persistida. Confirmado en rojo:
+  `AttributeError: 'Cuarentena' object has no attribute 'tamano_bytes'`.
+- **GREEN**:
+  - `src/anonimizacion/salida/modelos_orm.py::Cuarentena` — se agregan
+    columnas `tamano_bytes: int | None` y `tope_bytes: int | None`
+    (`Integer`, nullable), documentadas como exclusivas de
+    `ARTEFACTO_SOBRETAMANO`.
+  - `src/anonimizacion/salida/cuarentena.py::EscritorCuarentena.registrar` —
+    pasa `error.tamano_bytes`/`error.tope_bytes` al constructor de
+    `Cuarentena`.
+  - `migrations/versions/0005_tamano_y_tope_cuarentena.py` — nueva
+    migración Alembic, `down_revision = "0004_fusion_corridas_cuarentena"`
+    (head único verificado con `alembic heads` antes de escribirla, dado
+    que hay dos `0002_*` y una fusión en `0004_*`). `upgrade()` agrega
+    ambas columnas; `downgrade()` las elimina en orden inverso.
+  - Se actualizó `test_registrar_persiste_solo_metadata_segura_de_reconciliacion`
+    (assert del set completo de columnas) para incluir las dos nuevas.
+- **REFACTOR**: ninguno necesario — cambio quirúrgico, sin duplicación
+  introducida.
+
+### Decisión evaluada y descartada: `CAMPOS_PERMITIDOS` en `bitacora_segura`
+
+Se evaluó si `tamano_bytes`/`tope_bytes` debían agregarse a
+`CAMPOS_PERMITIDOS` (`observabilidad/bitacora_segura.py`) ya que son
+enteros sin PII. **Se decidió NO agregarlos**: no existe hoy ningún punto
+del pipeline que arme un evento de bitácora (dict) a partir de un
+`ErrorDocumento` de sobretamaño — `BitacoraSegura`/`filtrar_y_redactar` no
+tienen ningún llamador que incluya esas claves. Agregarlas a la whitelist
+sin un caso de uso real sería un cambio especulativo, no verificable con
+un test que ejercite comportamiento real (violaría TDD estricto: no hay
+RED posible para algo que no se llama). Si una fase futura conecta eventos
+de cuarentena por sobretamaño a la bitácora segura, esta decisión debe
+revisarse en ese momento, con su propio test.
+
+### Verificación de coherencia esquema/migración
+
+`tests/salida/test_migraciones.py` (incluye
+`test_metadata_orm_coincide_con_la_migracion` y
+`test_migraciones_tienen_una_unica_cabecera`) corrido explícitamente junto
+con `tests/salida/test_cuarentena.py` y `tests/ingesta/test_fuente.py`
+antes de la corrida completa — todos en verde. No se creó ningún test
+nuevo de comparación esquema-vs-migración: ya existe y cubre el caso.
+
+## Commits de este lote
+
+3. `fix(cuarentena): persiste tamano_bytes y tope_bytes de sobretamano` —
+   modelo ORM + escritor + migración 0005, test RED end-to-end incluido en
+   el mismo commit que la corrección.
