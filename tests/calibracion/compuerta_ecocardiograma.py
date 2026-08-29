@@ -38,6 +38,8 @@ class ResumenEcocardiograma:
     estado_final: str
     codigo_final: str | None
     etapa_final: str | None
+    hora_estudio: str | None
+    precision_hora: str
 
     def como_dict(self) -> dict[str, object]:
         datos = asdict(self)
@@ -91,6 +93,7 @@ CONTRATO_ECOCARDIOGRAMA = ResumenEcocardiograma(
     _SECCIONES, (1,) * 10, (1,) * 10 + (2, 2), 2, _CAMPOS_PII,
     "ejecutada", (("cuasi_identificador", 1), ("medico", 2), ("paciente", 2), ("texto_libre", 0)),
     "ejecutada", _CAMPOS_PII, "aprobado", None, None,
+    None, "ausente",
 )
 
 
@@ -152,6 +155,8 @@ def evaluar_ecocardiograma(ruta: Path) -> ResumenEcocardiograma:
         "no_ejecutada_por_cuarentena" if bloqueada else "ejecutada", pii_por_categoria,
         "no_ejecutada_por_cuarentena" if bloqueada else "ejecutada", retirados,
         estado_final, codigo_final, etapa_final,
+        documento.hora_estudio.isoformat() if documento.hora_estudio is not None else None,
+        documento.precision_hora.value,
     )
 
 

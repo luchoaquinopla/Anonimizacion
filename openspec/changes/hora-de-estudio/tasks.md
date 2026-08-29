@@ -71,16 +71,16 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 ## Fase 7: eco — ausencia explícita, nunca un default
 
-- [ ] 7.1 RED: en `tests/calibracion/test_compuerta_ecocardiograma.py`, agregar la aserción **negativa**: un eco parseado produce `precision_hora == PrecisionHora.AUSENTE` y `hora_estudio is None`, y el test falla explícitamente si en algún momento aparece `time(0, 0)` o cualquier hora no-`None`. En el mismo work unit que este parser.
-- [ ] 7.2 RED: en `tests/parseo/test_eco_doppler.py`, test que confirma que `ParseadorEcoDoppler.parsear` nunca agrega `ReferenciaCampo` de hora ni `id_campo` de hora a `fuentes` (el eco no declara ninguno — sin referencia y sin hallazgo el 1:1 de cobertura se sostiene solo).
-- [ ] 7.3 GREEN: en `parseo/eco_doppler.py`, `parsear` deja `hora_estudio=None` y `precision_hora=PrecisionHora.AUSENTE` explícitos al construir `DocumentoParseado` (usando los defaults de la Fase 1, pero documentando la intención con un comentario que cite el Requirement de la spec, no dejarlo implícito).
-- [ ] 7.4 REFACTOR: confirmar que ningún cambio de Fase 1 rompe el resto de tests de eco (defaults no deben alterar el comportamiento existente de `ParseadorEcoDoppler`).
+- [x] 7.1 RED: en `tests/calibracion/test_compuerta_ecocardiograma.py`, agregar la aserción **negativa**: un eco parseado produce `precision_hora == PrecisionHora.AUSENTE` y `hora_estudio is None`, y el test falla explícitamente si en algún momento aparece `time(0, 0)` o cualquier hora no-`None`. Nota: este test pasa sin ningún cambio de código porque los defaults de la Fase 1 ya entregan el comportamiento correcto — documentado como excepción deliberada al ciclo RED estricto (ver apply-progress.md).
+- [x] 7.2 RED: en `tests/parseo/test_eco_doppler.py`, test que confirma que `ParseadorEcoDoppler.parsear` nunca agrega `ReferenciaCampo` de hora ni `id_campo` de hora a `fuentes`. Misma nota que 7.1: pasa sin cambio de código.
+- [x] 7.3 GREEN: en `parseo/eco_doppler.py`, comentario explícito en `parsear` (antes de construir `ContenidoEco`) documentando que `hora_estudio`/`precision_hora` quedan en los defaults de la Fase 1 y citando el Requirement de la spec — sin cambio de comportamiento.
+- [x] 7.4 REFACTOR: confirmado — suite completa de eco (`test_eco_doppler.py`, `test_compuerta_ecocardiograma.py`, `reconciliacion/test_eco_doppler.py`) en verde sin cambios adicionales.
 
 ## Fase 8: hora ilegible va a cuarentena, no a ausencia silenciosa
 
-- [ ] 8.1 RED: en `tests/parseo/test_ecg_mortara.py` y `tests/parseo/test_laboratorio_general.py`, test con un valor de hora presente pero con formato irreconocible (p. ej. `"25:99"` o texto no numérico en el campo de hora) — confirma que el documento se aparta a cuarentena (`ErrorParseo` con código que identifica el campo de hora como causa) y que el `DocumentoParseado` **no** se construye con `precision_hora = AUSENTE` para ese caso (Requirement: "Hora ilegible va a cuarentena, no a ausencia silenciosa").
-- [ ] 8.2 GREEN: en `parseo/ecg_mortara.py` y `parseo/laboratorio_general.py`, capturar el `ValueError` de `normalizar_hora_iso` y relanzar `ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)` (mismo patrón que el manejo actual de `_parsear_fecha`), en vez de dejar pasar el valor como ausencia.
-- [ ] 8.3 REFACTOR: confirmar que el mensaje/código de cuarentena no filtra el valor crudo de hora (coherente con `dominio/errores.py`, nunca propagar contenido del documento).
+- [x] 8.1 RED: en `tests/parseo/test_ecg_mortara.py` y `tests/parseo/test_laboratorio_general.py`, test con un valor de hora presente pero con formato irreconocible (`"25:99"`) — confirma cuarentena (`PARSEO_INCOMPLETO`). El caso de laboratorio (`test_hora_extraccion_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa`, Fase 5) es un RED genuino porque `_parsear_hora_extraccion` no existía. El caso de ECG (`test_hora_estudio_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa`) pasa sin cambio adicional: el `try/except ValueError` que envuelve `_parsear_fecha` (Fase 3) ya cubre la porción de hora porque `_parsear_fecha` devuelve `(fecha, hora, precision)` en una sola función — documentado como consecuencia de esa decisión de diseño, no como gap.
+- [x] 8.2 GREEN: `parseo/ecg_mortara.py` ya lo resolvía en Fase 3 (mismo `try/except` de `_parsear_fecha`); `parseo/laboratorio_general.py` agrega su propio `try/except ValueError` alrededor de `_parsear_hora_extraccion` en Fase 5, mismo patrón (`ErrorParseo(codigo=PARSEO_INCOMPLETO, etapa=_ETAPA)`).
+- [x] 8.3 REFACTOR: confirmado — ninguno de los dos `except` propaga el valor crudo de hora, solo el código de error tipado.
 
 ## Fase 9: propagación a la salida (`salida/`)
 

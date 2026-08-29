@@ -195,6 +195,25 @@ def test_medidas_en_layout_real_multilinea_orden_variable_no_corrompe_valores() 
         assert resultado.contenido.ejes == "26 51 63"
 
 
+def test_hora_estudio_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa() -> None:
+    """Requirement: "Hora ilegible va a cuarentena, no a ausencia silenciosa"
+    (spec `momento-del-estudio`) -- un header ECG con hora presente pero con
+    formato irreconocible (`25:99`, fuera de rango) debe apartar el
+    documento a cuarentena, nunca publicarse con `precision_hora = AUSENTE`."""
+    header_hora_ilegible = (
+        "MORTARA ELI 380\n"
+        "Prueba Sintetica~,                    ID:900321                  "
+        "05-JUN-2025  25:99:00        HOSPITAL FICTICIO   ROUTINE RECORD\n"
+        "12-DEC-1975 (49 yr)      Female      Unknown\n"
+    )
+    texto = TextoExtraido(paginas=(header_hora_ilegible + _MEDIDAS_REAL + _PIE_REAL,))
+
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorEcgMortara().parsear(texto)
+
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+
+
 def test_header_ausente_lanza_error_parseo() -> None:
     texto = TextoExtraido(paginas=("solo texto sin campos reconocibles",))
     with pytest.raises(ErrorParseo) as info:

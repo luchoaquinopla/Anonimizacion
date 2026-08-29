@@ -27,6 +27,13 @@ def test_sintetico_cumple_contrato_seguro_derivado_del_original(tmp_path) -> Non
     assert resumen.estado_final == "aprobado"
     assert resumen.estado_pii == "ejecutada"
     assert resumen.estado_anonimizacion == "ejecutada"
+    # Requirement: "Ecocardiograma sin hora emite ausencia, nunca un default"
+    # -- aserción negativa: la muestra sintética calibrada NO trae ningún
+    # campo de hora; `hora_estudio` debe ser `None` y `precision_hora`
+    # `AUSENTE`, nunca `"00:00:00"` ni ninguna otra hora.
+    assert resumen.hora_estudio is None
+    assert resumen.hora_estudio != "00:00:00"
+    assert resumen.precision_hora == "ausente"
 
 
 def test_resumen_ecocardiograma_no_contiene_valores_identificatorios(tmp_path) -> None:

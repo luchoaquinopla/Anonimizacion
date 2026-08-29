@@ -7,9 +7,12 @@ texto libre por sección + firma del médico informante, todo en un mismo
 
 from __future__ import annotations
 
+from datetime import time
+
 import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.eco_doppler import ParseadorEcoDoppler
@@ -143,6 +146,38 @@ def test_seccion_que_cruza_paginas_excluye_encabezado_y_pie_repetidos() -> None:
     )
     assert pulmonar.texto == "Flujo sistolico conservado."
     ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+
+def test_eco_nunca_agrega_referencia_de_hora() -> None:
+    """Requirement: "Ausencia explícita cuando el documento no trae hora" (spec
+    `momento-del-estudio`) -- el eco no declara ningún `id_campo` de hora: sin
+    referencia y sin hallazgo, el 1:1 de cobertura se sostiene solo (design.md,
+    decisión 4)."""
+    texto = TextoExtraido(paginas=(_DOCUMENTO_COMPLETO,))
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert all("hora" not in fuente.id_campo for fuente in resultado.fuentes)
+
+
+def test_eco_emite_ausencia_explicita_nunca_un_default_de_medianoche() -> None:
+    """Requirement: "Ecocardiograma sin hora emite ausencia, nunca un default"
+    -- aserción negativa explícita: `hora_estudio` NUNCA debe ser `time(0, 0)`
+    ni ningún otro valor, siempre `None` con `precision_hora = AUSENTE`.
+
+    Nota (documentado en `apply-progress.md`, Fase 7): este test pasa sin
+    ningún cambio de código en `eco_doppler.py` -- los defaults de
+    `DocumentoParseado` (Fase 1) ya entregan `hora_estudio=None` y
+    `precision_hora=AUSENTE` porque `ParseadorEcoDoppler.parsear` nunca los
+    sobrescribe. Se agrega igual como red de seguridad explícita: si algún
+    cambio futuro empezara a completar la hora del eco con un default, este
+    test lo detectaría de inmediato.
+    """
+    texto = TextoExtraido(paginas=(_DOCUMENTO_COMPLETO,))
+    resultado = ParseadorEcoDoppler().parsear(texto)
+
+    assert resultado.hora_estudio is None
+    assert resultado.hora_estudio != time(0, 0)
+    assert resultado.precision_hora is PrecisionHora.AUSENTE
 
 
 def test_header_ausente_lanza_error_parseo() -> None:
