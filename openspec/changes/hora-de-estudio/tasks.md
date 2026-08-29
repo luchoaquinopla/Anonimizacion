@@ -90,10 +90,10 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 ## Fase 10: Parquet — schema explícito (gotcha 4)
 
-- [ ] 10.1 RED: en `tests/salida/destinos/test_parquet.py`, test que escribe un lote **compuesto enteramente por ecocardiogramas** (todos con `precision_hora = AUSENTE`, `hora_estudio = None`) y confirma que la columna `hora_estudio` en el Parquet resultante NO queda con tipo `null` inferido — debe tener un tipo string explícito, para no chocar con la partición de ECG al leer el dataset combinado. Este test debe fallar contra el código actual (que usa `pa.Table.from_pylist` sin schema) antes del GREEN.
-- [ ] 10.2 GREEN: en `destinos/parquet.py::_escribir_dataset`, declarar un `pa.schema` explícito que incluya `hora_estudio` (`pa.string()`, formato ISO o `None`) y `precision_hora` (`pa.string()`) para los tres datasets (`laboratorio`, `ecg`, `eco_medidas`/`eco_texto` si aplica), pasado a `pa.Table.from_pylist(filas, schema=...)`.
-- [ ] 10.3 GREEN: agregar `hora_estudio`/`precision_hora` a los diccionarios de fila en `_filas_laboratorio`, `_filas_ecg` (y a `eco_medidas`/`eco_texto` si el diseño lo pide — confirmar contra el flujo del dato: el eco propaga `precision_hora=AUSENTE` igual que los demás).
-- [ ] 10.4 REFACTOR: test de integración que lee de vuelta un dataset combinado (partición ECG + partición eco) y confirma que no hay conflicto de tipo de columna entre particiones.
+- [x] 10.1 RED: en `tests/salida/destinos/test_parquet.py`, test que escribe un lote **compuesto enteramente por ecocardiogramas** y confirma que la columna `hora_estudio` en el Parquet resultante NO queda con tipo `null` inferido — debe tener un tipo string explícito. Falló contra el código sin schema (`KeyError`/tipo `null` inferido) antes del GREEN.
+- [x] 10.2 GREEN: `destinos/parquet.py` declara `pa.schema` explícito (`_SCHEMA_LABORATORIO`, `_SCHEMA_ECG`, `_SCHEMA_ECO_MEDIDAS`, `_SCHEMA_ECO_TEXTO`) con `hora_estudio`/`precision_hora` como `pa.string()`, pasado a `pa.Table.from_pylist(filas, schema=...)` en los cuatro datasets.
+- [x] 10.3 GREEN: `hora_estudio`/`precision_hora` agregados a los diccionarios de fila en los cuatro builders (`_filas_laboratorio`, `_filas_ecg`, `_filas_eco_medidas`, `_filas_eco_texto`) — el eco también propaga `precision_hora=AUSENTE`.
+- [x] 10.4 REFACTOR: `test_dataset_combinado_ecg_y_eco_no_choca_por_tipo_de_columna_hora` y `test_precision_hora_distingue_valores_de_hora_byte_a_byte_identicos` confirman lectura correcta con y sin valores no nulos, y que `precision_hora` distingue una hora de laboratorio (MINUTO) de una hora de ECG (SEGUNDO) byte-a-byte idénticas en `hora_estudio`.
 
 ## Fase 11: ORM — tabla `Estudio` y FK nullable
 
