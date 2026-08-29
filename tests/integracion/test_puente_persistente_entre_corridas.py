@@ -26,6 +26,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy import event
 
+from anonimizacion.ingesta.fuente import FuenteLocal
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
@@ -72,6 +73,11 @@ def test_ecg_de_otra_corrida_resuelve_el_puente_persistido_por_el_lab_de_una_cor
     # único que se comparte entre "corrida 1" y "corrida 2" es el engine, NO
     # ninguna instancia de ResolutorClavesPostgres ni de EjecutorPipeline.
     engine = _engine_con_fk_reales()
+    # rewiring del puerto de ingesta (fase 7, openspec `puerto-de-ingesta`):
+    # `EjecutorPipeline` ya no lee `Path(artefacto.uri)` por su cuenta -- abre
+    # el artefacto vía la `FuenteLocal` inyectada, igual que en producción
+    # (`scripts/procesar_carpeta.py`).
+    fuente = FuenteLocal(raices=(tmp_path,), directorio=tmp_path)
 
     artefacto_lab = documentos.escribir_pdf(
         tmp_path,
@@ -88,6 +94,7 @@ def test_ecg_de_otra_corrida_resuelve_el_puente_persistido_por_el_lab_de_una_cor
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=fuente,
     )
     resultados_1 = ejecutor_corrida_1.procesar_lote(
         [ItemLote(id_documento="doc-lab-puente", artefacto=artefacto_lab)]
@@ -111,6 +118,7 @@ def test_ecg_de_otra_corrida_resuelve_el_puente_persistido_por_el_lab_de_una_cor
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=fuente,
     )
     resultados_2 = ejecutor_corrida_2.procesar_lote(
         [ItemLote(id_documento="doc-ecg-puente", artefacto=artefacto_ecg)]

@@ -39,15 +39,15 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Protocol
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.deteccion.detector_tipo import detectar_tipo as _detectar_tipo_real
-from anonimizacion.extraccion.texto_pymupdf import TextoExtraido, extraer_texto
+from anonimizacion.extraccion.texto_pymupdf import TextoExtraido, extraer_texto_de_flujo
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo
+from anonimizacion.ingesta.fuente import FuenteDeArtefactos
 from anonimizacion.parseo.base import ParseadorDocumento
 from anonimizacion.parseo.registro import obtener_parseador as _obtener_parseador_real
 from anonimizacion.pii.motor import MotorPii
@@ -166,6 +166,15 @@ class EjecutorPipeline:
     ver `scripts/procesar_carpeta.py`: el puente sobrevive entre corridas
     separadas del programa porque vive en la tabla `vinculo_paciente`, no en
     memoria).
+
+    `fuente` (openspec `puerto-de-ingesta`, design.md): puerto de ingesta
+    (`ingesta/fuente.py::FuenteDeArtefactos`) usado para construir el
+    `extraer` por defecto -- `extraer_texto_de_flujo(fuente.abrir(artefacto))`.
+    El core ya no conoce `pathlib`: ningún `Path(artefacto.uri)` vive en este
+    módulo. `fuente` es opcional solo porque los tests inyectan su propio
+    `extraer` fake (no necesitan abrir nada real); en producción,
+    `trabajadores/tareas.py::configurar_ejecutor` siempre construye una
+    `FuenteLocal` y la inyecta acá.
     """
 
     def __init__(
@@ -176,10 +185,9 @@ class EjecutorPipeline:
         pepper: bytes,
         destino: DestinoEscritura,
         cuarentena: DestinoCuarentena,
+        fuente: FuenteDeArtefactos | None = None,
         dormir: Callable[[float], None] = time.sleep,
-        extraer: Callable[[ArtefactoCrudo], TextoExtraido] = lambda artefacto: extraer_texto(
-            Path(artefacto.uri)
-        ),
+        extraer: Callable[[ArtefactoCrudo], TextoExtraido] | None = None,
         detectar_tipo: Callable[[TextoExtraido], TipoDocumento] = _detectar_tipo_real,
         obtener_parseador: Callable[[TipoDocumento], ParseadorDocumento] = _obtener_parseador_real,
         obtener_reconciliador: Callable[[TipoDocumento], ReconciliadorDocumento] = _obtener_reconciliador_real,
@@ -196,8 +204,18 @@ class EjecutorPipeline:
         self._pepper = pepper
         self._destino = destino
         self._cuarentena = cuarentena
+        self._fuente = fuente
         self._dormir = dormir
-        self._extraer = extraer
+        if extraer is not None:
+            self._extraer = extraer
+        elif fuente is not None:
+            self._extraer = self._extraer_por_defecto
+        else:
+            raise ValueError(
+                "EjecutorPipeline requiere `fuente` (o un `extraer` explicito para "
+                "tests): sin una fuente no hay forma de abrir el artefacto para "
+                "extraer su texto."
+            )
         self._detectar_tipo = detectar_tipo
         self._obtener_parseador = obtener_parseador
         self._obtener_reconciliador = obtener_reconciliador
@@ -206,6 +224,19 @@ class EjecutorPipeline:
         self._coordinar_episodios = coordinar_episodios
         self._construir_registro = construir_registro
         self._clasificar_pii = clasificar_pii
+
+    def _extraer_por_defecto(self, artefacto: ArtefactoCrudo) -> TextoExtraido:
+        """`extraer` por defecto: abre el artefacto vía `self._fuente` y
+        extrae su texto del flujo, sin tocar `pathlib` (design.md, Decisión 2
+        y 4). `self._fuente` no puede ser `None` acá -- `__init__` ya validó
+        que si `extraer` no se proveyó, `fuente` sí.
+
+        Ciclo de vida: `fuente.abrir()` entrega un `BinaryIO` fresco; este es
+        el LLAMADOR, así que lo cierra con `with` apenas termina de leerlo.
+        """
+        assert self._fuente is not None  # invariante garantizado por __init__
+        with self._fuente.abrir(artefacto) as flujo:
+            return extraer_texto_de_flujo(flujo)
 
     def procesar_lote(self, items: Sequence[ItemLote]) -> tuple[ResultadoDocumento, ...]:
         resultados: list[ResultadoDocumento] = []

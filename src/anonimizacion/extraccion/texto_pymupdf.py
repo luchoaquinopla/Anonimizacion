@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 import pymupdf
 
@@ -82,11 +83,25 @@ class TextoExtraido:
         return "\n".join(self.paginas_ordenadas)
 
 
-def extraer_texto(ruta: Path) -> TextoExtraido:
-    """Extrae el texto nativo de `ruta`. Lanza `ErrorParseo` si no es posible."""
+def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
+    """Extrae el texto nativo de un PDF ya abierto como flujo de bytes.
+
+    openspec `puerto-de-ingesta` (design.md, Decisión 4): esta es la función
+    que usa el pipeline real, vía `fuente.abrir(artefacto)`
+    (`pipeline/ejecutor.py`) -- el core ya no conoce `pathlib`. PyMuPDF acepta
+    el flujo directo con `stream=..., filetype="pdf"`, sin volcarlo antes a
+    un archivo temporal.
+
+    Gotcha: un flujo vacío (`b""`) hace que PyMuPDF lance
+    `pymupdf.EmptyFileError`, que es subclase de `FileDataError` -- ya cae en
+    el mismo `except` que cualquier otro flujo no abrible, mapeado a
+    `PARSEO_INCOMPLETO` (el mismo código que usa el caso `corrupto` del
+    corpus piloto, del que depende ese ensayo).
+    """
+    datos = flujo.read()
     try:
-        documento = pymupdf.open(ruta)
-    except (pymupdf.FileDataError, FileNotFoundError, RuntimeError) as _exc:
+        documento = pymupdf.open(stream=datos, filetype="pdf")
+    except (pymupdf.FileDataError, RuntimeError) as _exc:
         raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA) from _exc
 
     try:
@@ -102,3 +117,25 @@ def extraer_texto(ruta: Path) -> TextoExtraido:
         raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
 
     return TextoExtraido(paginas=paginas, paginas_ordenadas=paginas_ordenadas)
+
+
+def extraer_texto(ruta: Path) -> TextoExtraido:
+    """Conveniencia de CLI y tests: abre `ruta` del filesystem y delega en
+    `extraer_texto_de_flujo`.
+
+    El pipeline real NO usa esta función (design.md, Decisión 4) -- usa
+    `extraer_texto_de_flujo` directo sobre el `BinaryIO` que entrega
+    `fuente.abrir(artefacto)` (`pipeline/ejecutor.py`). Se conserva con esta
+    firma porque migrarla rompería ~13 llamadas existentes, entre ellas las
+    tres compuertas de `tests/calibracion/`, cuyo valor es justamente su
+    estabilidad frente a los PDFs de muestra reales.
+
+    `FileNotFoundError` se mapea acá (no en `extraer_texto_de_flujo`, que
+    nunca ve una ruta) al mismo `PARSEO_INCOMPLETO` que cualquier otro fallo
+    de apertura -- comportamiento ya existente, preservado.
+    """
+    try:
+        with ruta.open("rb") as flujo:
+            return extraer_texto_de_flujo(flujo)
+    except FileNotFoundError as _exc:
+        raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA) from _exc

@@ -158,12 +158,18 @@ def ejecutar_corpus_sintetico(
         nonlocal reintentos
         reintentos += 1
 
+    # rewiring del puerto de ingesta (fase 7, openspec `puerto-de-ingesta`):
+    # `EjecutorPipeline` ya no lee `Path(artefacto.uri)` por su cuenta -- una
+    # `FuenteLocal` propia (no la usada para el inventario de arriba, que
+    # trae su propia dedup/cuarentena) le sirve para abrir los artefactos.
+    fuente_ejecutor = FuenteLocal(raices=(directorio,), directorio=entrada)
     ejecutor = EjecutorPipeline(
         resolutor=object(),
         motor=_MotorPiiOffline(),
         pepper=b"pepper-piloto-sintetico",
         destino=destino,
         cuarentena=cuarentena,
+        fuente=fuente_ejecutor,
         dormir=contar_reintento,
         resolver_claves=_resolver_claves,
         coordinar_episodios=coordinar_episodios,

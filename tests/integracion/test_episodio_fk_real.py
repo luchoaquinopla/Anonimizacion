@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy import event
 
+from anonimizacion.ingesta.fuente import FuenteLocal
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pipeline.resultado import ExitoDocumento
@@ -73,6 +74,7 @@ def test_episodio_se_persiste_antes_que_las_filas_hijas_con_fk_reales_activos(tm
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
+        fuente=FuenteLocal(raices=(tmp_path,), directorio=tmp_path),
     )
 
     # sin el fix, esto lanza `sqlite3.IntegrityError: FOREIGN KEY constraint

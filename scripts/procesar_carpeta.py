@@ -75,12 +75,18 @@ def main() -> int:
     # separadas del script, a diferencia de `ResolutorClaves()` en memoria.
     resolutor = ResolutorClavesPostgres(destino)
 
+    # Puerto de ingesta (openspec `puerto-de-ingesta`, fase 7): se construye
+    # ANTES del ejecutor porque este último lo necesita para abrir cada
+    # artefacto -- ya no lee `Path(artefacto.uri)` directo.
+    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
+
     ejecutor = EjecutorPipeline(
         resolutor=resolutor,
         motor=motor,
         pepper=pepper,
         destino=destino,
         cuarentena=cuarentena,
+        fuente=fuente,
     )
 
     print(f"Listando PDFs en {args.entrada}...", file=sys.stderr)
@@ -88,7 +94,6 @@ def main() -> int:
     # `Sequence`, y la coordinación de episodios opera sobre el lote
     # completo): la pereza de `listar()` rinde en el camino de despacho a
     # cola, no acá (design.md, "Migración de consumidores").
-    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
     artefactos = list(fuente.listar())
     if not artefactos:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)

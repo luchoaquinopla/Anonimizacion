@@ -48,6 +48,23 @@ def crear_pdf_corrupto(ruta: Path) -> Path:
     return ruta
 
 
+def crear_pdf_bytes_con_texto(paginas: list[str]) -> bytes:
+    """Como `crear_pdf_con_texto`, pero devuelve los bytes en memoria (sin tocar disco).
+
+    Usado por los tests de `extraer_texto_de_flujo` (fase 6, openspec
+    `puerto-de-ingesta`): el flujo del pipeline ya no pasa por una ruta de
+    filesystem, así que el PDF sintético tampoco debería necesitar una.
+    """
+    documento = pymupdf.open()
+    for texto in paginas:
+        pagina = documento.new_page()
+        if texto:
+            pagina.insert_text((72, 72), texto, fontsize=11)
+    datos = documento.tobytes()
+    documento.close()
+    return datos
+
+
 def crear_pdf_layout_columnas(
     ruta: Path,
     filas: list[tuple[str, str]],
