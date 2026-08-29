@@ -8,12 +8,13 @@ Fase 2 (ingesta) y Fase 4 (parseo) sin romper este contrato.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from .precision_hora import PrecisionHora
 from .tipos_documento import TipoDocumento
 
 if TYPE_CHECKING:
@@ -47,6 +48,11 @@ class DocumentoParseado:
     contenido: Any  # ContenidoEcg | ContenidoLaboratorio | ContenidoEco (Fase 4)
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     fuentes: tuple[ReferenciaCampo, ...] = field(default_factory=tuple)
+    # Hora del estudio, separada de `fecha_estudio` (spec `momento-del-estudio`).
+    # Default `None`/`AUSENTE`: no romper construcciones existentes de otras
+    # fases del pipeline que todavía no pasan estos dos campos.
+    hora_estudio: time | None = None
+    precision_hora: PrecisionHora = PrecisionHora.AUSENTE
 
     def __post_init__(self) -> None:
         from anonimizacion.reconciliacion.base import ReferenciaCampo
@@ -77,3 +83,5 @@ class RegistroAnonimizado:
     fecha_estudio: date
     contenido: Any  # datos estructurados sin PII, tipados en Fase 7
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    hora_estudio: time | None = None
+    precision_hora: PrecisionHora = PrecisionHora.AUSENTE
