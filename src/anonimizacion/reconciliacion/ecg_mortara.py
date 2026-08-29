@@ -15,10 +15,19 @@ from .base import HallazgoCobertura
 from .normalizacion import normalizar_texto
 
 
+_PATRON_TIMESTAMP_COMPLETO = re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}:\d{2}")
+
 _PATRONES_INVENTARIO = (
     ("ecg.nombre", "header", re.compile(r"(?m)^[^\n~]+~,")),
     ("ecg.id_estudio", "header", re.compile(r"ID:\S+")),
-    ("ecg.fecha_estudio", "header", re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}:\d{2}")),
+    ("ecg.fecha_estudio", "header", _PATRON_TIMESTAMP_COMPLETO),
+    # Gotcha 1 (design.md, decisión 4): NO usar un patrón suelto
+    # `\d{2}:\d{2}:\d{2}` -- matchearía cualquier otra hora del documento
+    # (p. ej. una hora de impresión) y produciría `COBERTURA_AMBIGUA`. Se
+    # reutiliza el mismo patrón del timestamp completo que `ecg.fecha_estudio`
+    # (anclado a `DD-MON-YYYY HH:MM:SS`) para identificar sin ambigüedad la
+    # hora del estudio.
+    ("ecg.hora_estudio", "header", _PATRON_TIMESTAMP_COMPLETO),
     ("ecg.fecha_nacimiento", "header", re.compile(r"(?m)^\d{2}-[A-Za-z]{3}-\d{4}\s*\(\d+\s*yr\)")),
     ("ecg.vent_rate", "medida", re.compile(r"\bVent\.?\s*[Rr]ate\b")),
     ("ecg.pr_interval", "medida", re.compile(r"\bPR(?:\s*interval)?\b")),
@@ -63,6 +72,12 @@ def _asociacion_ecg(referencia: object, esperado: str, pagina: str) -> bool:
         return coincidencia is not None and _igual(coincidencia.group(1), esperado)
     if selector == "ecg.fecha_estudio":
         coincidencia = re.search(r"\b(\d{2}-[a-z]{3}-\d{4})\s+\d{2}:\d{2}:\d{2}", pagina, re.IGNORECASE)
+        return coincidencia is not None and _igual(coincidencia.group(1), esperado)
+    if selector == "ecg.hora_estudio":
+        # Misma ancla que `ecg.fecha_estudio`: solo cuenta la hora que sigue
+        # inmediatamente a una fecha `DD-MON-YYYY` (el timestamp completo del
+        # estudio), nunca una hora suelta en otra parte del documento.
+        coincidencia = re.search(r"\b\d{2}-[a-z]{3}-\d{4}\s+(\d{2}:\d{2}:\d{2})", pagina, re.IGNORECASE)
         return coincidencia is not None and _igual(coincidencia.group(1), esperado)
     if selector == "ecg.fecha_nacimiento":
         coincidencia = re.search(r"(?m)^(\d{2}-[a-z]{3}-\d{4})\s*\(\d+\s*yr\)", pagina, re.IGNORECASE)
@@ -134,6 +149,9 @@ class ReconciliadorEcgMortara:
             ("ecg.nombre", 0): documento.identidad.nombre.get_secret_value(),
             **({("ecg.id_estudio", 0): documento.identidad.ids_internos[0].get_secret_value()} if documento.identidad.ids_internos else {}),
             ("ecg.fecha_estudio", 0): documento.fecha_estudio.strftime("%d-%b-%Y"),
+            ("ecg.hora_estudio", 0): (
+                documento.hora_estudio.strftime("%H:%M:%S") if documento.hora_estudio is not None else None
+            ),
             ("ecg.fecha_nacimiento", 0): fecha_nacimiento,
             ("ecg.vent_rate", 0): contenido.vent_rate,
             ("ecg.pr_interval", 0): contenido.pr_interval,

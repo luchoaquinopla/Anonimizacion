@@ -11,9 +11,12 @@ etiquetas "Campo: valor" salvo unos pocos campos de pie) — ver docstring de
 
 from __future__ import annotations
 
+from datetime import time
+
 import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.ecg_mortara import ParseadorEcgMortara
@@ -62,6 +65,18 @@ def test_parsea_ecg_layout_real_sin_advertencias() -> None:
     assert "advertencia_equipo" not in resultado.adicionales
     assert resultado.adicionales["institucion"] == "HOSPITAL FICTICIO"
     assert resultado.adicionales["medico_derivante"] == "Dr Ficticio Derivante"
+
+
+def test_ecg_conserva_hora_con_precision_de_segundo_sin_truncar() -> None:
+    """Requirement: "ECG conserva la hora capturada en el header" (spec
+    `momento-del-estudio`) -- el header `DD-MON-YYYY HH:MM:SS` debe conservar
+    la hora con precisión de segundo, sin truncarla al convertir la fecha."""
+    texto = TextoExtraido(paginas=(_HEADER_REAL + _MEDIDAS_REAL + _PIE_REAL,))
+    resultado = ParseadorEcgMortara().parsear(texto)
+
+    assert resultado.fecha_estudio.isoformat() == "2025-06-05"
+    assert resultado.hora_estudio == time(10, 22, 31)
+    assert resultado.precision_hora is PrecisionHora.SEGUNDO
 
 
 def test_extrae_fecha_nacimiento_normalizada_a_iso_para_el_puente_de_identidad() -> None:

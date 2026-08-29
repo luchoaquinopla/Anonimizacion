@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+from datetime import time
 
 import pytest
 
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from tests.calibracion.compuerta_ecg import (
     CONTRATO_ECG,
     ResumenEcg,
@@ -30,6 +32,11 @@ def test_sintetico_cumple_contrato_seguro_derivado_del_original(tmp_path, semill
     assert resumen.estado_final == "aprobado"
     assert resumen.estado_pii == "ejecutada"
     assert resumen.estado_anonimizacion == "ejecutada"
+    # Requirement: "ECG conserva la hora capturada en el header" -- la muestra
+    # sintética calibrada trae `08:30:00` (ver `tests/fixtures/pdf_sintetico.py`,
+    # `_crear_ecg`); la compuerta verifica el valor exacto campo por campo.
+    assert resumen.hora_estudio == time(8, 30, 0).isoformat()
+    assert resumen.precision_hora == PrecisionHora.SEGUNDO.value
 
 
 def test_resumen_ecg_no_contiene_valores_identificatorios_ni_senal(tmp_path) -> None:

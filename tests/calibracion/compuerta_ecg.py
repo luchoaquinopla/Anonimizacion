@@ -35,6 +35,8 @@ class ResumenEcg:
     estado_final: str
     codigo_final: str | None
     etapa_final: str | None
+    hora_estudio: str | None
+    precision_hora: str
 
     def como_dict(self) -> dict[str, object]:
         datos = asdict(self)
@@ -74,6 +76,7 @@ CONTRATO_ECG = ResumenEcg(
     (1, 1, 1, 1, 1), "PID_NAME_MISMATCH", "fuera_de_contrato_clinico", _CAMPOS_PII,
     "ejecutada", (("cuasi_identificador", 1), ("medico", 1), ("paciente", 2), ("texto_libre", 0)),
     "ejecutada", _CAMPOS_PII, "aprobado", None, None,
+    "08:30:00", "segundo",
 )
 
 
@@ -154,6 +157,8 @@ def evaluar_ecg(ruta: Path) -> ResumenEcg:
         "no_ejecutada_por_cuarentena" if bloqueada else "ejecutada", pii_por_categoria,
         "no_ejecutada_por_cuarentena" if bloqueada else "ejecutada", retirados,
         estado_final, codigo_final, etapa_final,
+        documento.hora_estudio.isoformat() if documento.hora_estudio is not None else None,
+        documento.precision_hora.value,
     )
 
 
