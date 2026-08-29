@@ -179,8 +179,8 @@ def evaluar_preflight(salida: Path, oraculo: OraculoCarga) -> PreflightCarga:
         (oraculo.pdfs_entrada + oraculo.pdfs_staging_generados) * 45_131 * 1.2
     )
     factor = oraculo.pdfs_entrada / ORACULO_CARGA_1000.pdfs_entrada
-    memoria_estimada = int(145_432_576 * factor)
-    tiempo_estimado = round(226.541137 * factor, 6)
+    memoria_estimada = int(145_698_816 * factor)
+    tiempo_estimado = round(218.644002 * factor, 6)
     return PreflightCarga(
         espacio,
         memoria,

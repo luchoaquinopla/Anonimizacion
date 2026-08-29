@@ -69,8 +69,14 @@ siete y ocho días, faltantes, asociaciones ambiguas y un archivo corrupto. En l
 del 23 de agosto de 2026 se inventariaron 998 documentos únicos: 972 fueron aprobados dentro de
 324 episodios y 26 quedaron en cuarentena según el oráculo; no hubo reintentos ni PII en salida.
 
-La corrida corregida tardó 226,54 segundos: 4,414 PDFs de entrada/s y 4,405 documentos únicos/s.
-El pico *lifetime* del proceso fue 145.432.576 bytes. Cada ejecución usa un directorio UUID aislado
+La corrida más reciente (tras migrar la ingesta a `FuenteLocal` con enumeración perezosa, PR4 de
+`puerto-de-ingesta`) tardó 218,64 segundos: 4,574 PDFs de entrada/s y 4,564 documentos únicos/s —
+una mejora de ~7,9 s (~3,5 %) sobre la medición previa (226,54 s), consistente con que la
+enumeración perezosa no debía empeorar tiempo ni memoria. El pico *lifetime* del proceso fue
+145.698.816 bytes (antes 145.432.576 bytes; diferencia de ~0,18 %, dentro del ruido de medición).
+La composición del corpus (998 únicos, 2 duplicados, 972 aprobados, 324 episodios, 26 cuarentenas
+por el mismo desglose de motivos) se mantuvo idéntica: no hay regresión funcional. Cada ejecución
+usa un directorio UUID aislado
 y agrega sus métricas al reporte estable, por lo que puede repetirse sin mezclar corpus anteriores.
 El workspace conserva 1.005 PDFs de staging y 1.000 PDFs de entrada durante la corrida: esta
 medición incluye ese doble I/O y no presenta las entradas como el total de archivos almacenados.
