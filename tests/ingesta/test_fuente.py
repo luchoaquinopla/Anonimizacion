@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
-from anonimizacion.ingesta.artefacto import FormatoArtefacto
-from anonimizacion.ingesta.fuente import FuenteArtefacto, InventariadorDocumentos
+from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
+from anonimizacion.ingesta.fuente import (
+    FuenteArtefacto,
+    FuenteDeArtefactos,
+    FuenteLocal,
+    HuellasEnMemoria,
+    InventariadorDocumentos,
+)
 
 
 def _crear_pdf_falso(ruta: Path, contenido: bytes) -> str:
@@ -112,3 +120,104 @@ def test_inventariador_detecta_destino_resuelto_fuera_de_la_raiz(tmp_path: Path)
     _crear_pdf_falso(destino_externo, b"%PDF-1.4 externo")
 
     assert InventariadorDocumentos._esta_dentro_de_raiz(destino_externo, entrada) is False
+
+
+# --- Fase 1: `Protocol FuenteDeArtefactos` -----------------------------------
+#
+# `FuenteLocal` todavía no implementa `abrir()` (llega en la Fase 5, PR2), así
+# que el contrato se prueba acá contra dobles mínimos definidos en el propio
+# test, no contra `FuenteLocal`. Es una desviación deliberada de la redacción
+# literal de tasks.md 1.1 ("FuenteLocal debe satisfacer..."): probar el
+# contrato contra `FuenteLocal` en esta fase daría un falso rechazo porque el
+# `Protocol` exige `listar()` Y `abrir()`, y `abrir()` no existe todavía. Ver
+# apply-progress.md para el detalle de la desviación.
+
+
+class _FuenteDobleCompleta:
+    """Doble mínimo que satisface `listar()` y `abrir()`."""
+
+    def listar(self) -> Iterator[ArtefactoCrudo]:
+        yield from ()
+
+    def abrir(self, artefacto: ArtefactoCrudo) -> BinaryIO:  # pragma: no cover - no se invoca
+        raise NotImplementedError
+
+
+class _FuenteDobleIncompleta:
+    """Doble que solo implementa `listar()`, sin `abrir()`."""
+
+    def listar(self) -> Iterator[ArtefactoCrudo]:
+        yield from ()
+
+
+def test_protocolo_fuente_de_artefactos_acepta_adaptador_conforme() -> None:
+    assert isinstance(_FuenteDobleCompleta(), FuenteDeArtefactos)
+
+
+def test_protocolo_fuente_de_artefactos_rechaza_adaptador_sin_abrir() -> None:
+    assert not isinstance(_FuenteDobleIncompleta(), FuenteDeArtefactos)
+
+
+# --- Fase 2: trampa del generador perezoso -----------------------------------
+
+
+def test_fuente_local_rechaza_ruta_fuera_de_raiz_sin_iterar(tmp_path: Path) -> None:
+    entrada_autorizada = tmp_path / "entrada"
+    entrada_autorizada.mkdir()
+    ruta_no_autorizada = tmp_path / "otra_entrada"
+    ruta_no_autorizada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada_autorizada,), directorio=ruta_no_autorizada)
+
+    # Sin iterar: si `listar()` fuera un generador "puro" (con `yield` en su
+    # propio cuerpo), la validación no correría hasta el primer `next()` y
+    # esta llamada no lanzaría nada. `listar()` MUST validar de forma ansiosa.
+    with pytest.raises(PermissionError):
+        fuente.listar()
+
+
+def test_fuente_local_directorio_inexistente_falla_explicito_sin_iterar(tmp_path: Path) -> None:
+    entrada_autorizada = tmp_path / "entrada"
+    entrada_autorizada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada_autorizada,), directorio=entrada_autorizada / "no_existe")
+
+    with pytest.raises(FileNotFoundError):
+        fuente.listar()
+
+
+def test_fuente_local_lista_pdfs_de_directorio_autorizado(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    sha_esperado = _crear_pdf_falso(entrada / "doc001.pdf", b"%PDF-1.4 contenido sintetico")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    (artefacto,) = artefactos
+    assert artefacto.formato is FormatoArtefacto.PDF
+    assert artefacto.sha256 == sha_esperado
+
+
+# --- Fase 3: deduplicación delegada ------------------------------------------
+
+
+def test_huellas_en_memoria_marca_segunda_huella_repetida_como_no_nueva() -> None:
+    huellas = HuellasEnMemoria()
+    sha = "a" * 64
+
+    assert huellas.es_nueva(sha) is True
+    assert huellas.es_nueva(sha) is False
+
+
+def test_fuente_local_omite_contenido_duplicado_via_registro_de_huellas(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    _crear_pdf_falso(entrada / "original.pdf", b"%PDF-1.4 contenido repetido")
+    _crear_pdf_falso(entrada / "copia.pdf", b"%PDF-1.4 contenido repetido")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, huellas=HuellasEnMemoria())
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1

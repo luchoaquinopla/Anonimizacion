@@ -33,18 +33,18 @@ Comando de test del proyecto: `pytest` (`pyproject.toml`, `testpaths = ["tests"]
 
 ## Fase 1: `Protocol` de ingesta
 
-- [ ] 1.1 RED: test de contrato — `FuenteLocal` debe satisfacer un `Protocol FuenteDeArtefactos` (`typing.assert_type` o chequeo estructural) en `tests/ingesta/test_fuente.py`.
-- [ ] 1.2 GREEN: declarar `FuenteDeArtefactos` (`listar()`/`abrir()`) en `fuente.py`, espejo de `DestinoEscritura`/`DestinoCuarentena`.
+- [x] 1.1 RED: test de contrato — `FuenteLocal` debe satisfacer un `Protocol FuenteDeArtefactos` (`typing.assert_type` o chequeo estructural) en `tests/ingesta/test_fuente.py`. **Desvío documentado**: probado contra dobles mínimos definidos en el test, no contra `FuenteLocal`, porque `abrir()` no existe hasta la Fase 5 (PR2) y el `Protocol` exige ambos métodos. Ver apply-progress.md.
+- [x] 1.2 GREEN: declarar `FuenteDeArtefactos` (`listar()`/`abrir()`) en `fuente.py`, espejo de `DestinoEscritura`/`DestinoCuarentena`.
 
 ## Fase 2: trampa del generador perezoso
 
-- [ ] 2.1 RED: test que llama `FuenteLocal(...).listar()` sobre ruta no autorizada SIN iterar y espera `PermissionError` inmediato.
-- [ ] 2.2 GREEN: `listar()` es función normal (valida raíz+directorio ansiosamente) que retorna un generador interno.
+- [x] 2.1 RED: test que llama `FuenteLocal(...).listar()` sobre ruta no autorizada SIN iterar y espera `PermissionError` inmediato.
+- [x] 2.2 GREEN: `listar()` es función normal (valida raíz+directorio ansiosamente) que retorna un generador interno.
 
 ## Fase 3: deduplicación delegada
 
-- [ ] 3.1 RED: test `HuellasEnMemoria.es_nueva(sha256)` — segunda huella igual devuelve `False`.
-- [ ] 3.2 GREEN: `Protocol RegistroDeHuellas` + `HuellasEnMemoria` en `fuente.py`.
+- [x] 3.1 RED: test `HuellasEnMemoria.es_nueva(sha256)` — segunda huella igual devuelve `False`.
+- [x] 3.2 GREEN: `Protocol RegistroDeHuellas` + `HuellasEnMemoria` en `fuente.py`.
 
 > `HuellasDeCorrida` (respaldo en `RepositorioCorridas`) queda deliberadamente fuera de este
 > cambio: sin despachador no tendría consumidor. Ver la decisión al inicio del documento.
