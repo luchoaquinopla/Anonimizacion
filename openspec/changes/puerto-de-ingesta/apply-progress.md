@@ -408,3 +408,121 @@ Windows, no relacionado con este lote).
    defecto vía el puerto de ingesta, `construir_fabrica_ejecutor` en
    `tareas.py`, y la migración de los cinco consumidores/tests que la
    suite en verde exigía.
+
+## Lote 5 (PR4) — Fases 8 y 9
+
+Rama: `feat/puerto-ingesta-carga`, creada desde `main` (que ya tiene PR1,
+PR2 y PR3 mergeados).
+
+Estado: **completo, salvo 9.2 (10.000 PDFs) diferida a propósito**.
+`pytest` completo: 446 passed, 1 skipped (mismo skip preexistente de
+symlinks en Windows, no relacionado).
+
+### Auditoría de Fase 8 (no rehacer lo ya adelantado)
+
+Los Lotes 2 y 4 ya habían adelantado 8.1 y 8.2 (necesidad de no dejar la
+suite en rojo tras eliminar `FuenteArtefacto`/`InventariadorDocumentos` en
+4.5 y tras exigir `fuente` en `EjecutorPipeline` en 7.2). Se auditó en vez
+de rehacer:
+
+- **8.1/8.2**: confirmado con grep que `scripts/procesar_carpeta.py` y
+  `tests/fixtures/corpus_piloto.py` ya usan `FuenteLocal` con la firma
+  exacta descripta en tasks.md (incluido `tope_bytes=10*1024*1024`,
+  `HuellasEnMemoria()`, `_CuarentenaMemoria()` en el fixture). Cero
+  cambios de código necesarios.
+- **8.3**: `tests/trabajadores/test_tareas.py::test_procesar_documento_solo_recibe_id_uri_sha256`
+  ya existía y confirma por construcción (assert de la firma de
+  `tareas.procesar_documento.run`) que el payload de cola sigue siendo
+  exactamente `{id_documento, uri, sha256}`. Se leyó el test completo y se
+  confirmó que cubre el requisito de la spec sin ambigüedad — no se
+  duplicó cobertura con un test nuevo.
+- **Barrido final**: `grep -rn "FuenteArtefacto|InventariadorDocumentos"`
+  sobre todo el repo (código, scripts, tests, fixtures, docs) — cero usos
+  en artefactos de producción o test. Las únicas coincidencias son
+  documentación histórica en `openspec/changes/*/` (proposal/design/tasks
+  de este mismo cambio y de cambios previos) y el docstring de
+  `fuente.py` que documenta su eliminación en la Fase 4.5.
+
+### Fase 9.1 — ensayo de 1.000 PDFs
+
+Se corrió `pytest tests/carga/test_ejecutar_corpus.py` (suite unitaria,
+7 tests, todos en verde) y además `python -m tests.carga.ejecutar_corpus`
+(el runner real que ejecuta el pipeline completo sobre 1.000 documentos
+sintéticos, no solo la suite unitaria) para obtener una medición fresca
+contra el wiring final (Fase 7 ya completa: `FuenteLocal` +
+`extraer_texto_de_flujo`).
+
+**Composición del corpus — sin cambios, oráculo validado por igualdad
+estricta** (`ORACULO_CARGA_1000`, `oraculo_validado: true`): 1.000 PDFs
+de entrada, 1.005 de staging, 998 documentos únicos, 2 duplicados
+omitidos, 972 documentos aprobados, 324 episodios aprobados, 26
+cuarentenas (8 `cobertura_ambigua`, 17 `cobertura_incompleta`, 1
+`parseo_incompleto`), 0 fallos inesperados, 0 reintentos, 0 PII en
+salida. **No hay regresión funcional** — la migración a `FuenteLocal`
+con enumeración perezosa no alteró qué documentos se aprueban, cuáles se
+ponen en cuarentena ni por qué motivo.
+
+**Tiempo**: 218,644002 s (antes 226,541137 s) — mejora de ~7,9 s
+(~3,5 % más rápido). Throughput: 4,574 PDFs de entrada/s (antes 4,414),
+4,564 documentos únicos/s (antes 4,405). Consistente con la expectativa
+de diseño de que la enumeración perezosa no empeoraría el tiempo.
+
+**Memoria pico** (`memoria_pico_lifetime_proceso_bytes`): 145.698.816 B
+(antes 145.432.576 B) — diferencia de +266.240 B (~+0,18 %). Se
+interpreta como ruido de medición entre corridas (GC, hilos de fondo del
+proceso), no como regresión: la diferencia es dos órdenes de magnitud
+menor que el tamaño de cualquier estructura tocada por este cambio.
+
+**Actualización de constantes** (siguiendo la instrucción: "si solo
+cambió memoria/tiempo, es medición nueva y legítima — actualizar con el
+valor real medido"): en `tests/carga/ejecutar_corpus.py::evaluar_preflight`
+se actualizaron los literales base de `memoria_estimada`
+(145_432_576 → 145_698_816) y `tiempo_estimado`
+(226.541137 → 218.644002). `docs/pipeline.md` (sección "Primer escalón
+de carga: 1.000 PDFs") se actualizó con la narrativa y los números
+nuevos, dejando explícito el antes/después y que la composición del
+corpus no cambió. Ningún test dependía de los valores literales viejos
+(`test_migracion_reporte_legacy_es_atomica_y_conserva_historial` calcula
+su propio `esperado` llamando a `evaluar_preflight`, no compara contra un
+literal hardcodeado) — confirmado que la suite sigue en verde tras el
+cambio.
+
+### Fase 9.2 — ensayo de 10.000 PDFs: NO ejecutado en este lote
+
+`tests/carga/ejecutar_corpus_10000.py` tarda aproximadamente 48 minutos
+(escala ~10x sobre el ensayo de 1.000, que ya toma ~218 s) y excede el
+límite de llamada de este agente. **Tarea 9.2 queda deliberadamente sin
+marcar** en `tasks.md`. El orquestador lo ejecuta por separado en segundo
+plano.
+
+### Fase 9.3 — suite completa
+
+`pytest` completo (incluye `tests/carga/test_ejecutar_corpus.py`, no se
+excluyó nada): 446 passed, 1 skipped en 97,78 s. Mismo skip preexistente
+de symlinks sin privilegio elevado en Windows de PR1-PR3, no relacionado
+con este lote.
+
+### Desvíos respecto del plan (documentados, no ocultos)
+
+Ninguno nuevo — este lote fue principalmente auditoría (confirmar que
+8.1-8.3 ya estaban resueltas por los adelantos de PR2/PR3, documentados
+en sus propios lotes) y una recalibración legítima de constantes de
+medición, no una implementación de código nuevo. No se escribieron tests
+RED→GREEN nuevos porque no hubo comportamiento nuevo que probar — la
+Fase 8 no tenía tareas de código pendientes y la Fase 9 es un ensayo de
+medición, no una unidad de comportamiento.
+
+### Commit de este lote
+
+`test(carga): recalibra tiempo y memoria del ensayo de 1000 pdfs` —
+`docs/pipeline.md`, `openspec/changes/puerto-de-ingesta/tasks.md`,
+`tests/carga/ejecutar_corpus.py` (3 archivos, 18 inserciones, 10
+eliminaciones). Un único work unit: recalibración de medición, con su
+documentación y marcado de tareas en el mismo commit.
+
+### Qué queda
+
+- 9.2 (10.000 PDFs) — a cargo del orquestador en segundo plano.
+- Tras 9.2: si el oráculo de 10.000 valida y no hay regresión de
+  tiempo/memoria a esa escala, el cambio `puerto-de-ingesta` está listo
+  para `sdd-verify` y cierre del PR4/archivo del cambio.
