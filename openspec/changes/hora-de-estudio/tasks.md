@@ -84,9 +84,9 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 ## Fase 9: propagación a la salida (`salida/`)
 
-- [ ] 9.1 RED: en `tests/salida/test_constructor_registro.py`, test que confirma que `construir_registro` propaga `hora_estudio` y `precision_hora` del `DocumentoParseado` al `RegistroAnonimizado` sin transformarlos.
-- [ ] 9.2 GREEN: agregar `hora_estudio: time | None` y `precision_hora: PrecisionHora` a `RegistroAnonimizado` si no quedó cubierto por la Fase 1 (confirmar), y propagarlos en `construir_registro` (`salida/constructor_registro.py`, cerca de la construcción final del `RegistroAnonimizado`, línea ~191).
-- [ ] 9.3 REFACTOR: revisar que `modelos_salida.py` no necesite cambios — la hora vive en `RegistroAnonimizado`, no en los payloads `ContenidoXSalida` (el pivote de esos payloads es por tipo de documento, la hora es transversal).
+- [x] 9.1 RED: en `tests/salida/test_constructor_registro.py`, test que confirma que `construir_registro` propaga `hora_estudio` y `precision_hora` del `DocumentoParseado` al `RegistroAnonimizado` sin transformarlos, más un test de ausencia (eco sin hora no recibe default).
+- [x] 9.2 GREEN: `RegistroAnonimizado` ya tenía los campos (Fase 1); se agregó la propagación en `construir_registro` (`salida/constructor_registro.py`, construcción final del `RegistroAnonimizado`).
+- [x] 9.3 REFACTOR: confirmado — `grep hora salida/modelos_salida.py` sin resultados, ningún payload `ContenidoXSalida` necesita el campo.
 
 ## Fase 10: Parquet — schema explícito (gotcha 4)
 

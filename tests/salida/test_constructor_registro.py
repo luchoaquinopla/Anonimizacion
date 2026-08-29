@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 
 import pytest
 from pydantic import SecretStr
 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, IdentidadCruda
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
@@ -246,6 +247,46 @@ def test_eco_texto_libre_con_nombre_se_redacta_via_motor_pii_inyectado() -> None
 
     texto_redactado = registro.contenido.secciones_texto[0].texto
     assert "Roberto Fernandez" not in texto_redactado
+
+
+def test_construir_registro_propaga_hora_estudio_y_precision_sin_transformar() -> None:
+    """Requirement: "Hora local sin conversión de huso" -- `construir_registro`
+    propaga `hora_estudio`/`precision_hora` del `DocumentoParseado` al
+    `RegistroAnonimizado` tal cual, sin transformarlos."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        hora_estudio=time(10, 22, 31),
+        precision_hora=PrecisionHora.SEGUNDO,
+        contenido=ContenidoEcg(
+            vent_rate=None, pr_interval=None, qrs_duration=None, qt_qtc=None, ejes=None
+        ),
+    )
+
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+
+    assert registro.hora_estudio == time(10, 22, 31)
+    assert registro.precision_hora is PrecisionHora.SEGUNDO
+
+
+def test_construir_registro_propaga_ausencia_de_hora_sin_default() -> None:
+    """Requirement: "Ausencia explícita cuando el documento no trae hora" --
+    la ausencia (`None`/`AUSENTE`) también se propaga tal cual, nunca se
+    reemplaza por un default."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(medidas=(), secciones_texto=(), firma=None),
+    )
+
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+
+    assert registro.hora_estudio is None
+    assert registro.precision_hora is PrecisionHora.AUSENTE
 
 
 def test_claves_sin_id_paciente_resuelto_lanza_value_error() -> None:

@@ -194,6 +194,11 @@ def construir_registro(
         tipo_documento=documento.tipo_documento,
         version_esquema=documento.version_esquema,
         fecha_estudio=documento.fecha_estudio,
+        # Se propagan tal cual, sin transformar (Requirement: "Hora local sin
+        # conversión de huso" / "Ausencia explícita cuando el documento no
+        # trae hora", spec `momento-del-estudio`).
+        hora_estudio=documento.hora_estudio,
+        precision_hora=documento.precision_hora,
         contenido=contenido,
         adicionales=_adicionales_sin_personal(adicionales),
     )
