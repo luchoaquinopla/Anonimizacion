@@ -36,7 +36,7 @@ from pathlib import Path
 
 import sqlalchemy as sa
 
-from anonimizacion.ingesta.fuente import FuenteArtefacto
+from anonimizacion.ingesta.fuente import FuenteLocal
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ExitoDocumento, FalloDocumento, ItemLote
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
@@ -84,7 +84,12 @@ def main() -> int:
     )
 
     print(f"Listando PDFs en {args.entrada}...", file=sys.stderr)
-    artefactos = FuenteArtefacto(args.entrada).listar()
+    # `procesar_lote` necesita el lote entero materializado (recibe una
+    # `Sequence`, y la coordinación de episodios opera sobre el lote
+    # completo): la pereza de `listar()` rinde en el camino de despacho a
+    # cola, no acá (design.md, "Migración de consumidores").
+    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
+    artefactos = list(fuente.listar())
     if not artefactos:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
         return 1
