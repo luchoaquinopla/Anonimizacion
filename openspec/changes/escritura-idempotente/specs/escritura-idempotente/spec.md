@@ -1,0 +1,146 @@
+# Especificación: escritura idempotente
+
+Capacidad nueva. Define qué debe ocurrir cuando el pipeline vuelve a ver un documento que ya
+procesó, y qué debe ocurrir al publicar un episodio con varios documentos.
+
+## Requisito 1: identidad estable del documento
+
+Cada documento procesado **MUST** llevar una `clave_documento` estable, derivada del contenido
+del artefacto y del pepper, hasta ambos destinos de salida.
+
+La clave **MUST** derivarse por HMAC, con la misma convención que el resto de los identificadores
+del sistema. El `sha256` crudo del contenido **MUST NOT** aparecer en ningún destino de salida.
+
+La clave **MUST** ser estable entre corridas distintas sobre el mismo contenido, y **MUST**
+cambiar si el contenido cambia.
+
+#### Escenario: el mismo contenido produce la misma clave en dos corridas
+
+- **Given** un documento cuyo contenido no cambió entre dos corridas
+- **When** se procesa en la primera corrida y luego en una segunda corrida independiente
+- **Then** la `clave_documento` calculada es idéntica en ambas
+
+#### Escenario: contenido distinto produce clave distinta
+
+- **Given** dos documentos con contenido diferente
+- **When** se calcula la clave de cada uno con el mismo pepper
+- **Then** las claves son distintas
+
+#### Escenario: la huella cruda no llega a la salida
+
+- **Given** un documento procesado hasta su publicación
+- **When** se inspeccionan las filas escritas en la base y en el formato analítico
+- **Then** ningún campo contiene el `sha256` del contenido
+
+## Requisito 2: el contrato de la cola no cambia
+
+El mensaje de cola **MUST** seguir transportando exactamente `{id_documento, uri, sha256}`, y el
+artefacto **MUST NOT** transportar contenido ni handles.
+
+La `clave_documento` **MUST** derivarse del lado del trabajador, a partir del `sha256` que ya
+viaja, y no agregarse al mensaje.
+
+#### Escenario: la cola conserva su forma
+
+- **Given** el cambio aplicado
+- **When** se inspecciona la firma de la tarea de cola
+- **Then** sus parámetros siguen siendo exactamente `id_documento`, `uri` y `sha256`
+
+## Requisito 3: reprocesar no duplica
+
+Escribir un registro cuya `clave_documento` ya fue escrita **MUST NOT** crear filas nuevas, ni en
+la tabla de estudios ni en ninguna tabla de mediciones.
+
+La operación **MUST** completarse sin error: un reprocesamiento es un caso normal de operación,
+no una condición excepcional.
+
+La unicidad **MUST** anclarse en el documento. Una restricción por fila de resultado **MUST NOT**
+usarse, porque los resultados de laboratorio se almacenan en formato entidad-atributo-valor y una
+restricción por analito no expresa la garantía buscada.
+
+#### Escenario: el mismo documento escrito tres veces
+
+- **Given** un registro anonimizado con su `clave_documento`
+- **When** se escribe tres veces consecutivas
+- **Then** existe exactamente una fila de estudio
+- **And** existe exactamente el conjunto de mediciones de una sola escritura
+- **And** ninguna de las tres escrituras falla
+
+#### Escenario: dos documentos distintos del mismo episodio
+
+- **Given** dos documentos de tipos distintos que pertenecen al mismo episodio
+- **When** se escriben ambos
+- **Then** existen dos filas de estudio, una por documento
+
+#### Escenario: la restricción resiste escritura concurrente
+
+- **Given** dos trabajadores que escriben el mismo documento a la vez
+- **When** ambos intentan insertar
+- **Then** queda exactamente una fila de estudio
+- **And** ninguno de los dos trabajadores termina con un error no controlado
+
+## Requisito 4: publicar un episodio conserva todos sus documentos
+
+Publicar un episodio con N documentos **MUST** dejar los N documentos en el formato analítico.
+
+Ningún documento del episodio **MUST** sobrescribir a otro del mismo episodio.
+
+#### Escenario: episodio de tres estudios
+
+- **Given** un episodio con un electrocardiograma, un laboratorio y un ecocardiograma
+- **When** se publica el bundle del episodio
+- **Then** el formato analítico contiene los tres documentos
+- **And** los tres tipos de documento están representados
+
+#### Escenario: republicar el mismo episodio no altera el resultado
+
+- **Given** un episodio ya publicado
+- **When** se publica nuevamente con los mismos documentos
+- **Then** el contenido publicado es idéntico al de la primera publicación
+- **And** no se agregan ni se pierden documentos
+
+## Requisito 5: republicar con un documento adicional
+
+Cuando un episodio se republica incluyendo un documento que antes faltaba, el manifiesto
+**MUST** reflejar la unión de los documentos publicados, y el formato analítico **MUST**
+contenerlos a todos.
+
+Un manifiesto desactualizado **MUST NOT** conservarse: describe un contenido que no coincide con
+lo publicado, y ése es exactamente el defecto que este cambio cierra.
+
+#### Escenario: llega el estudio que faltaba
+
+- **Given** un episodio publicado con dos de sus tres documentos
+- **When** se republica incluyendo el tercero
+- **Then** el manifiesto enumera los tres documentos
+- **And** el formato analítico contiene los tres
+
+## Requisito 6: la ausencia de la clave no rompe lo ya escrito
+
+La columna de clave de documento **MUST** aceptar ausencia, y las filas escritas antes de este
+cambio **MUST** seguir siendo válidas sin ella.
+
+No **MUST** realizarse relleno retroactivo: no hay forma de derivar la clave de una fila ya
+escrita sin volver a leer el documento original.
+
+#### Escenario: filas previas al cambio
+
+- **Given** filas de estudio escritas antes de aplicar la migración
+- **When** se aplica la migración
+- **Then** esas filas conservan sus datos
+- **And** su clave de documento queda ausente
+
+## Requisito 7: contenido corregido entra como documento nuevo
+
+Si un documento se corrige y se reprocesa, su contenido cambia, por lo tanto su clave cambia, y
+**MUST** escribirse como un documento nuevo.
+
+El sistema **MUST NOT** intentar decidir por sí mismo cuál de las dos versiones es la vigente:
+no dispone de información para hacerlo.
+
+#### Escenario: el documento se corrige en el origen
+
+- **Given** un documento ya publicado
+- **When** se corrige su contenido en el origen y se vuelve a procesar
+- **Then** se escribe una fila de estudio nueva, con una clave distinta
+- **And** la fila anterior se conserva
