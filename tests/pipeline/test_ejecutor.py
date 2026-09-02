@@ -23,8 +23,15 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
-from anonimizacion.pipeline.ejecutor import BACKOFF_SEGUNDOS, MAX_REINTENTOS, EjecutorPipeline, ItemLote
+from anonimizacion.pipeline.ejecutor import (
+    BACKOFF_SEGUNDOS,
+    MAX_REINTENTOS,
+    EjecutorPipeline,
+    ItemLote,
+    _DocumentoResuelto,
+)
 from anonimizacion.pipeline.resultado import ExitoDocumento, FalloDocumento
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.pseudonimizacion.vinculacion import MetadataEpisodio, ResultadoVinculacion
 from tests.fixtures.pdf_sintetico import crear_pdf_bytes_con_texto
 
@@ -126,7 +133,7 @@ def _construir_ejecutor(
                 metadata_por_episodio=metadata_por_episodio,
             )
     if construir_registro is None:
-        construir_registro = lambda documento, claves, *, id_episodio, pepper, motor_pii=None: RegistroAnonimizado(  # noqa: E731
+        construir_registro = lambda documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None: RegistroAnonimizado(  # noqa: E731
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
             tipo_documento=documento.tipo_documento,
@@ -134,6 +141,7 @@ def _construir_ejecutor(
             fecha_estudio=documento.fecha_estudio,
             contenido=object(),
             adicionales={},
+            clave_documento=clave_documento,
         )
     if obtener_parseador is None:
         class _ParseadorFake:
@@ -598,7 +606,9 @@ def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> N
             },
         )
 
-    def construir_registro(documento: DocumentoParseado, claves: ClavesPaciente, *, id_episodio, pepper, motor_pii=None):
+    def construir_registro(
+        documento: DocumentoParseado, claves: ClavesPaciente, *, id_episodio, pepper, clave_documento, motor_pii=None
+    ):
         return RegistroAnonimizado(
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
@@ -607,6 +617,7 @@ def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> N
             fecha_estudio=documento.fecha_estudio,
             contenido=object(),
             adicionales={},
+            clave_documento=clave_documento,
         )
 
     ejecutor = EjecutorPipeline(
@@ -641,3 +652,40 @@ def test_ejecutor_sin_fuente_ni_extraer_falla_explicito_en_la_construccion() -> 
             destino=_EscritorFake(escritos=[]),
             cuarentena=_CuarentenaFake(registrados=[]),
         )
+
+
+# --- clave_documento (spec `escritura-idempotente`) --------------------------
+
+
+def test_documento_resuelto_expone_clave_documento() -> None:
+    resuelto = _DocumentoResuelto(
+        id_documento="doc-1",
+        documento=_documento("paciente"),
+        claves=ClavesPaciente(id_paciente="paciente", id_alt_paciente=None, version_clave=1),
+        clave_documento=generar_clave_documento(PEPPER, "a" * 64),
+    )
+    assert resuelto.clave_documento == generar_clave_documento(PEPPER, "a" * 64)
+
+
+def test_procesar_lote_deriva_y_propaga_clave_documento_hasta_el_registro() -> None:
+    """Fija el recorrido completo `ItemLote.artefacto.sha256 ->
+    _resolver_documento -> _emitir -> construir_registro` antes de tocar
+    código (spec `escritura-idempotente`, Requisito 1)."""
+    ejecutor, escritor, _cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("paciente"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+    )
+
+    artefacto = _artefacto("doc")
+    ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=artefacto)])
+
+    assert len(escritor.escritos) == 1
+    esperado = generar_clave_documento(PEPPER, artefacto.sha256)
+    assert escritor.escritos[0].clave_documento == esperado
+
+
+def test_item_lote_no_gano_ningun_campo_nuevo() -> None:
+    """Requisito 2, "la cola conserva su forma": `ItemLote` sigue siendo
+    exactamente `{id_documento, artefacto}`, sin campo nuevo."""
+    campos = {campo.name for campo in ItemLote.__dataclass_fields__.values()}
+    assert campos == {"id_documento", "artefacto"}

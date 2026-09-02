@@ -23,6 +23,7 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos.parquet import EscritorParquet
 
@@ -30,7 +31,15 @@ PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 CLAVES_TEST = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
 
 
-def _registro_laboratorio(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+def _clave_documento_sintetica(semilla: str) -> str:
+    # huella inventada, distinta por `semilla` -- suficiente para tests, nunca un sha256 real
+    sha256_sintetico = (semilla * 64)[:64]
+    return generar_clave_documento(PEPPER_TEST, sha256_sintetico)
+
+
+def _registro_laboratorio(
+    fecha: date, id_episodio: str, clave_documento: str | None = None
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.LABORATORIO,
         version_esquema=1,
@@ -50,10 +59,13 @@ def _registro_laboratorio(fecha: date, id_episodio: str) -> "RegistroAnonimizado
         ),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento or _clave_documento_sintetica(f"lab-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
-def _registro_ecg(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+def _registro_ecg(
+    fecha: date, id_episodio: str, clave_documento: str | None = None
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECG,
         version_esquema=1,
@@ -62,10 +74,13 @@ def _registro_ecg(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # no
         contenido=ContenidoEcg(vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento or _clave_documento_sintetica(f"ecg-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
-def _registro_eco(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+def _registro_eco(
+    fecha: date, id_episodio: str, clave_documento: str | None = None
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
         version_esquema=1,
@@ -78,7 +93,8 @@ def _registro_eco(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # no
         ),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento or _clave_documento_sintetica(f"eco-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
 def test_escribir_laboratorio_particiona_por_tipo_documento_y_anio(tmp_path) -> None:
@@ -180,6 +196,7 @@ def test_precision_hora_distingue_valores_de_hora_byte_a_byte_identicos(tmp_path
         CLAVES_TEST,
         id_episodio="ep-lab",
         pepper=PEPPER_TEST,
+        clave_documento=_clave_documento_sintetica("lab-ep-lab"),
     )
     documento_ecg = DocumentoParseado(
         tipo_documento=TipoDocumento.ECG,
@@ -190,7 +207,13 @@ def test_precision_hora_distingue_valores_de_hora_byte_a_byte_identicos(tmp_path
         precision_hora=PrecisionHora.SEGUNDO,
         contenido=ContenidoEcg(vent_rate="72", pr_interval=None, qrs_duration=None, qt_qtc=None, ejes=None),
     )
-    registro_ecg = construir_registro(documento_ecg, CLAVES_TEST, id_episodio="ep-ecg", pepper=PEPPER_TEST)
+    registro_ecg = construir_registro(
+        documento_ecg,
+        CLAVES_TEST,
+        id_episodio="ep-ecg",
+        pepper=PEPPER_TEST,
+        clave_documento=_clave_documento_sintetica("ecg-ep-ecg"),
+    )
 
     escritor = EscritorParquet(tmp_path)
     escritor.escribir([registro_lab, registro_ecg])

@@ -52,6 +52,7 @@ from anonimizacion.parseo.base import ParseadorDocumento
 from anonimizacion.parseo.registro import obtener_parseador as _obtener_parseador_real
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pii.politica import clasificar as _clasificar_real
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
 from anonimizacion.pseudonimizacion.resolutor_claves import resolver_claves as _resolver_claves_real
 from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, MetadataEpisodio, ResultadoVinculacion
@@ -116,11 +117,18 @@ class ItemLote:
 
 @dataclass(frozen=True)
 class _DocumentoResuelto:
-    """Documento que ya pasó extracción, parseo y resolución de claves; falta vincular episodio + emitir."""
+    """Documento que ya pasó extracción, parseo y resolución de claves; falta vincular episodio + emitir.
+
+    `clave_documento` (spec `escritura-idempotente`): identidad estable del
+    documento, derivada en `_resolver_documento` a partir de
+    `item.artefacto.sha256` -- ya viaja acá para que `_emitir` la propague a
+    `construir_registro` sin tener que volver a tocar el `ItemLote` original.
+    """
 
     id_documento: str
     documento: DocumentoParseado
     claves: ClavesPaciente
+    clave_documento: str
 
 
 def _ejecutar_con_reintentos(
@@ -313,7 +321,13 @@ class EjecutorPipeline:
                 etapa=Etapa.PSEUDONIMIZACION.value,
                 dormir=self._dormir,
             )
-            return _DocumentoResuelto(id_documento=item.id_documento, documento=documento, claves=claves)
+            clave_documento = generar_clave_documento(self._pepper, item.artefacto.sha256)
+            return _DocumentoResuelto(
+                id_documento=item.id_documento,
+                documento=documento,
+                claves=claves,
+                clave_documento=clave_documento,
+            )
         except ErrorParseo as error:
             error.tipo_documento = tipo
             raise
@@ -426,6 +440,7 @@ class EjecutorPipeline:
             resuelto.claves,
             id_episodio=id_episodio,
             pepper=self._pepper,
+            clave_documento=resuelto.clave_documento,
             motor_pii=self._motor,
         )
         _ejecutar_con_reintentos(
