@@ -1,4 +1,17 @@
-"""Coordinación durable de estudios por paciente y episodio."""
+"""Coordinación durable de estudios por paciente y episodio.
+
+La agrupación NO se implementa acá: se delega en
+`pseudonimizacion/vinculacion.py::vincular_episodios`, que es la única
+definición de la ventana de ±7 días por ancla en todo el pipeline. Este módulo
+agrega lo que aquella no tiene: decidir si un episodio está COMPLETO y, si no,
+con qué motivo se aparta.
+
+Antes cada módulo tenía su propia copia del clustering. Dos copias de un
+algoritmo clínico son una bomba de tiempo: corregir la deriva de la ventana en
+una y no en la otra deja dos definiciones distintas de "episodio" según qué
+camino del pipeline se recorra. `tests/pipeline/test_equivalencia_agrupacion.py`
+fija esa equivalencia como contrato.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +21,8 @@ from enum import Enum
 from typing import Sequence
 
 from anonimizacion.dominio.tipos_documento import TipoDocumento
-from anonimizacion.pseudonimizacion.claves import generar_id_episodio
+from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, vincular_episodios
 
-_VENTANA_DIAS = 7
 _TIPOS_REQUERIDOS = frozenset({
     TipoDocumento.ECG,
     TipoDocumento.LABORATORIO,
@@ -72,30 +84,41 @@ class CoordinadorEpisodios:
         return ResultadoCoordinacion(tuple(aprobados), tuple(pendientes), cuarentena)
 
     def _agrupar_por_ancla(self, documentos: Sequence[DocumentoParaCoordinar]) -> list[EpisodioCoordinado]:
-        por_paciente: dict[str, list[DocumentoParaCoordinar]] = {}
-        for documento in documentos:
-            por_paciente.setdefault(documento.id_paciente, []).append(documento)
+        """Delega el clustering en `vincular_episodios` y lo reexpresa como episodios.
 
-        episodios: list[EpisodioCoordinado] = []
-        for id_paciente, documentos_paciente in por_paciente.items():
-            grupos: list[list[DocumentoParaCoordinar]] = []
-            fecha_ancla: date | None = None
-            for documento in sorted(documentos_paciente, key=lambda item: (item.fecha_estudio, item.tipo_documento.value, item.id_documento)):
-                if fecha_ancla is None or (documento.fecha_estudio - fecha_ancla).days > _VENTANA_DIAS:
-                    fecha_ancla = documento.fecha_estudio
-                    grupos.append([])
-                grupos[-1].append(documento)
-            for grupo in grupos:
-                ancla = grupo[0].fecha_estudio
-                episodios.append(
-                    EpisodioCoordinado(
-                        id_episodio=generar_id_episodio(self._pepper, id_paciente, ancla),
-                        id_paciente=id_paciente,
-                        fecha_ancla=ancla,
-                        documentos=tuple(grupo),
-                    )
+        Acá no se reimplementa la ventana: se traduce el resultado de la única
+        implementación que existe, para no tener dos definiciones de "episodio".
+        """
+        vinculacion = vincular_episodios(
+            [
+                DocumentoParaVincular(
+                    id_documento=documento.id_documento,
+                    id_paciente=documento.id_paciente,
+                    fecha_estudio=documento.fecha_estudio,
+                    tipo_documento=documento.tipo_documento.value,
                 )
-        return episodios
+                for documento in documentos
+            ],
+            self._pepper,
+        )
+
+        agrupados: dict[str, list[DocumentoParaCoordinar]] = {}
+        for documento in sorted(
+            documentos,
+            key=lambda item: (item.fecha_estudio, item.tipo_documento.value, item.id_documento),
+        ):
+            id_episodio = vinculacion.id_episodio_por_documento[documento.id_documento]
+            agrupados.setdefault(id_episodio, []).append(documento)
+
+        return [
+            EpisodioCoordinado(
+                id_episodio=id_episodio,
+                id_paciente=vinculacion.metadata_por_episodio[id_episodio].id_paciente,
+                fecha_ancla=vinculacion.metadata_por_episodio[id_episodio].fecha_ancla,
+                documentos=tuple(documentos_episodio),
+            )
+            for id_episodio, documentos_episodio in agrupados.items()
+        ]
 
     @staticmethod
     def _motivo_cuarentena(episodio: EpisodioCoordinado) -> MotivoCuarentenaEpisodio | None:
