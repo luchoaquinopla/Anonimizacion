@@ -28,6 +28,7 @@ from anonimizacion.dominio.modelos import RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.salida.modelos_orm import (
     Episodio,
+    Estudio,
     MedicionEco,
     MedicionEcg,
     ResultadoLaboratorio,
@@ -109,50 +110,81 @@ class EscritorPostgres:
     # --- registro anonimizado: dispatch por tipo_documento -------------------
 
     def escribir_registro(self, registro: RegistroAnonimizado) -> None:
-        if registro.tipo_documento is TipoDocumento.LABORATORIO:
-            self._escribir_laboratorio(registro)
-        elif registro.tipo_documento is TipoDocumento.ECG:
-            self._escribir_ecg(registro)
-        elif registro.tipo_documento is TipoDocumento.ECOCARDIOGRAMA:
-            self._escribir_eco(registro)
-        else:
+        """Inserta el `estudio` del documento y sus mediciones en una sola transaccion.
+
+        La fila de `estudio` y las mediciones que cuelgan de ella se escriben en la
+        MISMA sesion a proposito: si el despacho por tipo fallara despues de commitear
+        el estudio, quedaria una fila huerfana sin ninguna medicion, indistinguible de
+        un documento legitimamente vacio.
+
+        No resuelve la idempotencia de `escribir_registro`: reprocesar el mismo
+        documento crea un `estudio` duplicado, igual que ya ocurre con las mediciones.
+        Queda fuera de alcance por decision del diseno -- arreglarlo exige una
+        identidad de documento estable que hoy no llega a `RegistroAnonimizado`.
+        """
+        if registro.tipo_documento not in (
+            TipoDocumento.LABORATORIO,
+            TipoDocumento.ECG,
+            TipoDocumento.ECOCARDIOGRAMA,
+        ):
             raise ValueError(f"tipo_documento no soportado por EscritorPostgres: {registro.tipo_documento!r}")
 
-    def _escribir_laboratorio(self, registro: RegistroAnonimizado) -> None:
-        contenido: ContenidoLaboratorioSalida = registro.contenido
         with Session(self._engine) as sesion, sesion.begin():
-            for fila in contenido.resultados:
-                sesion.add(
-                    ResultadoLaboratorio(
-                        id_episodio=registro.id_episodio,
-                        id_medico=contenido.id_medico,
-                        analito=fila.analito,
-                        seccion=fila.seccion,
-                        valor_num=fila.valor_num,
-                        valor_texto=fila.valor_texto,
-                        unidad=fila.unidad,
-                        ref_min=fila.ref_min,
-                        ref_max=fila.ref_max,
-                    )
-                )
+            estudio = Estudio(
+                id_episodio=registro.id_episodio,
+                tipo_documento=registro.tipo_documento.value,
+                fecha_estudio=registro.fecha_estudio,
+                hora_estudio=registro.hora_estudio,
+                precision_hora=registro.precision_hora.value,
+            )
+            sesion.add(estudio)
+            sesion.flush()  # asigna id_estudio sin cerrar la transaccion
+            id_estudio = estudio.id_estudio
 
-    def _escribir_ecg(self, registro: RegistroAnonimizado) -> None:
-        contenido: ContenidoEcgSalida = registro.contenido
-        with Session(self._engine) as sesion, sesion.begin():
+            if registro.tipo_documento is TipoDocumento.LABORATORIO:
+                self._escribir_laboratorio(registro, sesion, id_estudio)
+            elif registro.tipo_documento is TipoDocumento.ECG:
+                self._escribir_ecg(registro, sesion, id_estudio)
+            else:
+                self._escribir_eco(registro, sesion, id_estudio)
+
+    def _escribir_laboratorio(
+        self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int
+    ) -> None:
+        contenido: ContenidoLaboratorioSalida = registro.contenido
+        for fila in contenido.resultados:
             sesion.add(
-                MedicionEcg(
+                ResultadoLaboratorio(
                     id_episodio=registro.id_episodio,
+                    id_estudio=id_estudio,
                     id_medico=contenido.id_medico,
-                    vent_rate=contenido.vent_rate,
-                    pr_interval=contenido.pr_interval,
-                    qrs_duration=contenido.qrs_duration,
-                    qt_qtc=contenido.qt_qtc,
-                    ejes=contenido.ejes,
-                    adicionales=dict(registro.adicionales) or None,
+                    analito=fila.analito,
+                    seccion=fila.seccion,
+                    valor_num=fila.valor_num,
+                    valor_texto=fila.valor_texto,
+                    unidad=fila.unidad,
+                    ref_min=fila.ref_min,
+                    ref_max=fila.ref_max,
                 )
             )
 
-    def _escribir_eco(self, registro: RegistroAnonimizado) -> None:
+    def _escribir_ecg(self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int) -> None:
+        contenido: ContenidoEcgSalida = registro.contenido
+        sesion.add(
+            MedicionEcg(
+                id_episodio=registro.id_episodio,
+                id_estudio=id_estudio,
+                id_medico=contenido.id_medico,
+                vent_rate=contenido.vent_rate,
+                pr_interval=contenido.pr_interval,
+                qrs_duration=contenido.qrs_duration,
+                qt_qtc=contenido.qt_qtc,
+                ejes=contenido.ejes,
+                adicionales=dict(registro.adicionales) or None,
+            )
+        )
+
+    def _escribir_eco(self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int) -> None:
         contenido: ContenidoEcoSalida = registro.contenido
 
         columnas_ancha: dict[str, str] = {}
@@ -167,21 +199,21 @@ class EscritorPostgres:
             if medida.unidad:
                 unidades[columna] = medida.unidad
 
-        with Session(self._engine) as sesion, sesion.begin():
+        sesion.add(
+            MedicionEco(
+                id_episodio=registro.id_episodio,
+                id_estudio=id_estudio,
+                id_medico_solicitante=contenido.id_medico_solicitante,
+                id_medico_informante=contenido.id_medico_informante,
+                id_matricula_informante=contenido.id_matricula_informante,
+                unidades=unidades or None,
+                adicionales=extras or None,
+                **columnas_ancha,
+            )
+        )
+        for seccion in contenido.secciones_texto:
             sesion.add(
-                MedicionEco(
-                    id_episodio=registro.id_episodio,
-                    id_medico_solicitante=contenido.id_medico_solicitante,
-                    id_medico_informante=contenido.id_medico_informante,
-                    id_matricula_informante=contenido.id_matricula_informante,
-                    unidades=unidades or None,
-                    adicionales=extras or None,
-                    **columnas_ancha,
+                TextoSeccionEco(
+                    id_episodio=registro.id_episodio, seccion=seccion.nombre, texto=seccion.texto
                 )
             )
-            for seccion in contenido.secciones_texto:
-                sesion.add(
-                    TextoSeccionEco(
-                        id_episodio=registro.id_episodio, seccion=seccion.nombre, texto=seccion.texto
-                    )
-                )

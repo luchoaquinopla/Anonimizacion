@@ -21,7 +21,7 @@ corregido post-PR5, commit 07da933).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 
 import pytest
 import sqlalchemy as sa
@@ -35,7 +35,8 @@ from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEc
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
-from anonimizacion.salida.modelos_orm import Base, Episodio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
+from anonimizacion.dominio.precision_hora import PrecisionHora
+from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 
@@ -240,3 +241,70 @@ def test_escribir_registro_tipo_no_reconocido_lanza_value_error(escritor: Escrit
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
     with pytest.raises(ValueError):
         construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+
+
+# --- estudio: fecha y hora por documento -----------------------------------
+#
+# `episodio.fecha_ancla` es la fecha del GRUPO. Sin la tabla `estudio` el delta
+# entre dos estudios del mismo episodio no es computable en SQL.
+
+
+def _registro_con_hora(hora: time | None, precision: PrecisionHora) -> RegistroAnonimizado:
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        hora_estudio=hora,
+        precision_hora=precision,
+        contenido=ContenidoEcg(
+            vent_rate="73", pr_interval="186", qrs_duration="100", qt_qtc="382/420", ejes="63 51 26"
+        ),
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    return construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+
+
+def test_escribir_registro_crea_estudio_y_enlaza_la_medicion(escritor: EscritorPostgres, motor) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_con_hora(time(10, 32, 15), PrecisionHora.SEGUNDO))
+
+    estudios = _leer_todas(motor, Estudio)
+    assert len(estudios) == 1
+    assert estudios[0].fecha_estudio == date(2024, 1, 10)
+    assert estudios[0].hora_estudio == time(10, 32, 15)
+    assert estudios[0].precision_hora == "segundo"
+    assert estudios[0].tipo_documento == TipoDocumento.ECG.value
+
+    mediciones = _leer_todas(motor, MedicionEcg)
+    assert len(mediciones) == 1
+    assert mediciones[0].id_estudio == estudios[0].id_estudio
+
+
+def test_escribir_registro_sin_hora_nunca_persiste_medianoche(escritor: EscritorPostgres, motor) -> None:
+    """`AUSENTE` debe llegar a SQL como NULL: medianoche seria una hora inventada."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_con_hora(None, PrecisionHora.AUSENTE))
+
+    estudios = _leer_todas(motor, Estudio)
+    assert len(estudios) == 1
+    assert estudios[0].hora_estudio is None
+    assert estudios[0].precision_hora == "ausente"
+
+
+def test_escribir_registro_de_laboratorio_enlaza_todas_sus_filas_al_mismo_estudio(
+    escritor: EscritorPostgres, motor
+) -> None:
+    """El laboratorio es EAV: N filas de resultado cuelgan de UN solo estudio."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_laboratorio())
+
+    estudios = _leer_todas(motor, Estudio)
+    assert len(estudios) == 1
+    filas = _leer_todas(motor, FilaOrmResultadoLaboratorio)
+    assert filas
+    assert {fila.id_estudio for fila in filas} == {estudios[0].id_estudio}
+
