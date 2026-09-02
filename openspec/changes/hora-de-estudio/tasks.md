@@ -97,31 +97,31 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 ## Fase 11: ORM — tabla `Estudio` y FK nullable
 
-- [ ] 11.1 RED: en `tests/salida/test_modelos_orm.py`, test que instancia `Estudio(id_episodio=..., tipo_documento=..., fecha_estudio=..., hora_estudio=..., precision_hora=...)` contra SQLite en memoria y falla porque la clase no existe.
-- [ ] 11.2 RED: test que confirma que `MedicionEcg`, `ResultadoLaboratorio`, `MedicionEco` aceptan `id_estudio` nullable sin romper filas existentes sin ese valor.
-- [ ] 11.3 GREEN: en `salida/modelos_orm.py`, agregar clase `Estudio` (`__tablename__ = "estudio"`, `id_estudio: Mapped[int]` autoincremental PK, `id_episodio` FK a `episodio.id_episodio` con índice, `tipo_documento: Mapped[str]`, `fecha_estudio: Mapped[date]`, `hora_estudio: Mapped[time | None]` con `sa.Time`, `precision_hora: Mapped[str]`); docstring que documente naive/sin huso, siguiendo la convención de docstrings del módulo.
-- [ ] 11.4 GREEN: agregar `id_estudio: Mapped[int | None] = mapped_column(Integer, ForeignKey("estudio.id_estudio"), nullable=True)` a `MedicionEcg`, `ResultadoLaboratorio`, `MedicionEco`.
-- [ ] 11.5 REFACTOR: confirmar que `id_episodio` se conserva sin cambios en las tres tablas de mediciones (ninguna query existente se rompe).
+- [x] 11.1 RED: en `tests/salida/test_modelos_orm.py`, test que instancia `Estudio(id_episodio=..., tipo_documento=..., fecha_estudio=..., hora_estudio=..., precision_hora=...)` contra SQLite en memoria y falla porque la clase no existe.
+- [x] 11.2 RED: test que confirma que `MedicionEcg`, `ResultadoLaboratorio`, `MedicionEco` aceptan `id_estudio` nullable sin romper filas existentes sin ese valor.
+- [x] 11.3 GREEN: en `salida/modelos_orm.py`, agregar clase `Estudio` (`__tablename__ = "estudio"`, `id_estudio: Mapped[int]` autoincremental PK, `id_episodio` FK a `episodio.id_episodio` con índice, `tipo_documento: Mapped[str]`, `fecha_estudio: Mapped[date]`, `hora_estudio: Mapped[time | None]` con `sa.Time`, `precision_hora: Mapped[str]`); docstring que documente naive/sin huso, siguiendo la convención de docstrings del módulo.
+- [x] 11.4 GREEN: agregar `id_estudio: Mapped[int | None] = mapped_column(Integer, ForeignKey("estudio.id_estudio"), nullable=True)` a `MedicionEcg`, `ResultadoLaboratorio`, `MedicionEco`.
+- [x] 11.5 REFACTOR: confirmar que `id_episodio` se conserva sin cambios en las tres tablas de mediciones (ninguna query existente se rompe).
 
 ## Fase 12: migración `0006_estudio_y_hora` (gotcha 3, SQLite sin ALTER FK)
 
-- [ ] 12.1 RED: test de migración (`tests/migrations/` o equivalente ya existente en el repo — confirmar convención) que corre `upgrade()` sobre SQLite en memoria y falla porque la revisión `0006` no existe todavía.
-- [ ] 12.2 GREEN: crear `migrations/versions/0006_estudio_y_hora.py`, `down_revision = "0005_tamano_y_tope_cuarentena"`. `upgrade()`: `op.create_table("estudio", ...)` con índice en `id_episodio`; los tres `op.add_column(..., sa.Column("id_estudio", sa.Integer(), sa.ForeignKey("estudio.id_estudio"), nullable=True))` **dentro de `op.batch_alter_table(<tabla>)`** — SQLite no soporta `ALTER TABLE` con FK y los tests corren contra SQLite en memoria.
-- [ ] 12.3 RED: test de `downgrade()` — corre `upgrade()` seguido de `downgrade()` sobre SQLite en memoria y confirma que el esquema vuelve al estado de `0005` (columnas `id_estudio` fuera, tabla `estudio` dropeada).
-- [ ] 12.4 GREEN: `downgrade()` — los tres `op.drop_column` (también en `batch_alter_table`) y `op.drop_table("estudio")`.
-- [ ] 12.5 REFACTOR: correr el ciclo completo `upgrade`/`downgrade`/`upgrade` para confirmar idempotencia estructural (no de datos — eso está fuera de alcance, ver "Preguntas abiertas" del diseño).
+- [x] 12.1 RED: test de migración (`tests/migrations/` o equivalente ya existente en el repo — confirmar convención) que corre `upgrade()` sobre SQLite en memoria y falla porque la revisión `0006` no existe todavía.
+- [x] 12.2 GREEN: crear `migrations/versions/0006_estudio_y_hora.py`, `down_revision = "0005_tamano_y_tope_cuarentena"`. `upgrade()`: `op.create_table("estudio", ...)` con índice en `id_episodio`; los tres `op.add_column(..., sa.Column("id_estudio", sa.Integer(), sa.ForeignKey("estudio.id_estudio"), nullable=True))` **dentro de `op.batch_alter_table(<tabla>)`** — SQLite no soporta `ALTER TABLE` con FK y los tests corren contra SQLite en memoria.
+- [x] 12.3 RED: test de `downgrade()` — corre `upgrade()` seguido de `downgrade()` sobre SQLite en memoria y confirma que el esquema vuelve al estado de `0005` (columnas `id_estudio` fuera, tabla `estudio` dropeada).
+- [x] 12.4 GREEN: `downgrade()` — los tres `op.drop_column` (también en `batch_alter_table`) y `op.drop_table("estudio")`.
+- [x] 12.5 REFACTOR: correr el ciclo completo `upgrade`/`downgrade`/`upgrade` para confirmar idempotencia estructural (no de datos — eso está fuera de alcance, ver "Preguntas abiertas" del diseño).
 
 ## Fase 13: escritor Postgres — inserta `estudio` y enlaza mediciones
 
-- [ ] 13.1 RED: en `tests/salida/destinos/test_postgres.py`, test que llama a un método nuevo (p. ej. `escribir_estudio` o integrado en `escribir_registro`) y confirma que se crea una fila en `estudio` con `fecha_estudio`/`hora_estudio`/`precision_hora` correctos, y que la medición correspondiente (`medicion_ecg`/`resultado_laboratorio`/`medicion_eco`) queda con `id_estudio` apuntando a esa fila.
-- [ ] 13.2 RED: test que confirma que un eco con `precision_hora = AUSENTE` produce una fila `estudio` con `hora_estudio = NULL` y `precision_hora = 'ausente'` — nunca `00:00:00`.
-- [ ] 13.3 GREEN: en `destinos/postgres.py`, agregar `escribir_estudio(registro: RegistroAnonimizado) -> int` (devuelve `id_estudio`) que inserta en `Estudio` y llamarlo desde `escribir_registro` antes de despachar por tipo, pasando el `id_estudio` resultante a `_escribir_ecg`/`_escribir_laboratorio`/`_escribir_eco`.
-- [ ] 13.4 REFACTOR: anotar explícitamente en el docstring del método (o en un comentario) que esto **no** resuelve la idempotencia de `escribir_registro` — un reprocesamiento crea una fila `estudio` duplicada, igual que ya pasa con las mediciones; queda fuera de alcance por decisión ya tomada en el diseño.
+- [x] 13.1 RED: en `tests/salida/destinos/test_postgres.py`, test que llama a un método nuevo (p. ej. `escribir_estudio` o integrado en `escribir_registro`) y confirma que se crea una fila en `estudio` con `fecha_estudio`/`hora_estudio`/`precision_hora` correctos, y que la medición correspondiente (`medicion_ecg`/`resultado_laboratorio`/`medicion_eco`) queda con `id_estudio` apuntando a esa fila.
+- [x] 13.2 RED: test que confirma que un eco con `precision_hora = AUSENTE` produce una fila `estudio` con `hora_estudio = NULL` y `precision_hora = 'ausente'` — nunca `00:00:00`.
+- [x] 13.3 GREEN: en `destinos/postgres.py`, agregar `escribir_estudio(registro: RegistroAnonimizado) -> int` (devuelve `id_estudio`) que inserta en `Estudio` y llamarlo desde `escribir_registro` antes de despachar por tipo, pasando el `id_estudio` resultante a `_escribir_ecg`/`_escribir_laboratorio`/`_escribir_eco`.
+- [x] 13.4 REFACTOR: anotar explícitamente en el docstring del método (o en un comentario) que esto **no** resuelve la idempotencia de `escribir_registro` — un reprocesamiento crea una fila `estudio` duplicada, igual que ya pasa con las mediciones; queda fuera de alcance por decisión ya tomada en el diseño.
 
 ## Fase 14: integración extremo a extremo — ausencia sobrevive a ambos destinos
 
-- [ ] 14.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa los tres tipos de documento (ECG, laboratorio, eco) y confirma que `hora_estudio`/`precision_hora` llegan idénticos a `estudio` (SQL) y al dataset Parquet correspondiente, incluida la fila de eco con `NULL`/`AUSENTE` en ambos destinos.
-- [ ] 14.2 GREEN: ajustes de wiring que falten entre las fases anteriores para que el flujo completo pase (no debería requerir lógica nueva si las fases previas están completas — este ítem es red de seguridad, no implementación nueva).
+- [x] 14.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa los tres tipos de documento (ECG, laboratorio, eco) y confirma que `hora_estudio`/`precision_hora` llegan idénticos a `estudio` (SQL) y al dataset Parquet correspondiente, incluida la fila de eco con `NULL`/`AUSENTE` en ambos destinos.
+- [x] 14.2 GREEN: ajustes de wiring que falten entre las fases anteriores para que el flujo completo pase (no debería requerir lógica nueva si las fases previas están completas — este ítem es red de seguridad, no implementación nueva).
 
 ## Fase 15: compuertas de calibración — cierre
 

@@ -177,3 +177,55 @@ encargo).
 Todas las tareas de Fases 1 a 10 marcadas `[x]` en `openspec/changes/hora-de-estudio/tasks.md`,
 con notas inline documentando desviaciones puntuales. Fases 11–16 quedan
 `[ ]`, sin tocar — fuera de alcance de este lote.
+
+## Lote 2 (PR2) — persistencia del momento del estudio
+
+Fases 11 a 14 completas. `pytest` completo: 486 pasados, 1 omitido (skip
+preexistente por privilegios de symlink en Windows).
+
+### Qué se hizo
+
+- **Fase 11**: clase `Estudio` en `salida/modelos_orm.py`
+  (`id_estudio`, `id_episodio`, `tipo_documento`, `fecha_estudio`,
+  `hora_estudio`, `precision_hora`) y FK `id_estudio` nullable e indexada en
+  `MedicionEcg`, `ResultadoLaboratorio` y `MedicionEco`. Tests nuevos en
+  `tests/salida/test_modelos_orm.py` (archivo nuevo).
+- **Fase 12**: `migrations/versions/0006_estudio_y_hora.py`, encadenada sobre
+  `0005_tamano_y_tope_cuarentena`. Los tres `add_column` con FK van dentro de
+  `op.batch_alter_table` porque SQLite no soporta `ALTER TABLE` con FK y la
+  suite corre contra SQLite. `downgrade` cubierto por test, y también el ciclo
+  `upgrade`/`downgrade`/`upgrade`.
+- **Fase 13**: `escribir_registro` inserta la fila de `estudio`, hace `flush`
+  para obtener el `id_estudio` y lo propaga a las tres escrituras de medición.
+- **Fase 14**: `tests/integracion/test_momento_estudio_ambos_destinos.py`
+  recorre los tres tipos de documento y verifica que hora y precisión llegan
+  idénticas a SQL y a Parquet, incluida la ausencia del ecocardiograma.
+
+### Desvío respecto del plan, deliberado
+
+El diseño proponía `escribir_estudio(registro) -> int` como método propio,
+llamado desde `escribir_registro` antes del despacho por tipo. Se implementó
+**dentro de una única sesión** en lugar de como método independiente, porque
+cada `_escribir_*` abría su propia sesión: con un método separado, la fila de
+`estudio` habría commiteado antes que las mediciones y un fallo posterior
+dejaría un `estudio` huérfano sin mediciones, indistinguible de un documento
+legítimamente vacío. Los tres `_escribir_*` ahora reciben la sesión y el
+`id_estudio` en lugar de abrir sesión propia.
+
+Esto **no** resuelve la idempotencia de `escribir_registro`: reprocesar el
+mismo documento sigue creando filas duplicadas, ahora también en `estudio`.
+Queda fuera de alcance por decisión del diseño y está anotado en el docstring
+del método.
+
+### Dos tests que fallaron por fixture propia, no por el código
+
+`ContenidoEcg` y `ContenidoEco` exigen todos sus campos posicionales; las
+fixtures iniciales los omitían. Se corrigieron las fixtures, no el código de
+producción.
+
+### Qué queda
+
+- Fases 15 y 16 (PR3): cierre de compuertas de calibración y regeneración más
+  corrida de los oráculos de carga de 1.000 y 10.000 PDFs. Los oráculos rompen
+  **por diseño**, porque cambia el schema de Parquet.
+
