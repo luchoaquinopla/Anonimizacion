@@ -29,37 +29,37 @@ Los oráculos de `tests/carga/` (1.000 y 10.000) se corren **al final de la cade
 
 ## Fase 1: `generar_clave_documento` — derivación HMAC con namespace propio
 
-- [ ] 1.1 RED: en `tests/pseudonimizacion/test_claves.py` (o archivo equivalente existente), test que llama `generar_clave_documento(pepper, sha256)` — falla porque la función no existe.
-- [ ] 1.2 RED: test de estabilidad — el mismo `(pepper, sha256)` produce la misma clave en dos llamadas independientes (Requisito 1, "el mismo contenido produce la misma clave en dos corridas").
-- [ ] 1.3 RED: test que confirma que dos `sha256` distintos con el mismo pepper producen claves distintas (Requisito 1, segundo escenario).
-- [ ] 1.4 RED: test que confirma que la clave de documento es distinta del `sha256` crudo y distinta de `generar_id_paciente`/`generar_id_medico` con el mismo mensaje base — namespace propio (`"documento|"`), coherente con la convención de `claves.py`.
-- [ ] 1.5 GREEN: `generar_clave_documento(pepper: bytes, sha256: str) -> str` en `pseudonimizacion/claves.py`, usando `_hmac_hex(pepper, f"documento|{sha256.strip().lower()}")` — mismo patrón que las demás funciones del módulo.
-- [ ] 1.6 REFACTOR: confirmar que el docstring de módulo (lista de namespaces al inicio de `claves.py`) se actualiza para incluir `documento|`, igual que documenta los demás.
+- [x] 1.1 RED: en `tests/pseudonimizacion/test_claves.py` (o archivo equivalente existente), test que llama `generar_clave_documento(pepper, sha256)` — falla porque la función no existe.
+- [x] 1.2 RED: test de estabilidad — el mismo `(pepper, sha256)` produce la misma clave en dos llamadas independientes (Requisito 1, "el mismo contenido produce la misma clave en dos corridas").
+- [x] 1.3 RED: test que confirma que dos `sha256` distintos con el mismo pepper producen claves distintas (Requisito 1, segundo escenario).
+- [x] 1.4 RED: test que confirma que la clave de documento es distinta del `sha256` crudo y distinta de `generar_id_paciente`/`generar_id_medico` con el mismo mensaje base — namespace propio (`"documento|"`), coherente con la convención de `claves.py`.
+- [x] 1.5 GREEN: `generar_clave_documento(pepper: bytes, sha256: str) -> str` en `pseudonimizacion/claves.py`, usando `_hmac_hex(pepper, f"documento|{sha256.strip().lower()}")` — mismo patrón que las demás funciones del módulo.
+- [x] 1.6 REFACTOR: confirmar que el docstring de módulo (lista de namespaces al inicio de `claves.py`) se actualiza para incluir `documento|`, igual que documenta los demás.
 
 ## Fase 2: dominio — `RegistroAnonimizado.clave_documento`
 
-- [ ] 2.1 RED: en `tests/dominio/test_modelos.py`, test que instancia `RegistroAnonimizado` con `clave_documento: str | None` y falla porque el dataclass todavía no acepta el campo.
-- [ ] 2.2 RED: test que confirma que `RegistroAnonimizado()` sin `clave_documento` sigue construyéndose (default `None`) — no debe romper fixtures existentes de otras fases.
-- [ ] 2.3 GREEN: agregar `clave_documento: str | None = None` al final de `RegistroAnonimizado` en `dominio/modelos.py`.
-- [ ] 2.4 REFACTOR: confirmar que ningún otro sitio del dominio hace destructuring posicional de `RegistroAnonimizado` que el campo nuevo (al final, con default) pudiera romper. Correr la suite completa de `tests/dominio/` y `tests/salida/` para confirmarlo.
+- [x] 2.1 RED: en `tests/dominio/test_modelos.py`, test que instancia `RegistroAnonimizado` con `clave_documento: str | None` y falla porque el dataclass todavía no acepta el campo.
+- [x] 2.2 RED: test que confirma que `RegistroAnonimizado()` sin `clave_documento` sigue construyéndose (default `None`) — no debe romper fixtures existentes de otras fases.
+- [x] 2.3 GREEN: agregar `clave_documento: str | None = None` al final de `RegistroAnonimizado` en `dominio/modelos.py`.
+- [x] 2.4 REFACTOR: confirmar que ningún otro sitio del dominio hace destructuring posicional de `RegistroAnonimizado` que el campo nuevo (al final, con default) pudiera romper. Correr la suite completa de `tests/dominio/` y `tests/salida/` para confirmarlo.
 
 ## Fase 3: `construir_registro` — parámetro obligatorio, frontera donde hoy se pierde
 
-- [ ] 3.1 RED: en `tests/salida/test_constructor_registro.py`, test que llama `construir_registro(documento, claves, id_episodio=..., pepper=..., clave_documento="algún-valor")` y confirma que `RegistroAnonimizado.clave_documento` queda igual al valor pasado, sin transformarlo.
-- [ ] 3.2 RED: test que confirma que `construir_registro` sin `clave_documento` lanza `TypeError` (parámetro obligatorio de palabra clave, no un default silencioso — decisión de diseño explícita para que ningún llamador nuevo pueda omitirla).
-- [ ] 3.3 RED: en `tests/dominio/test_modelos.py` o `tests/salida/test_constructor_registro.py`, test que serializa un `RegistroAnonimizado` completo (los tres tipos de documento) y confirma que el `sha256` crudo no aparece en ningún campo, ni en `contenido` ni en `adicionales` (Requisito 1, "la huella cruda no llega a la salida").
-- [ ] 3.4 GREEN: agregar `clave_documento: str` como parámetro de palabra clave obligatorio en la firma de `construir_registro` (`salida/constructor_registro.py`), propagado tal cual al `RegistroAnonimizado` final, igual patrón que `hora_estudio`/`precision_hora`.
-- [ ] 3.5 GREEN: actualizar las tres compuertas de calibración (`tests/calibracion/compuerta_ecg.py:146`, `compuerta_laboratorio.py:207`, `compuerta_ecocardiograma.py:142`) — una línea cada una, pasando `clave_documento=generar_clave_documento(pepper, sha256_sintetico)` con una huella inventada de 64 hex. Ningún valor real: sha256 sintético fijo, documentado como tal en el propio test.
-- [ ] 3.6 REFACTOR: `pytest tests/calibracion/ tests/salida/test_constructor_registro.py` en verde; confirmar que el docstring de `constructor_registro.py` (lista de responsabilidades al inicio del módulo) menciona la propagación de `clave_documento`.
+- [x] 3.1 RED: en `tests/salida/test_constructor_registro.py`, test que llama `construir_registro(documento, claves, id_episodio=..., pepper=..., clave_documento="algún-valor")` y confirma que `RegistroAnonimizado.clave_documento` queda igual al valor pasado, sin transformarlo.
+- [x] 3.2 RED: test que confirma que `construir_registro` sin `clave_documento` lanza `TypeError` (parámetro obligatorio de palabra clave, no un default silencioso — decisión de diseño explícita para que ningún llamador nuevo pueda omitirla).
+- [x] 3.3 RED: en `tests/dominio/test_modelos.py` o `tests/salida/test_constructor_registro.py`, test que serializa un `RegistroAnonimizado` completo (los tres tipos de documento) y confirma que el `sha256` crudo no aparece en ningún campo, ni en `contenido` ni en `adicionales` (Requisito 1, "la huella cruda no llega a la salida").
+- [x] 3.4 GREEN: agregar `clave_documento: str` como parámetro de palabra clave obligatorio en la firma de `construir_registro` (`salida/constructor_registro.py`), propagado tal cual al `RegistroAnonimizado` final, igual patrón que `hora_estudio`/`precision_hora`.
+- [x] 3.5 GREEN: actualizar las tres compuertas de calibración (`tests/calibracion/compuerta_ecg.py:146`, `compuerta_laboratorio.py:207`, `compuerta_ecocardiograma.py:142`) — una línea cada una, pasando `clave_documento=generar_clave_documento(pepper, sha256_sintetico)` con una huella inventada de 64 hex. Ningún valor real: sha256 sintético fijo, documentado como tal en el propio test.
+- [x] 3.6 REFACTOR: `pytest tests/calibracion/ tests/salida/test_constructor_registro.py` en verde; confirmar que el docstring de `constructor_registro.py` (lista de responsabilidades al inicio del módulo) menciona la propagación de `clave_documento`.
 
 ## Fase 4: `pipeline/ejecutor.py` — derivación en `_resolver_documento`, propagación en `_emitir`
 
-- [ ] 4.1 RED: en `tests/pipeline/test_ejecutor.py`, test que confirma que `_DocumentoResuelto` expone `clave_documento` — falla porque el campo no existe en el dataclass.
-- [ ] 4.2 RED: test de integración sobre `procesar_lote` con un `ItemLote` cuyo `artefacto.sha256` es conocido, que confirma que el `RegistroAnonimizado` recibido por el destino trae `clave_documento == generar_clave_documento(pepper, sha256)` — fija el recorrido completo `ItemLote.artefacto.sha256 → _resolver_documento → _emitir → construir_registro` antes de tocar código.
-- [ ] 4.3 GREEN: agregar `clave_documento: str` a `_DocumentoResuelto` (`pipeline/ejecutor.py`).
-- [ ] 4.4 GREEN: en `_resolver_documento`, calcular `clave_documento = generar_clave_documento(self._pepper, item.artefacto.sha256)` y pasarlo al construir `_DocumentoResuelto`.
-- [ ] 4.5 GREEN: en `_emitir` (línea ~424), agregar `clave_documento=resuelto.clave_documento` a la llamada a `self._construir_registro(...)`.
-- [ ] 4.6 REFACTOR: confirmar que el mensaje de cola no cambió — `ItemLote` sigue siendo `{id_documento, artefacto}` sin campo nuevo (Requisito 2, "la cola conserva su forma"); un test dedicado que inspecciona los campos del dataclass `ItemLote` y confirma que no ganó ninguno.
+- [x] 4.1 RED: en `tests/pipeline/test_ejecutor.py`, test que confirma que `_DocumentoResuelto` expone `clave_documento` — falla porque el campo no existe en el dataclass.
+- [x] 4.2 RED: test de integración sobre `procesar_lote` con un `ItemLote` cuyo `artefacto.sha256` es conocido, que confirma que el `RegistroAnonimizado` recibido por el destino trae `clave_documento == generar_clave_documento(pepper, sha256)` — fija el recorrido completo `ItemLote.artefacto.sha256 → _resolver_documento → _emitir → construir_registro` antes de tocar código.
+- [x] 4.3 GREEN: agregar `clave_documento: str` a `_DocumentoResuelto` (`pipeline/ejecutor.py`).
+- [x] 4.4 GREEN: en `_resolver_documento`, calcular `clave_documento = generar_clave_documento(self._pepper, item.artefacto.sha256)` y pasarlo al construir `_DocumentoResuelto`.
+- [x] 4.5 GREEN: en `_emitir` (línea ~424), agregar `clave_documento=resuelto.clave_documento` a la llamada a `self._construir_registro(...)`.
+- [x] 4.6 REFACTOR: confirmar que el mensaje de cola no cambió — `ItemLote` sigue siendo `{id_documento, artefacto}` sin campo nuevo (Requisito 2, "la cola conserva su forma"); un test dedicado que inspecciona los campos del dataclass `ItemLote` y confirma que no ganó ninguno.
 
 ## Fase 5: Postgres — reprocesar no duplica (Requisito 3, primera mitad)
 
@@ -90,32 +90,32 @@ Cambio de firma deliberado: rompe intencionalmente `tests/salida/test_publicador
 
 Nota de verificación: `tests/integracion/test_momento_estudio_ambos_destinos.py` (mencionado en proposal.md como afectado) usa `EscritorParquet.escribir()` (el método que anexa, sin cambios de firma) y `EscritorPostgres.escribir_episodio()` (método distinto, mismo nombre, otra clase) — **no** llama a `EscritorParquet.escribir_episodio()`. Confirmado por lectura directa del archivo antes de esta fase. Si `sdd-apply` encuentra lo contrario al tocar el código, tratarlo como descubrimiento nuevo, no como el mismo hallazgo.
 
-- [ ] 7.1 RED: en `tests/salida/destinos/test_parquet.py`, test que llama `escribir_episodio` con la **secuencia completa** de los tres `RegistroAnonimizado` de un episodio (ECG + laboratorio + eco) y confirma que el Parquet resultante tiene **tres** filas, una por documento — falla porque la firma actual recibe un único registro.
-- [ ] 7.2 GREEN: cambiar `EscritorParquet.escribir_episodio(self, registro: RegistroAnonimizado)` a `escribir_episodio(self, registros: Sequence[RegistroAnonimizado])`; construir la tabla completa (una fila por registro, mismos campos que hoy: `id_paciente`, `id_episodio`, `fecha_estudio`, `tipo_documento`, `version_esquema`) y escribirla de una vez, conservando el patrón atómico `write_table` a temporal + `replace`.
-- [ ] 7.3 GREEN: agregar `clave_documento` a la fila de `episodios/{id_episodio}.parquet` (columna nueva, string) — es la forma de reconciliar el Parquet contra `estudio.clave_documento` sin re-derivar todo el corpus (design.md, "la columna se mantiene").
-- [ ] 7.4 RED: en `tests/salida/destinos/test_parquet.py`, test que llama `EscritorParquet.escribir()` (el método que anexa, no `escribir_episodio`) con el **mismo** `RegistroAnonimizado` dos veces en el mismo lote y confirma que el dataset resultante tiene una sola fila por analito/medida — dedup por `clave_documento` dentro del lote recibido.
-- [ ] 7.5 GREEN: en `EscritorParquet.escribir()`, deduplicar `registros` por `clave_documento` antes de construir las filas — un `set`/`dict` en memoria; los registros con `clave_documento=None` no participan de la dedup (mismo criterio NULL-no-colisiona que en Postgres).
-- [ ] 7.6 REFACTOR: actualizar `tests/salida/test_publicador_bundles.py::test_parquet_de_episodio_mantiene_una_sola_fila_vigente` para llamar `escribir_episodio([registro])` (lista de uno) si sigue teniendo sentido como test de esta unidad, o eliminarlo si queda cubierto por el nuevo test de tres documentos de 7.1 — decidir según cobertura, documentar la decisión en `apply-progress.md`.
+- [x] 7.1 RED: en `tests/salida/destinos/test_parquet.py`, test que llama `escribir_episodio` con la **secuencia completa** de los tres `RegistroAnonimizado` de un episodio (ECG + laboratorio + eco) y confirma que el Parquet resultante tiene **tres** filas, una por documento — falla porque la firma actual recibe un único registro.
+- [x] 7.2 GREEN: cambiar `EscritorParquet.escribir_episodio(self, registro: RegistroAnonimizado)` a `escribir_episodio(self, registros: Sequence[RegistroAnonimizado])`; construir la tabla completa (una fila por registro, mismos campos que hoy: `id_paciente`, `id_episodio`, `fecha_estudio`, `tipo_documento`, `version_esquema`) y escribirla de una vez, conservando el patrón atómico `write_table` a temporal + `replace`.
+- [x] 7.3 GREEN: agregar `clave_documento` a la fila de `episodios/{id_episodio}.parquet` (columna nueva, string) — es la forma de reconciliar el Parquet contra `estudio.clave_documento` sin re-derivar todo el corpus (design.md, "la columna se mantiene").
+- [x] 7.4 RED: en `tests/salida/destinos/test_parquet.py`, test que llama `EscritorParquet.escribir()` (el método que anexa, no `escribir_episodio`) con el **mismo** `RegistroAnonimizado` dos veces en el mismo lote y confirma que el dataset resultante tiene una sola fila por analito/medida — dedup por `clave_documento` dentro del lote recibido.
+- [x] 7.5 GREEN: en `EscritorParquet.escribir()`, deduplicar `registros` por `clave_documento` antes de construir las filas — un `set`/`dict` en memoria; los registros con `clave_documento=None` no participan de la dedup (mismo criterio NULL-no-colisiona que en Postgres).
+- [x] 7.6 REFACTOR: actualizar `tests/salida/test_publicador_bundles.py::test_parquet_de_episodio_mantiene_una_sola_fila_vigente` para llamar `escribir_episodio([registro])` (lista de uno) si sigue teniendo sentido como test de esta unidad, o eliminarlo si queda cubierto por el nuevo test de tres documentos de 7.1 — decidir según cobertura, documentar la decisión en `apply-progress.md`.
 
 ## Fase 8: `PublicadorBundles` — guarda por documento, no por directorio (Requisitos 4 y 5)
 
-- [ ] 8.1 RED: en `tests/salida/test_publicador_bundles.py`, test que publica un episodio con tres documentos de tipos distintos (ECG, laboratorio, eco) y confirma que el Parquet del episodio contiene los tres, con los tres tipos representados (Requisito 4, "episodio de tres estudios").
-- [ ] 8.2 RED: test que publica el mismo episodio dos veces seguidas con los mismos documentos y confirma que el contenido publicado (manifiesto + Parquet) es idéntico byte a byte entre ambas publicaciones — nada se agrega ni se pierde (Requisito 4, "republicar no altera el resultado").
-- [ ] 8.3 RED: test que publica un episodio con dos de sus tres documentos, luego lo republica incluyendo el tercero, y confirma que el manifiesto enumera los tres y el Parquet los contiene a los tres (Requisito 5, "llega el estudio que faltaba").
-- [ ] 8.4 RED: test que confirma que, al republicar sin novedades, el manifiesto **no se reescribe** (mismo `mtime`, o un sentinel de "no tocado") — solo se reescribe cuando hay unión nueva de documentos.
-- [ ] 8.5 GREEN: agregar `documentos: list[str]` (las `clave_documento` ordenadas) al manifiesto en `PublicadorBundles.publicar`.
-- [ ] 8.6 GREEN: cambiar la guarda — leer el manifiesto existente si el directorio ya existe; calcular qué `registros` traen una `clave_documento` que **no** figura en `documentos`. Si no hay novedades, no tocar nada (ni manifiesto ni Parquet) y retornar el mismo `destino`.
-- [ ] 8.7 GREEN: si hay novedades, recalcular la unión de `documentos`/`tipos_documento`, reescribir el manifiesto atómicamente (temporal + `replace`, mismo patrón ya usado para el directorio) y llamar `self._escritor_parquet.escribir_episodio(registros_union)` con la **secuencia completa** (todos los documentos del episodio, no solo los nuevos) — la firma nueva de la Fase 7 espera eso.
-- [ ] 8.8 RED: en `tests/salida/test_publicador_bundles.py`, test que confirma que un registro sin `clave_documento` (`None`) se trata como "siempre nuevo" en la guarda del publicador — no rompe, pero tampoco participa de la deduplicación (mismo criterio NULL-no-colisiona).
-- [ ] 8.9 GREEN: ajustar la guarda de 8.6 para el caso `clave_documento is None` según 8.8.
-- [ ] 8.10 REFACTOR: `pytest tests/salida/test_publicador_bundles.py tests/salida/destinos/test_parquet.py` en verde; confirmar que `publicar` sigue lanzando `ValueError` para lote vacío o de episodios mezclados (comportamiento previo, sin cambios).
+- [x] 8.1 RED: en `tests/salida/test_publicador_bundles.py`, test que publica un episodio con tres documentos de tipos distintos (ECG, laboratorio, eco) y confirma que el Parquet del episodio contiene los tres, con los tres tipos representados (Requisito 4, "episodio de tres estudios").
+- [x] 8.2 RED: test que publica el mismo episodio dos veces seguidas con los mismos documentos y confirma que el contenido publicado (manifiesto + Parquet) es idéntico byte a byte entre ambas publicaciones — nada se agrega ni se pierde (Requisito 4, "republicar no altera el resultado").
+- [x] 8.3 RED: test que publica un episodio con dos de sus tres documentos, luego lo republica incluyendo el tercero, y confirma que el manifiesto enumera los tres y el Parquet los contiene a los tres (Requisito 5, "llega el estudio que faltaba").
+- [x] 8.4 RED: test que confirma que, al republicar sin novedades, el manifiesto **no se reescribe** (mismo `mtime`, o un sentinel de "no tocado") — solo se reescribe cuando hay unión nueva de documentos.
+- [x] 8.5 GREEN: agregar `documentos: list[str]` (las `clave_documento` ordenadas) al manifiesto en `PublicadorBundles.publicar`.
+- [x] 8.6 GREEN: cambiar la guarda — leer el manifiesto existente si el directorio ya existe; calcular qué `registros` traen una `clave_documento` que **no** figura en `documentos`. Si no hay novedades, no tocar nada (ni manifiesto ni Parquet) y retornar el mismo `destino`.
+- [x] 8.7 GREEN: si hay novedades, recalcular la unión de `documentos`/`tipos_documento`, reescribir el manifiesto atómicamente (temporal + `replace`, mismo patrón ya usado para el directorio) y llamar `self._escritor_parquet.escribir_episodio(registros_union)` con la **secuencia completa** (todos los documentos del episodio, no solo los nuevos) — la firma nueva de la Fase 7 espera eso.
+- [x] 8.8 RED: en `tests/salida/test_publicador_bundles.py`, test que confirma que un registro sin `clave_documento` (`None`) se trata como "siempre nuevo" en la guarda del publicador — no rompe, pero tampoco participa de la deduplicación (mismo criterio NULL-no-colisiona).
+- [x] 8.9 GREEN: ajustar la guarda de 8.6 para el caso `clave_documento is None` según 8.8.
+- [x] 8.10 REFACTOR: `pytest tests/salida/test_publicador_bundles.py tests/salida/destinos/test_parquet.py` en verde; confirmar que `publicar` sigue lanzando `ValueError` para lote vacío o de episodios mezclados (comportamiento previo, sin cambios).
 
 ## Fase 9: contenido corregido entra como documento nuevo (Requisito 7)
 
-- [ ] 9.1 RED: en `tests/pipeline/test_ejecutor.py` o `tests/salida/test_constructor_registro.py`, test que simula un documento corregido (mismo `id_documento`, `sha256` distinto) y confirma que produce una `clave_documento` distinta de la versión anterior — sin necesidad de código nuevo, es una consecuencia directa de Fases 1 y 4; el test fija el comportamiento explícitamente.
-- [ ] 9.2 RED: test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — no debería requerir código nuevo si Fase 5 está completa; este ítem es red de seguridad.
-- [ ] 9.3 GREEN: ajustes de wiring que falten (no debería requerir lógica nueva).
-- [ ] 9.4 REFACTOR: ninguno esperado; confirmar en `apply-progress.md` si este comportamiento salió gratis de las fases anteriores o si hizo falta algún ajuste no previsto.
+- [x] 9.1 RED: en `tests/pipeline/test_ejecutor.py` o `tests/salida/test_constructor_registro.py`, test que simula un documento corregido (mismo `id_documento`, `sha256` distinto) y confirma que produce una `clave_documento` distinta de la versión anterior — sin necesidad de código nuevo, es una consecuencia directa de Fases 1 y 4; el test fija el comportamiento explícitamente.
+- [ ] 9.2 DIFERIDO A PR2: test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — depende de la restricción `UNIQUE` de la Fase 5 (fuera de alcance de este PR); sin ella, Postgres ya inserta ambas filas hoy sin garantía real, así que el test no verificaría nada nuevo. Se retoma junto con la Fase 5 en PR2.
+- [x] 9.3 GREEN: ajustes de wiring que falten (no debería requerir lógica nueva).
+- [x] 9.4 REFACTOR: ninguno esperado; confirmar en `apply-progress.md` si este comportamiento salió gratis de las fases anteriores o si hizo falta algún ajuste no previsto.
 
 ## Fase 10: integración extremo a extremo — ambos destinos, ambos defectos cerrados
 
