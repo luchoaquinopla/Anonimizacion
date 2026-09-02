@@ -444,6 +444,14 @@ class ParseadorEcoDoppler:
         cuerpo = _parsear_cuerpo(texto.paginas_ordenadas)
         medidas, secciones_texto, firma = cuerpo.medidas, cuerpo.secciones, cuerpo.firma
 
+        # Requirement: "Ausencia explícita cuando el documento no trae hora"
+        # (spec `momento-del-estudio`) -- el layout del eco nunca trae un
+        # campo de hora. `hora_estudio`/`precision_hora` quedan en los
+        # defaults de `DocumentoParseado` (`None`/`AUSENTE`, Fase 1): NUNCA
+        # se completa con un default de medianoche ni se declara un
+        # `id_campo`/`ReferenciaCampo` de hora -- sin referencia y sin
+        # hallazgo, el 1:1 de cobertura de reconciliación se sostiene solo
+        # (design.md, decisión 4).
         contenido = ContenidoEco(medidas=medidas, secciones_texto=secciones_texto, firma=firma)
         fuentes = (
             ReferenciaCampo("eco.nombre", 1, "eco.nombre"),

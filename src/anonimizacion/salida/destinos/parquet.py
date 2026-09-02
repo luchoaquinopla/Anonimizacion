@@ -33,6 +33,70 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEcoSalida, ContenidoLaboratorioSalida
 
 
+# Gotcha 4 (design.md, decisión 3): `pa.Table.from_pylist` infiere el tipo de
+# columna por LOTE. Un lote compuesto enteramente por ecocardiogramas (todos
+# con `hora_estudio=None`) dejaría esa columna con tipo `null` inferido, que
+# choca al leer un dataset combinado junto a la partición de ECG (que sí trae
+# strings). Se declara un `pa.schema` explícito por dataset -- `hora_estudio`
+# es ISO string o `None`, `precision_hora` siempre string (nunca ausente:
+# `PrecisionHora.AUSENTE.value` para los casos sin hora).
+_SCHEMA_LABORATORIO = pa.schema([
+    ("id_paciente", pa.string()),
+    ("id_episodio", pa.string()),
+    ("id_medico", pa.string()),
+    ("anio", pa.int64()),
+    ("fecha_estudio", pa.string()),
+    ("analito", pa.string()),
+    ("seccion", pa.string()),
+    ("valor_num", pa.float64()),
+    ("valor_texto", pa.string()),
+    ("unidad", pa.string()),
+    ("ref_min", pa.float64()),
+    ("ref_max", pa.float64()),
+    ("hora_estudio", pa.string()),
+    ("precision_hora", pa.string()),
+])
+
+_SCHEMA_ECG = pa.schema([
+    ("id_paciente", pa.string()),
+    ("id_episodio", pa.string()),
+    ("id_medico", pa.string()),
+    ("anio", pa.int64()),
+    ("fecha_estudio", pa.string()),
+    ("vent_rate", pa.string()),
+    ("pr_interval", pa.string()),
+    ("qrs_duration", pa.string()),
+    ("qt_qtc", pa.string()),
+    ("ejes", pa.string()),
+    ("hora_estudio", pa.string()),
+    ("precision_hora", pa.string()),
+])
+
+_SCHEMA_ECO_MEDIDAS = pa.schema([
+    ("id_paciente", pa.string()),
+    ("id_episodio", pa.string()),
+    ("id_medico_informante", pa.string()),
+    ("anio", pa.int64()),
+    ("fecha_estudio", pa.string()),
+    ("nombre", pa.string()),
+    ("valor", pa.string()),
+    ("unidad", pa.string()),
+    ("hora_estudio", pa.string()),
+    ("precision_hora", pa.string()),
+])
+
+_SCHEMA_ECO_TEXTO = pa.schema([
+    ("id_paciente", pa.string()),
+    ("id_episodio", pa.string()),
+    ("anio", pa.int64()),
+    ("fecha_estudio", pa.string()),
+    ("seccion", pa.string()),
+    ("texto", pa.string()),
+    ("hora_estudio", pa.string()),
+    ("precision_hora", pa.string()),
+])
+
+
 class EscritorParquet:
     """Exporta lotes de `RegistroAnonimizado` a Parquet particionado por `tipo_documento/año`."""
 
@@ -54,16 +118,22 @@ class EscritorParquet:
             raise ValueError(f"tipo_documento no soportado por EscritorParquet: {tipos_desconocidos!r}")
 
         if laboratorio:
-            self._escribir_dataset(self._directorio_base / "laboratorio", self._filas_laboratorio(laboratorio))
+            self._escribir_dataset(
+                self._directorio_base / "laboratorio", self._filas_laboratorio(laboratorio), _SCHEMA_LABORATORIO
+            )
         if ecg:
-            self._escribir_dataset(self._directorio_base / "ecg", self._filas_ecg(ecg))
+            self._escribir_dataset(self._directorio_base / "ecg", self._filas_ecg(ecg), _SCHEMA_ECG)
         if eco:
-            self._escribir_dataset(self._directorio_base / "eco_medidas", self._filas_eco_medidas(eco))
-            self._escribir_dataset(self._directorio_base / "eco_texto", self._filas_eco_texto(eco))
+            self._escribir_dataset(
+                self._directorio_base / "eco_medidas", self._filas_eco_medidas(eco), _SCHEMA_ECO_MEDIDAS
+            )
+            self._escribir_dataset(
+                self._directorio_base / "eco_texto", self._filas_eco_texto(eco), _SCHEMA_ECO_TEXTO
+            )
 
     @staticmethod
-    def _escribir_dataset(raiz: Path, filas: list[dict]) -> None:
-        tabla = pa.Table.from_pylist(filas)
+    def _escribir_dataset(raiz: Path, filas: list[dict], schema: pa.Schema | None = None) -> None:
+        tabla = pa.Table.from_pylist(filas, schema=schema)
         pq.write_to_dataset(tabla, root_path=str(raiz), partition_cols=["anio"])
 
     @staticmethod
@@ -86,6 +156,10 @@ class EscritorParquet:
                         "unidad": resultado.unidad,
                         "ref_min": resultado.ref_min,
                         "ref_max": resultado.ref_max,
+                        "hora_estudio": (
+                            registro.hora_estudio.isoformat() if registro.hora_estudio is not None else None
+                        ),
+                        "precision_hora": registro.precision_hora.value,
                     }
                 )
         return filas
@@ -107,6 +181,10 @@ class EscritorParquet:
                     "qrs_duration": contenido.qrs_duration,
                     "qt_qtc": contenido.qt_qtc,
                     "ejes": contenido.ejes,
+                    "hora_estudio": (
+                        registro.hora_estudio.isoformat() if registro.hora_estudio is not None else None
+                    ),
+                    "precision_hora": registro.precision_hora.value,
                 }
             )
         return filas
@@ -127,6 +205,10 @@ class EscritorParquet:
                         "nombre": medida.nombre,
                         "valor": medida.valor,
                         "unidad": medida.unidad,
+                        "hora_estudio": (
+                            registro.hora_estudio.isoformat() if registro.hora_estudio is not None else None
+                        ),
+                        "precision_hora": registro.precision_hora.value,
                     }
                 )
         return filas
@@ -145,6 +227,10 @@ class EscritorParquet:
                         "fecha_estudio": registro.fecha_estudio.isoformat(),
                         "seccion": seccion.nombre,
                         "texto": seccion.texto,
+                        "hora_estudio": (
+                            registro.hora_estudio.isoformat() if registro.hora_estudio is not None else None
+                        ),
+                        "precision_hora": registro.precision_hora.value,
                     }
                 )
         return filas

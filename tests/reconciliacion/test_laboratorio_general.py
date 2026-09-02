@@ -1,19 +1,36 @@
-from datetime import date
+from datetime import date, time
 
 import pytest
 from pydantic import SecretStr
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
+from anonimizacion.reconciliacion._comun import reconciliar_referencias
 from anonimizacion.reconciliacion.base import ReferenciaCampo
 from anonimizacion.reconciliacion.laboratorio_general import ReconciliadorLaboratorioGeneral
 
 
-def _documento(resultados: tuple[ResultadoLaboratorio, ...], fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
-    return DocumentoParseado(TipoDocumento.LABORATORIO, 1, IdentidadCruda(nombre=SecretStr("Persona Sintetica")), date(2025, 1, 10), ContenidoLaboratorio("900", resultados), fuentes=fuentes)
+def _documento(
+    resultados: tuple[ResultadoLaboratorio, ...],
+    fuentes: tuple[ReferenciaCampo, ...],
+    *,
+    hora_estudio: time | None = None,
+    precision_hora: PrecisionHora = PrecisionHora.AUSENTE,
+) -> DocumentoParseado:
+    return DocumentoParseado(
+        TipoDocumento.LABORATORIO,
+        1,
+        IdentidadCruda(nombre=SecretStr("Persona Sintetica")),
+        date(2025, 1, 10),
+        ContenidoLaboratorio("900", resultados),
+        fuentes=fuentes,
+        hora_estudio=hora_estudio,
+        precision_hora=precision_hora,
+    )
 
 
 def test_reconcilia_resultados_repetidos_por_ordinal() -> None:
@@ -45,6 +62,74 @@ def test_laboratorio_asocia_resultado_sin_confundirlo_con_subcadena_del_numero_d
     ))
 
     ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+
+def test_hora_extraccion_sin_validador_asociacion_rechaza_documento_legitimo() -> None:
+    """Gotcha 2 (design.md, decisión 4, "la parte más frágil"): sin
+    `validador_asociacion`, `reconciliar_referencias` cae en
+    `pagina.count(valor) == 1` (`_comun.py:51`). Un valor de hora suelto que
+    aparece más de una vez en la página (p. ej. coincide con otro valor no
+    relacionado) rompe un documento legítimo. Este test reproduce el bug
+    llamando `reconciliar_referencias` directamente, sin el
+    `validador_asociacion` que agrega la Fase 6 (GREEN)."""
+    fuente = ReferenciaCampo("laboratorio.hora_extraccion", 1, "laboratorio.hora_extraccion")
+    documento = _documento((), (fuente,), hora_estudio=time(8, 30), precision_hora=PrecisionHora.MINUTO)
+    # "08:30" aparece dos veces en la página: una vez tras el rótulo real, y
+    # otra como coincidencia en un campo no relacionado.
+    pagina = "Hora de Extraccion: 08:30\nCodigo interno 08:30 no relacionado"
+    texto = TextoExtraido((pagina,))
+
+    with pytest.raises(ErrorParseo) as error:
+        reconciliar_referencias(documento, texto, {("laboratorio.hora_extraccion", 0): "08:30"})
+
+    assert error.value.codigo is CodigoErrorDocumento.EVIDENCIA_AMBIGUA
+
+
+def test_hora_extraccion_con_validador_asociacion_ancla_al_rotulo() -> None:
+    """GREEN de la Fase 6: con `_asociacion_laboratorio` (anclado al rótulo
+    `Hora de Extracción:`), el mismo documento del test anterior reconcilia
+    sin error -- la hora se ancla a su rótulo, no a una coincidencia suelta."""
+    from anonimizacion.reconciliacion.laboratorio_general import _asociacion_laboratorio
+
+    fuente = ReferenciaCampo("laboratorio.hora_extraccion", 1, "laboratorio.hora_extraccion")
+    documento = _documento((), (fuente,), hora_estudio=time(8, 30), precision_hora=PrecisionHora.MINUTO)
+    pagina = "Hora de Extraccion: 08:30\nCodigo interno 08:30 no relacionado"
+    texto = TextoExtraido((pagina,))
+
+    reconciliar_referencias(
+        documento,
+        texto,
+        {("laboratorio.hora_extraccion", 0): "08:30"},
+        validador_asociacion=_asociacion_laboratorio,
+    )
+
+
+def test_reconciliador_laboratorio_reconcilia_hora_extraccion_end_to_end() -> None:
+    """GREEN de la Fase 6: `ReconciliadorLaboratorioGeneral.reconciliar`
+    reconcilia `laboratorio.hora_extraccion` de punta a punta, sin afectar
+    la ruta existente de `laboratorio.resultado`."""
+    filas = (ResultadoLaboratorio("HEMATOLOGIA", "Hemoglobina", "14,2", "g/dL", "12 - 16"),)
+    fuentes = (
+        ReferenciaCampo("laboratorio.hora_extraccion", 1, "laboratorio.hora_extraccion"),
+        ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),
+    )
+    documento = _documento(filas, fuentes, hora_estudio=time(8, 30), precision_hora=PrecisionHora.MINUTO)
+    texto = TextoExtraido((
+        "Hora de Extraccion: 08:30\nHEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
+    ))
+
+    ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+
+
+def test_reconciliador_laboratorio_rechaza_hora_extraccion_discrepante() -> None:
+    fuentes = (ReferenciaCampo("laboratorio.hora_extraccion", 1, "laboratorio.hora_extraccion"),)
+    documento = _documento((), fuentes, hora_estudio=time(9, 0), precision_hora=PrecisionHora.MINUTO)
+    texto = TextoExtraido(("Hora de Extraccion: 08:30",))
+
+    with pytest.raises(ErrorParseo) as error:
+        ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+
+    assert error.value.codigo is CodigoErrorDocumento.VALOR_DISCREPANTE
 
 
 def test_inventario_laboratorio_enumera_filas_por_seccion_y_ordinal() -> None:

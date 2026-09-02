@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.reconciliacion.normalizacion import (
     normalizar_fecha_iso,
+    normalizar_hora_iso,
     normalizar_numero,
     normalizar_texto,
 )
@@ -40,6 +42,40 @@ def test_normalizar_fecha_iso_convierte_solo_formatos_permitidos(
     original: str, esperado: str
 ) -> None:
     assert normalizar_fecha_iso(original) == esperado
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado", "precision"),
+    [
+        ("08:45:00", "08:45:00", PrecisionHora.SEGUNDO),
+        ("08:45", "08:45", PrecisionHora.MINUTO),
+    ],
+)
+def test_normalizar_hora_iso_acepta_solo_formatos_explicitos(
+    original: str, esperado: str, precision: PrecisionHora
+) -> None:
+    valor, precision_obtenida = normalizar_hora_iso(original)
+    assert valor == esperado
+    assert precision_obtenida is precision
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        # Sin cero a la izquierda: el layout real de los documentos
+        # calibrados siempre trae dos dígitos ("08:45:00", "Hora de
+        # Extracción: 08:30") -- dado el principio de "cero inferencia" que ya
+        # aplica `normalizar_fecha_iso`, es más seguro rechazar un formato no
+        # confirmado contra el documento real que aceptarlo "de más" y
+        # arriesgar una hora mal interpretada (ver apply-progress.md, Fase 2).
+        "8:45",
+        "25:00",  # hora fuera de rango
+        "no es una hora",  # no numérico
+    ],
+)
+def test_normalizar_hora_iso_rechaza_formatos_no_soportados(original: str) -> None:
+    with pytest.raises(ValueError):
+        normalizar_hora_iso(original)
 
 
 @pytest.mark.parametrize(

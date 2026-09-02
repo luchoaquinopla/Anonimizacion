@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -90,10 +91,13 @@ def test_inventario_ecg_aprueba_headers_y_medidas_con_destino_unico() -> None:
         ReferenciaCampo("ecg.nombre", 1, "ecg.nombre"),
         ReferenciaCampo("ecg.id_estudio", 1, "ecg.id_estudio"),
         ReferenciaCampo("ecg.fecha_estudio", 1, "ecg.fecha_estudio"),
+        ReferenciaCampo("ecg.hora_estudio", 1, "ecg.hora_estudio"),
         ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate"),
         ReferenciaCampo("ecg.pr_interval", 1, "ecg.pr_interval"),
     )
-    documento = _documento(fuentes)
+    from datetime import time
+
+    documento = replace(_documento(fuentes), hora_estudio=time(10, 0, 0))
     texto = TextoExtraido((
         "Persona Sintetica~, ID:ESTUDIO-1 05-JUN-2025 10:00:00\nVent. rate 68 BPM\nPR interval 160",
     ))

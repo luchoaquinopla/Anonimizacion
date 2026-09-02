@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import time
 
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from tests.calibracion.compuerta_laboratorio import (
     CONTRATO_LABORATORIO,
     ResumenLaboratorio,
@@ -32,6 +34,13 @@ def test_sintetico_cumple_contrato_seguro_derivado_del_original(tmp_path) -> Non
     assert resumen.etapa_final is None
     assert resumen.estado_pii == "ejecutada"
     assert resumen.estado_anonimizacion == "ejecutada"
+    # Requirement: "Laboratorio expone la hora de extracción como campo
+    # tipado" -- la muestra sintética calibrada trae `Hora de Extraccion: 08:30`
+    # (ver `tests/fixtures/pdf_sintetico.py`, `_encabezado_laboratorio`); la
+    # compuerta verifica el valor exacto y que ya no viva en adicionales.
+    assert resumen.hora_estudio == time(8, 30).isoformat()
+    assert resumen.precision_hora == PrecisionHora.MINUTO.value
+    assert "hora_extraccion" not in resumen.campos_adicionales
 
 
 def test_resumen_de_calibracion_no_contiene_valores_identificatorios(tmp_path) -> None:

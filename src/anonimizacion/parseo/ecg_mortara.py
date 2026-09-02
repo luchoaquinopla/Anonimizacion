@@ -70,15 +70,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from pydantic import SecretStr
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
+from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.reconciliacion.base import ReferenciaCampo
+from anonimizacion.reconciliacion.normalizacion import normalizar_hora_iso
 
 _ETAPA = "parseo"
 _VERSION_ESQUEMA = 1
@@ -231,9 +233,24 @@ def _extraer_medidas_ecg(texto_completo: str) -> dict[str, str]:
     return medidas
 
 
-def _parsear_fecha(texto: str) -> date:
-    solo_fecha = texto.strip().split(" ")[0]
-    return datetime.strptime(solo_fecha, "%d-%b-%Y").date()
+def _parsear_fecha(texto: str) -> tuple[date, time, PrecisionHora]:
+    """Separa fecha y hora del header (`DD-MON-YYYY  HH:MM:SS`).
+
+    `header["fecha"]` ya viene acotado por `_CAMPOS_HEADER["fecha"]` a
+    exactamente ese timestamp completo (sin institución ni otro texto
+    arrastrado), así que `partition(" ")` en el primer espacio alcanza para
+    separar ambas porciones sin importar cuántos espacios separen fecha de
+    hora en el documento real. La hora se normaliza con `normalizar_hora_iso`
+    (Fase 2) -- si no matchea ningún formato soportado, el `ValueError`
+    propaga hasta el llamador, que lo convierte en cuarentena (Fase 8:
+    "hora ilegible va a cuarentena, no a ausencia silenciosa").
+    """
+    solo_fecha, _, porcion_hora = texto.strip().partition(" ")
+    fecha = datetime.strptime(solo_fecha, "%d-%b-%Y").date()
+    hora_normalizada, precision = normalizar_hora_iso(porcion_hora.strip())
+    formato_hora = "%H:%M:%S" if precision is PrecisionHora.SEGUNDO else "%H:%M"
+    hora = datetime.strptime(hora_normalizada, formato_hora).time()
+    return fecha, hora, precision
 
 
 def _parsear_fecha_nacimiento(texto: str) -> str | None:
@@ -273,7 +290,7 @@ class ParseadorEcgMortara:
             header["medico_derivante"] = _primer_segmento(header["medico_derivante"])
 
         try:
-            fecha_estudio = _parsear_fecha(header["fecha"])
+            fecha_estudio, hora_estudio, precision_hora = _parsear_fecha(header["fecha"])
         except ValueError as _exc:
             raise ErrorParseo(
                 codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
@@ -311,6 +328,7 @@ class ParseadorEcgMortara:
             ReferenciaCampo("ecg.nombre", 1, "ecg.nombre"),
             *((ReferenciaCampo("ecg.id_estudio", 1, "ecg.id_estudio"),) if identidad.ids_internos else ()),
             ReferenciaCampo("ecg.fecha_estudio", 1, "ecg.fecha_estudio"),
+            ReferenciaCampo("ecg.hora_estudio", 1, "ecg.hora_estudio"),
             *((ReferenciaCampo("ecg.fecha_nacimiento", 1, "ecg.fecha_nacimiento"),) if identidad.fecha_nac else ()),
         ) + tuple(
             ReferenciaCampo(f"ecg.{campo}", 1, f"ecg.{campo}")
@@ -323,6 +341,8 @@ class ParseadorEcgMortara:
             version_esquema=_VERSION_ESQUEMA,
             identidad=identidad,
             fecha_estudio=fecha_estudio,
+            hora_estudio=hora_estudio,
+            precision_hora=precision_hora,
             contenido=contenido,
             adicionales=adicionales,
             fuentes=fuentes,

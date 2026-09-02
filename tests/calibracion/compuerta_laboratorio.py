@@ -44,6 +44,8 @@ class ResumenLaboratorio:
     estado_final: str
     codigo_final: str | None
     etapa_final: str | None
+    hora_estudio: str | None
+    precision_hora: str
 
     def como_dict(self) -> dict[str, object]:
         datos = asdict(self)
@@ -110,7 +112,7 @@ CONTRATO_LABORATORIO = ResumenLaboratorio(
     estado_deteccion="aprobado",
     estado_parseo="aprobado",
     campos_identidad=("dni", "fecha_nac", "ids_internos", "nombre"),
-    campos_adicionales=("edad", "hora_extraccion", "medico_derivante", "origen"),
+    campos_adicionales=("edad", "medico_derivante", "origen"),
     secciones=("formula leucocitaria", "hematologia", "hemograma", "hemostasia", "ionograma", "quimica clinica"),
     determinaciones=_DETERMINACIONES,
     tipos_resultado=(("numerico", 36),),
@@ -136,6 +138,8 @@ CONTRATO_LABORATORIO = ResumenLaboratorio(
     estado_final="aprobado",
     codigo_final=None,
     etapa_final=None,
+    hora_estudio="08:30:00",
+    precision_hora="minuto",
 )
 
 
@@ -226,6 +230,8 @@ def evaluar_laboratorio(ruta: Path) -> ResumenLaboratorio:
         estado_final=estado_final,
         codigo_final=codigo_final,
         etapa_final=etapa_final,
+        hora_estudio=documento.hora_estudio.isoformat() if documento.hora_estudio is not None else None,
+        precision_hora=documento.precision_hora.value,
     )
 
 
