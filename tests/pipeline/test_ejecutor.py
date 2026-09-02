@@ -684,6 +684,28 @@ def test_procesar_lote_deriva_y_propaga_clave_documento_hasta_el_registro() -> N
     assert escritor.escritos[0].clave_documento == esperado
 
 
+def test_documento_corregido_mismo_id_documento_distinto_sha256_produce_clave_distinta() -> None:
+    """Requisito 7, spec `escritura-idempotente`: si un documento se corrige
+    en el origen (mismo `id_documento`, contenido/sha256 distinto), la
+    `clave_documento` derivada MUST ser distinta -- consecuencia directa de
+    Fases 1 y 4, sin código nuevo; este test fija el comportamiento
+    explícitamente como red de seguridad."""
+    ejecutor, escritor, _cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("paciente"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+    )
+
+    artefacto_original = ArtefactoCrudo(uri="/fake/doc.pdf", sha256="a" * 64, formato=FormatoArtefacto.PDF)
+    artefacto_corregido = ArtefactoCrudo(uri="/fake/doc.pdf", sha256="b" * 64, formato=FormatoArtefacto.PDF)
+
+    ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=artefacto_original)])
+    ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=artefacto_corregido)])
+
+    assert len(escritor.escritos) == 2
+    clave_original, clave_corregida = escritor.escritos[0].clave_documento, escritor.escritos[1].clave_documento
+    assert clave_original != clave_corregida
+
+
 def test_item_lote_no_gano_ningun_campo_nuevo() -> None:
     """Requisito 2, "la cola conserva su forma": `ItemLote` sigue siendo
     exactamente `{id_documento, artefacto}`, sin campo nuevo."""

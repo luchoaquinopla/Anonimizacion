@@ -26,6 +26,7 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, MedidaEco
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos.parquet import EscritorParquet
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
@@ -90,8 +91,14 @@ def _registros():
         ),
     )
     return tuple(
-        construir_registro(documento, claves, id_episodio="ep-1", pepper=_PEPPER)
-        for documento in documentos
+        construir_registro(
+            documento,
+            claves,
+            id_episodio="ep-1",
+            pepper=_PEPPER,
+            clave_documento=generar_clave_documento(_PEPPER, f"sha-sintetico-{indice}".ljust(64, "0")),
+        )
+        for indice, documento in enumerate(documentos)
     )
 
 
