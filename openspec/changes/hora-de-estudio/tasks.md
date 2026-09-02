@@ -132,8 +132,8 @@ Los oráculos de `tests/carga/` (1.000 y 10.000 PDFs) se regeneran y corren **al
 
 - [x] 16.1 Regenerar el oráculo de `tests/carga/test_ejecutar_corpus.py` (1.000 PDFs): el schema de Parquet cambió (Fase 10), así que el oráculo de igualdad estricta rompe por diseño. Correr `python -m tests.carga.ejecutar_corpus` y actualizar el oráculo con los valores nuevos. **El oráculo NO se rompió**: verifica composición del corpus, no el schema de Parquet, así que el campo nuevo no lo afecta. `oraculo_validado: true` sin tocar nada.
 - [x] 16.2 Confirmar sin regresión de tiempo/memoria frente a la última corrida validada (ver `openspec/changes/puerto-de-ingesta/tasks.md`, Fase 9, para los valores de referencia más recientes) — el campo nuevo es de costo marginal, pero el pico de memoria es parte del contrato y se revalida igual. Medido: 218,39 s (antes 218,64 s) y 145.072.128 B de pico (antes 145.698.816 B, −0,43 %). Sin regresión.
-- [ ] 16.3 Regenerar y correr `tests/carga/ejecutar_corpus_10000.py`: mismo criterio, confirmar composición idéntica del corpus (únicos/duplicados/aprobados/episodios/cuarentenas) salvo por el campo nuevo, y ausencia de regresión a escala.
-- [ ] 16.4 `pytest` completo del repositorio en verde.
+- [x] 16.3 Regenerar y correr `tests/carga/ejecutar_corpus_10000.py`: mismo criterio, confirmar composición idéntica del corpus (únicos/duplicados/aprobados/episodios/cuarentenas) salvo por el campo nuevo, y ausencia de regresión a escala. **El oráculo tampoco se rompió.** Medido: composición idéntica (9.980 únicos, 20 duplicados, 9.720 aprobados, 3.240 episodios, 260 cuarentenas: 80/170/10), `oraculo_validado: true`, 0 fallos, 0 reintentos, `pii_en_salida: 0`. Tiempo 2.463,3 s = 41,1 min (antes 40,6 min, +1,0 %) y memoria pico 299.827.200 B = 285,9 MiB (antes 301,3 MiB, **−5,1 %**).
+- [x] 16.4 `pytest` completo del repositorio en verde.
 
 ## Pronóstico de carga de revisión
 

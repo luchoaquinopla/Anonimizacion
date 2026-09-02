@@ -229,3 +229,44 @@ producción.
   corrida de los oráculos de carga de 1.000 y 10.000 PDFs. Los oráculos rompen
   **por diseño**, porque cambia el schema de Parquet.
 
+## Lote 3 (PR3) — calibración y oráculos de carga
+
+Fases 15 y 16 completas. `pytest` completo: 493 pasados, 1 omitido.
+
+### Fase 15 — auditoría, sin trabajo nuevo
+
+Las tres compuertas ya cubrían `hora_estudio` y `precision_hora` desde sus
+propias fases (3, 5 y 7), tal como pedía el plan. `tests/calibracion/` en verde.
+
+### Fase 16 — los oráculos NO se rompieron
+
+El plan preveía que romperían "por diseño" porque cambia el schema de Parquet.
+No ocurrió: los oráculos verifican la **composición del corpus**, no el schema,
+así que el campo nuevo no los afecta. Ninguno necesitó regenerarse.
+
+| Ensayo | Métrica | Antes | Ahora | Diferencia |
+|---|---|---|---|---|
+| 1.000 | Tiempo | 218,64 s | 222,74 s | +1,9 % |
+| 1.000 | Memoria pico | 145.698.816 B | 147.136.512 B | +1,0 % |
+| 10.000 | Tiempo | 40,6 min | 41,1 min | +1,0 % |
+| 10.000 | Memoria pico | 301,3 MiB | 285,9 MiB | **−5,1 %** |
+
+Composición idéntica en ambos, `oraculo_validado: true`, 0 fallos inesperados,
+0 reintentos, `pii_en_salida: 0`.
+
+### Validación cruzada con el refactor de la ventana de 7 días
+
+Entre la corrida de 10.000 y el cierre de este lote se mergeó el PR #18, que
+deja una sola implementación del clustering por ancla. El ensayo de 1.000 se
+volvió a correr **sobre el código ya mergeado** para no apoyarse sólo en los
+cuatro tests de equivalencia: la composición del corpus salió idéntica, caso por
+caso. El refactor es efectivamente preservador de comportamiento sobre corpus
+real, no sólo en unitarios.
+
+Las cifras de 10.000 quedaron medidas sobre código previo al #18; se consideran
+válidas por esa misma verificación cruzada.
+
+### Estado del cambio
+
+`hora-de-estudio` completo: 16 fases, 3 PRs.
+
