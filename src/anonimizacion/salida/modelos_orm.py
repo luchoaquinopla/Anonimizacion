@@ -45,9 +45,9 @@ módulo.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -90,6 +90,38 @@ class Episodio(Base):
     fecha_ancla: Mapped[date] = mapped_column(Date, nullable=False)
 
 
+class Estudio(Base):
+    """Un documento clinico publicado, con su momento propio.
+
+    Existe porque `episodio.fecha_ancla` es la fecha del GRUPO (ventana +-7 dias),
+    no la de cada estudio: sin esta tabla el delta entre el ECG y el laboratorio
+    de un mismo episodio no es computable en SQL ni siquiera en dias. Las tablas
+    de mediciones cuelgan de aca por `id_estudio`.
+
+    `hora_estudio` es `TIME WITHOUT TIME ZONE`: los documentos no declaran huso y
+    no se infiere ninguno, asi que la hora es naive por construccion -- hora local
+    del instituto, tal como figura en el papel.
+
+    `precision_hora` NO es derivable de `hora_estudio` (ver
+    `dominio/precision_hora.py`): un laboratorio a las `08:45` se persiste
+    `08:45:00`, identico a un ECG con esa hora. Y `hora_estudio IS NULL` con
+    `precision_hora = 'ausente'` significa "el documento no la trae", nunca
+    medianoche ni un faltante por error -- un documento cuya hora es ilegible va
+    a cuarentena y no llega a producir fila aca.
+    """
+
+    __tablename__ = "estudio"
+
+    id_estudio: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id_episodio: Mapped[str] = mapped_column(
+        String(_LONGITUD_CLAVE_HEX), ForeignKey("episodio.id_episodio"), index=True, nullable=False
+    )
+    tipo_documento: Mapped[str] = mapped_column(String, nullable=False)
+    fecha_estudio: Mapped[date] = mapped_column(Date, nullable=False)
+    hora_estudio: Mapped[time | None] = mapped_column(Time, nullable=True)
+    precision_hora: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class MedicionEcg(Base):
     """Medidas de ECG -- ancha, esquema fijo (ver `ContenidoEcg`)."""
 
@@ -98,6 +130,9 @@ class MedicionEcg(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_episodio: Mapped[str] = mapped_column(
         String(_LONGITUD_CLAVE_HEX), ForeignKey("episodio.id_episodio"), index=True, nullable=False
+    )
+    id_estudio: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("estudio.id_estudio"), index=True, nullable=True
     )
     id_medico: Mapped[str | None] = mapped_column(String(_LONGITUD_CLAVE_HEX), nullable=True)
     vent_rate: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -116,6 +151,9 @@ class ResultadoLaboratorio(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_episodio: Mapped[str] = mapped_column(
         String(_LONGITUD_CLAVE_HEX), ForeignKey("episodio.id_episodio"), index=True, nullable=False
+    )
+    id_estudio: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("estudio.id_estudio"), index=True, nullable=True
     )
     id_medico: Mapped[str | None] = mapped_column(String(_LONGITUD_CLAVE_HEX), nullable=True)
     analito: Mapped[str] = mapped_column(String, nullable=False)
@@ -140,6 +178,9 @@ class MedicionEco(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_episodio: Mapped[str] = mapped_column(
         String(_LONGITUD_CLAVE_HEX), ForeignKey("episodio.id_episodio"), index=True, nullable=False
+    )
+    id_estudio: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("estudio.id_estudio"), index=True, nullable=True
     )
     id_medico_solicitante: Mapped[str | None] = mapped_column(String(_LONGITUD_CLAVE_HEX), nullable=True)
     id_medico_informante: Mapped[str | None] = mapped_column(String(_LONGITUD_CLAVE_HEX), nullable=True)
