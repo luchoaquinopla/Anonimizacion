@@ -20,6 +20,7 @@ _TABLAS_ESPERADAS = {
     "cuarentena",
     "corrida",
     "documento_corrida",
+    "estudio",
 }
 
 
@@ -100,3 +101,53 @@ def test_migraciones_tienen_una_unica_cabecera() -> None:
     script = ScriptDirectory.from_config(_config_alembic("sqlite://"))
 
     assert len(script.get_heads()) == 1
+
+
+def test_migracion_estudio_agrega_fk_nullable_en_las_tres_mediciones(tmp_path) -> None:
+    """SQLite no soporta `ALTER TABLE` con FK: la migración usa `batch_alter_table`."""
+    ruta_db = tmp_path / "estudio_fk.db"
+    url = f"sqlite:///{ruta_db}"
+
+    command.upgrade(_config_alembic(url), "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    for tabla in ("medicion_ecg", "resultado_laboratorio", "medicion_eco"):
+        columnas = {columna["name"]: columna for columna in inspector.get_columns(tabla)}
+        assert "id_estudio" in columnas, f"{tabla} no recibio la FK id_estudio"
+        assert columnas["id_estudio"]["nullable"] is True, f"{tabla}.id_estudio debe ser nullable"
+
+    columnas_estudio = {columna["name"] for columna in inspector.get_columns("estudio")}
+    assert {"id_estudio", "id_episodio", "tipo_documento", "fecha_estudio", "hora_estudio", "precision_hora"} <= (
+        columnas_estudio
+    )
+
+
+def test_downgrade_de_estudio_vuelve_al_esquema_anterior(tmp_path) -> None:
+    ruta_db = tmp_path / "estudio_downgrade.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0005_tamano_y_tope_cuarentena")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    assert "estudio" not in set(inspector.get_table_names())
+    for tabla in ("medicion_ecg", "resultado_laboratorio", "medicion_eco"):
+        columnas = {columna["name"] for columna in inspector.get_columns(tabla)}
+        assert "id_estudio" not in columnas, f"{tabla} conservo la FK tras el downgrade"
+
+
+def test_ciclo_upgrade_downgrade_upgrade_es_estructuralmente_idempotente(tmp_path) -> None:
+    ruta_db = tmp_path / "estudio_ciclo.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0005_tamano_y_tope_cuarentena")
+    command.upgrade(cfg, "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    assert "estudio" in set(inspector.get_table_names())
+    for tabla in ("medicion_ecg", "resultado_laboratorio", "medicion_eco"):
+        assert "id_estudio" in {columna["name"] for columna in inspector.get_columns(tabla)}
+
