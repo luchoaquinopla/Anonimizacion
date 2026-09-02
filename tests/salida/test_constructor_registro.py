@@ -27,13 +27,19 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
-from anonimizacion.pseudonimizacion.claves import generar_id_matricula_medico, generar_id_medico
+from anonimizacion.pseudonimizacion.claves import (
+    generar_clave_documento,
+    generar_id_matricula_medico,
+    generar_id_medico,
+)
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEcoSalida, ContenidoLaboratorioSalida
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 CLAVES_TEST = ClavesPaciente(id_paciente="pid-abc123", id_alt_paciente=None, version_clave=1)
 ID_EPISODIO_TEST = "episodio-xyz789"
+SHA256_SINTETICO_TEST = "c" * 64  # huella inventada de 64 hex, ningún valor real
+CLAVE_DOCUMENTO_TEST = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO_TEST)
 
 
 def test_laboratorio_pseudonimiza_medico_y_arma_contenido_eav() -> None:
@@ -66,7 +72,7 @@ def test_laboratorio_pseudonimiza_medico_y_arma_contenido_eav() -> None:
         adicionales={"medico_derivante": "Dr. Roberto Diaz", "origen": "Guardia"},
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert registro.id_paciente == "pid-abc123"
     assert registro.id_episodio == ID_EPISODIO_TEST
@@ -120,7 +126,7 @@ def test_ecg_pseudonimiza_medico_y_arma_contenido_ancho() -> None:
         },
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert isinstance(registro.contenido, ContenidoEcgSalida)
     assert registro.contenido.id_medico == generar_id_medico(PEPPER_TEST, "Dr. Ana Lopez")
@@ -152,7 +158,7 @@ def test_eco_pseudonimiza_medico_solicitante_e_informante_y_matricula() -> None:
         adicionales={"medico_solicitante": "Dr. Ana Lopez", "peso": "70"},
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert isinstance(registro.contenido, ContenidoEcoSalida)
     assert registro.contenido.id_medico_solicitante == generar_id_medico(PEPPER_TEST, "Dr. Ana Lopez")
@@ -179,7 +185,7 @@ def test_eco_sin_firma_deja_campos_de_medico_informante_en_none() -> None:
         adicionales={},
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert registro.contenido.id_medico_informante is None
     assert registro.contenido.id_matricula_informante is None
@@ -208,7 +214,7 @@ def test_eco_texto_libre_con_dni_se_redacta_por_regex_incluso_sin_motor_inyectad
         adicionales={},
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     texto_redactado = registro.contenido.secciones_texto[0].texto
     assert "12.345.678" not in texto_redactado
@@ -242,7 +248,7 @@ def test_eco_texto_libre_con_nombre_se_redacta_via_motor_pii_inyectado() -> None
     )
 
     registro = construir_registro(
-        documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, motor_pii=motor
+        documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST, motor_pii=motor
     )
 
     texto_redactado = registro.contenido.secciones_texto[0].texto
@@ -265,7 +271,7 @@ def test_construir_registro_propaga_hora_estudio_y_precision_sin_transformar() -
         ),
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert registro.hora_estudio == time(10, 22, 31)
     assert registro.precision_hora is PrecisionHora.SEGUNDO
@@ -283,10 +289,74 @@ def test_construir_registro_propaga_ausencia_de_hora_sin_default() -> None:
         contenido=ContenidoEco(medidas=(), secciones_texto=(), firma=None),
     )
 
-    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+    registro = construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     assert registro.hora_estudio is None
     assert registro.precision_hora is PrecisionHora.AUSENTE
+
+
+def test_construir_registro_propaga_clave_documento_sin_transformar() -> None:
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate=None, pr_interval=None, qrs_duration=None, qt_qtc=None, ejes=None
+        ),
+    )
+
+    registro = construir_registro(
+        documento,
+        CLAVES_TEST,
+        id_episodio=ID_EPISODIO_TEST,
+        pepper=PEPPER_TEST,
+        clave_documento="algún-valor",
+    )
+
+    assert registro.clave_documento == "algún-valor"
+
+
+def test_construir_registro_sin_clave_documento_lanza_type_error() -> None:
+    """Parámetro obligatorio de palabra clave, no un default silencioso --
+    decisión de diseño explícita para que ningún llamador nuevo pueda
+    omitirla (design.md, Decisión 1)."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate=None, pr_interval=None, qrs_duration=None, qt_qtc=None, ejes=None
+        ),
+    )
+
+    with pytest.raises(TypeError):
+        construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)  # type: ignore[call-arg]
+
+
+def test_construir_registro_no_propaga_sha256_crudo_en_ningun_campo() -> None:
+    """Requisito 1, "la huella cruda no llega a la salida": ni `contenido` ni
+    `adicionales` deben contener el `sha256` del artefacto."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.LABORATORIO,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez"), dni=SecretStr("12345678")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoLaboratorio(numero_peticion="P-1", resultados=()),
+        adicionales={"sha256_no_deberia_estar_aca": SHA256_SINTETICO_TEST},
+    )
+
+    registro = construir_registro(
+        documento,
+        CLAVES_TEST,
+        id_episodio=ID_EPISODIO_TEST,
+        pepper=PEPPER_TEST,
+        clave_documento=CLAVE_DOCUMENTO_TEST,
+    )
+
+    assert SHA256_SINTETICO_TEST not in str(registro.contenido)
+    assert registro.clave_documento != SHA256_SINTETICO_TEST
 
 
 def test_claves_sin_id_paciente_resuelto_lanza_value_error() -> None:
@@ -302,7 +372,7 @@ def test_claves_sin_id_paciente_resuelto_lanza_value_error() -> None:
     claves_sin_resolver = ClavesPaciente(id_paciente=None, id_alt_paciente=None, version_clave=1)
 
     with pytest.raises(ValueError):
-        construir_registro(documento, claves_sin_resolver, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+        construir_registro(documento, claves_sin_resolver, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
 
 def test_tipo_no_reconocido_lanza_value_error() -> None:
@@ -315,4 +385,4 @@ def test_tipo_no_reconocido_lanza_value_error() -> None:
     )
 
     with pytest.raises(ValueError):
-        construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST)
+        construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
