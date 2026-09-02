@@ -35,6 +35,5 @@ class PublicadorBundles:
             (temporal / "manifest.json").write_text(json.dumps(manifiesto, sort_keys=True), encoding="utf8")
             destino.parent.mkdir(parents=True, exist_ok=True)
             temporal.replace(destino)
-        for registro in registros:
-            self._escritor_parquet.escribir_episodio(registro)
+        self._escritor_parquet.escribir_episodio(registros)
         return destino
