@@ -10,6 +10,7 @@ import hmac
 
 from anonimizacion.pseudonimizacion.claves import (
     canonicalizar_dni,
+    generar_clave_documento,
     generar_id_alt_paciente,
     generar_id_episodio,
     generar_id_matricula_medico,
@@ -17,6 +18,9 @@ from anonimizacion.pseudonimizacion.claves import (
     generar_id_paciente,
     normalizar_nombre,
 )
+
+SHA256_SINTETICO = "a" * 64
+SHA256_SINTETICO_2 = "b" * 64
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 
@@ -192,6 +196,34 @@ def test_generar_id_episodio_distinta_ancla_distinto_episodio() -> None:
     id_2 = generar_id_episodio(PEPPER_TEST, "abc123", date(2024, 1, 15))
 
     assert id_1 != id_2
+
+
+def test_generar_clave_documento_es_estable_entre_corridas() -> None:
+    # Requisito 1: "el mismo contenido produce la misma clave en dos corridas"
+    clave_1 = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO)
+    clave_2 = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO)
+
+    assert clave_1 == clave_2
+
+
+def test_generar_clave_documento_distinto_sha256_distinta_clave() -> None:
+    # Requisito 1, segundo escenario: "contenido distinto produce clave distinta"
+    clave_1 = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO)
+    clave_2 = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO_2)
+
+    assert clave_1 != clave_2
+
+
+def test_generar_clave_documento_namespace_propio_distinto_de_sha256_y_otras_claves() -> None:
+    # namespace propio ("documento|"): distinta del sha256 crudo y de las
+    # demás claves derivadas del mismo mensaje base.
+    clave_documento = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO)
+    id_paciente_mismo_mensaje = generar_id_paciente(PEPPER_TEST, SHA256_SINTETICO)
+    id_medico_mismo_mensaje = generar_id_medico(PEPPER_TEST, SHA256_SINTETICO)
+
+    assert clave_documento != SHA256_SINTETICO
+    assert clave_documento != id_paciente_mismo_mensaje
+    assert clave_documento != id_medico_mismo_mensaje
 
 
 def test_claves_no_son_reversibles_sin_pepper() -> None:

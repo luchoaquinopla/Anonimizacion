@@ -19,6 +19,10 @@ entre sí aunque compartan pepper):
   nunca mezclado con la identidad del paciente.
 - `id_episodio` (prefijo implícito por concatenación `id_paciente + "|" +
   fecha_ancla`): ver `vinculacion.py`.
+- `clave_documento` (prefijo `"documento|"`): HMAC del `sha256` del contenido
+  del artefacto -- identidad estable del documento (spec
+  `escritura-idempotente`). El `sha256` crudo nunca sale de este módulo hacia
+  ningún destino de salida.
 
 Todas las claves se truncan a 16 bytes (128 bits) del digest HMAC-SHA256 y se
 codifican en hex -- suficiente espacio para evitar colisiones a la escala de
@@ -149,6 +153,18 @@ def generar_id_matricula_medico(pepper: bytes, matricula: str) -> str:
     `FirmaMedico.matricula`.
     """
     mensaje = f"matricula_medico|{matricula.strip()}"
+    return _hmac_hex(pepper, mensaje)
+
+
+def generar_clave_documento(pepper: bytes, sha256: str) -> str:
+    """`clave_documento = HMAC(pepper, "documento|" + sha256_normalizado)[:16 bytes]` en hex.
+
+    Identidad estable del documento (spec `escritura-idempotente`): el mismo
+    contenido produce siempre la misma clave, y el `sha256` crudo -- que sí
+    permitiría a cualquiera con el PDF original probar pertenencia al
+    corpus -- nunca se publica en ningún destino.
+    """
+    mensaje = f"documento|{sha256.strip().lower()}"
     return _hmac_hex(pepper, mensaje)
 
 

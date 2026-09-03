@@ -23,14 +23,25 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos.parquet import EscritorParquet
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 CLAVES_TEST = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
 
+_SIN_CLAVE_PROVISTA = object()  # sentinel: distingue "no pasado" de `clave_documento=None` explícito
 
-def _registro_laboratorio(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+
+def _clave_documento_sintetica(semilla: str) -> str:
+    # huella inventada, distinta por `semilla` -- suficiente para tests, nunca un sha256 real
+    sha256_sintetico = (semilla * 64)[:64]
+    return generar_clave_documento(PEPPER_TEST, sha256_sintetico)
+
+
+def _registro_laboratorio(
+    fecha: date, id_episodio: str, clave_documento: str | None = _SIN_CLAVE_PROVISTA
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.LABORATORIO,
         version_esquema=1,
@@ -50,10 +61,13 @@ def _registro_laboratorio(fecha: date, id_episodio: str) -> "RegistroAnonimizado
         ),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento if clave_documento is not _SIN_CLAVE_PROVISTA else _clave_documento_sintetica(f"lab-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
-def _registro_ecg(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+def _registro_ecg(
+    fecha: date, id_episodio: str, clave_documento: str | None = _SIN_CLAVE_PROVISTA
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECG,
         version_esquema=1,
@@ -62,10 +76,13 @@ def _registro_ecg(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # no
         contenido=ContenidoEcg(vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento if clave_documento is not _SIN_CLAVE_PROVISTA else _clave_documento_sintetica(f"ecg-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
-def _registro_eco(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # noqa: F821
+def _registro_eco(
+    fecha: date, id_episodio: str, clave_documento: str | None = _SIN_CLAVE_PROVISTA
+) -> "RegistroAnonimizado":  # noqa: F821
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
         version_esquema=1,
@@ -78,7 +95,8 @@ def _registro_eco(fecha: date, id_episodio: str) -> "RegistroAnonimizado":  # no
         ),
         adicionales={},
     )
-    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST)
+    clave = clave_documento if clave_documento is not _SIN_CLAVE_PROVISTA else _clave_documento_sintetica(f"eco-{id_episodio}")
+    return construir_registro(documento, CLAVES_TEST, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
 
 
 def test_escribir_laboratorio_particiona_por_tipo_documento_y_anio(tmp_path) -> None:
@@ -180,6 +198,7 @@ def test_precision_hora_distingue_valores_de_hora_byte_a_byte_identicos(tmp_path
         CLAVES_TEST,
         id_episodio="ep-lab",
         pepper=PEPPER_TEST,
+        clave_documento=_clave_documento_sintetica("lab-ep-lab"),
     )
     documento_ecg = DocumentoParseado(
         tipo_documento=TipoDocumento.ECG,
@@ -190,7 +209,13 @@ def test_precision_hora_distingue_valores_de_hora_byte_a_byte_identicos(tmp_path
         precision_hora=PrecisionHora.SEGUNDO,
         contenido=ContenidoEcg(vent_rate="72", pr_interval=None, qrs_duration=None, qt_qtc=None, ejes=None),
     )
-    registro_ecg = construir_registro(documento_ecg, CLAVES_TEST, id_episodio="ep-ecg", pepper=PEPPER_TEST)
+    registro_ecg = construir_registro(
+        documento_ecg,
+        CLAVES_TEST,
+        id_episodio="ep-ecg",
+        pepper=PEPPER_TEST,
+        clave_documento=_clave_documento_sintetica("ecg-ep-ecg"),
+    )
 
     escritor = EscritorParquet(tmp_path)
     escritor.escribir([registro_lab, registro_ecg])
@@ -223,3 +248,78 @@ def test_escribir_tipo_no_reconocido_lanza_value_error(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         escritor.escribir([registro_invalido])
+
+
+# --- escribir_episodio: secuencia completa, no pierde documentos -----------
+# (Requisito 4, spec `escritura-idempotente`; corrige el bug donde
+# `escribir_episodio` sobrescribía y sobrevivía solo el último documento).
+
+
+def test_escribir_episodio_con_secuencia_completa_conserva_los_tres_documentos(tmp_path) -> None:
+    escritor = EscritorParquet(tmp_path)
+    fecha = date(2024, 1, 10)
+    registros = [
+        _registro_ecg(fecha, "ep-episodio-3docs"),
+        _registro_laboratorio(fecha, "ep-episodio-3docs"),
+        _registro_eco(fecha, "ep-episodio-3docs"),
+    ]
+
+    escritor.escribir_episodio(registros)
+
+    tabla = pq.read_table(tmp_path / "episodios" / "ep-episodio-3docs.parquet")
+    assert tabla.num_rows == 3
+    tipos = set(tabla.to_pylist()[i]["tipo_documento"] for i in range(3))
+    assert tipos == {
+        TipoDocumento.ECG.value,
+        TipoDocumento.LABORATORIO.value,
+        TipoDocumento.ECOCARDIOGRAMA.value,
+    }
+
+
+def test_escribir_episodio_incluye_clave_documento_por_fila(tmp_path) -> None:
+    escritor = EscritorParquet(tmp_path)
+    fecha = date(2024, 1, 10)
+    registro = _registro_ecg(fecha, "ep-clave-documento")
+
+    escritor.escribir_episodio([registro])
+
+    fila = pq.read_table(tmp_path / "episodios" / "ep-clave-documento.parquet").to_pylist()[0]
+    assert fila["clave_documento"] == registro.clave_documento
+
+
+def test_escribir_dedup_por_clave_documento_dentro_del_mismo_lote(tmp_path) -> None:
+    """El mismo `RegistroAnonimizado` (misma `clave_documento`) dos veces en el
+    mismo lote de `escribir()` produce una sola fila -- dedup en memoria antes
+    de escribir (Requisito 3, adaptado a `escribir()`, que anexa)."""
+    escritor = EscritorParquet(tmp_path)
+    registro = _registro_laboratorio(date(2024, 1, 10), "ep-dedup")
+
+    escritor.escribir([registro, registro])
+
+    filas = pq.read_table(tmp_path / "laboratorio").to_pylist()
+    assert len(filas) == 1
+
+
+def test_escribir_no_deduplica_registros_con_clave_documento_none(tmp_path) -> None:
+    """Mismo criterio NULL-no-colisiona que en Postgres: registros sin
+    `clave_documento` no participan de la dedup."""
+    escritor = EscritorParquet(tmp_path)
+    registro_sin_clave_1 = _registro_ecg(date(2024, 1, 10), "ep-sin-clave", clave_documento=None)
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"),
+        adicionales={},
+    )
+    # dos registros SIN clave (None): construir_registro exige el kwarg, pero
+    # el valor propagado puede ser None -- no rompe el ensamblaje.
+    registro_sin_clave_2 = construir_registro(
+        documento, CLAVES_TEST, id_episodio="ep-sin-clave", pepper=PEPPER_TEST, clave_documento=None
+    )
+
+    escritor.escribir([registro_sin_clave_1, registro_sin_clave_2])
+
+    filas = pq.read_table(tmp_path / "ecg").to_pylist()
+    assert len(filas) == 2

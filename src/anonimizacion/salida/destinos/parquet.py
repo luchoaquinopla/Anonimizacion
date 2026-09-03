@@ -104,6 +104,7 @@ class EscritorParquet:
         self._directorio_base = Path(directorio_base)
 
     def escribir(self, registros: Sequence[RegistroAnonimizado]) -> None:
+        registros = self._deduplicar_por_clave_documento(registros)
         laboratorio = [r for r in registros if r.tipo_documento is TipoDocumento.LABORATORIO]
         ecg = [r for r in registros if r.tipo_documento is TipoDocumento.ECG]
         eco = [r for r in registros if r.tipo_documento is TipoDocumento.ECOCARDIOGRAMA]
@@ -130,6 +131,28 @@ class EscritorParquet:
             self._escribir_dataset(
                 self._directorio_base / "eco_texto", self._filas_eco_texto(eco), _SCHEMA_ECO_TEXTO
             )
+
+    @staticmethod
+    def _deduplicar_por_clave_documento(
+        registros: Sequence[RegistroAnonimizado],
+    ) -> list[RegistroAnonimizado]:
+        """Descarta repeticiones del mismo documento dentro del lote recibido.
+
+        Mismo criterio NULL-no-colisiona que Postgres (design.md, decisión 2):
+        los registros con `clave_documento is None` no participan de la
+        dedup -- se conservan todos, sin excepción.
+        """
+        vistos: set[str] = set()
+        resultado: list[RegistroAnonimizado] = []
+        for registro in registros:
+            if registro.clave_documento is None:
+                resultado.append(registro)
+                continue
+            if registro.clave_documento in vistos:
+                continue
+            vistos.add(registro.clave_documento)
+            resultado.append(registro)
+        return resultado
 
     @staticmethod
     def _escribir_dataset(raiz: Path, filas: list[dict], schema: pa.Schema | None = None) -> None:
@@ -235,9 +258,22 @@ class EscritorParquet:
                 )
         return filas
 
-    def escribir_episodio(self, registro: RegistroAnonimizado) -> None:
-        """Mantiene una única proyección analítica vigente por episodio."""
-        destino = self._directorio_base / "episodios" / f"{registro.id_episodio}.parquet"
+    def escribir_episodio(self, registros: Sequence[RegistroAnonimizado]) -> None:
+        """Escribe la proyección analítica completa del episodio, de una sola vez.
+
+        Recibe la SECUENCIA COMPLETA de documentos del episodio (spec
+        `escritura-idempotente`, Requisito 4) -- no un registro por
+        llamada: la versión anterior escribía uno a la vez con
+        `write_table` + `replace`, y como los tres documentos de un
+        episodio comparten `id_episodio`, cada llamada sobrescribía a la
+        anterior y sobrevivía solo el último documento. Esta versión arma
+        la tabla entera (una fila por documento) y hace un único
+        `write_table` + `replace` atómico.
+        """
+        if not registros:
+            raise ValueError("escribir_episodio requiere al menos un registro")
+        id_episodio = registros[0].id_episodio
+        destino = self._directorio_base / "episodios" / f"{id_episodio}.parquet"
         destino.parent.mkdir(parents=True, exist_ok=True)
         tabla = pa.Table.from_pylist([
             {
@@ -246,7 +282,11 @@ class EscritorParquet:
                 "fecha_estudio": registro.fecha_estudio.isoformat(),
                 "tipo_documento": registro.tipo_documento.value,
                 "version_esquema": registro.version_esquema,
+                # Reconciliación contra `estudio.clave_documento` en Postgres
+                # sin re-derivar todo el corpus (design.md, "se mantiene").
+                "clave_documento": registro.clave_documento,
             }
+            for registro in registros
         ])
         temporal = destino.with_suffix(".tmp")
         pq.write_table(tabla, temporal)

@@ -174,6 +174,32 @@ def test_registro_anonimizado_acepta_hora_estudio_y_precision_hora() -> None:
     assert registro.precision_hora is PrecisionHora.SEGUNDO
 
 
+def test_registro_anonimizado_acepta_clave_documento() -> None:
+    registro = RegistroAnonimizado(
+        id_paciente="a1b2c3d4e5f6",
+        id_episodio="f6e5d4c3b2a1",
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        fecha_estudio=date(2024, 1, 15),
+        contenido={"vent_rate": 72},
+        clave_documento="clave-documento-sintetica",
+    )
+    assert registro.clave_documento == "clave-documento-sintetica"
+
+
+def test_registro_anonimizado_sin_clave_documento_usa_default_none() -> None:
+    # no debe romper fixtures existentes de otras fases que no la pasan
+    registro = RegistroAnonimizado(
+        id_paciente="a1b2c3d4e5f6",
+        id_episodio="f6e5d4c3b2a1",
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        fecha_estudio=date(2024, 1, 15),
+        contenido={"vent_rate": 72},
+    )
+    assert registro.clave_documento is None
+
+
 def test_registro_anonimizado_no_tiene_campos_de_pii() -> None:
     registro = RegistroAnonimizado(
         id_paciente="a1b2c3d4e5f6",

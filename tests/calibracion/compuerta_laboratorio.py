@@ -17,8 +17,12 @@ from anonimizacion.extraccion.texto_pymupdf import extraer_texto
 from anonimizacion.parseo.registro import obtener_parseador
 from anonimizacion.pii.politica import clasificar
 from anonimizacion.reconciliacion.normalizacion import normalizar_texto
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.reconciliacion.registro import obtener_reconciliador
 from anonimizacion.salida.constructor_registro import construir_registro
+
+_PEPPER_CALIBRACION = b"pepper-sintetico-de-calibracion"
+_SHA256_SINTETICO_CALIBRACION = "d" * 64  # huella inventada de 64 hex, ningún valor real
 
 def _normalizar_etiqueta(valor: str) -> str:
     normalizado = unicodedata.normalize("NFKD", normalizar_texto(valor))
@@ -208,7 +212,8 @@ def evaluar_laboratorio(ruta: Path) -> ResumenLaboratorio:
             documento,
             ClavesPaciente("paciente-calibracion", "alternativa-calibracion", 1),
             id_episodio="episodio-calibracion",
-            pepper=b"pepper-sintetico-de-calibracion",
+            pepper=_PEPPER_CALIBRACION,
+            clave_documento=generar_clave_documento(_PEPPER_CALIBRACION, _SHA256_SINTETICO_CALIBRACION),
         )
         campos_retirados = tuple(campos_pii)
     return ResumenLaboratorio(

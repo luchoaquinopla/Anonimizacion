@@ -85,3 +85,7 @@ class RegistroAnonimizado:
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     hora_estudio: time | None = None
     precision_hora: PrecisionHora = PrecisionHora.AUSENTE
+    # Identidad estable del documento (spec `escritura-idempotente`); opcional
+    # en el dataclass -- las filas legadas y los fixtures sintéticos de otras
+    # fases no la traen y no deben romperse. `construir_registro` la exige.
+    clave_documento: str | None = None

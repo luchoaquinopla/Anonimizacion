@@ -24,6 +24,7 @@ from anonimizacion.dominio.modelos import ClavesPaciente
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
 from anonimizacion.parseo.registro import obtener_parseador
 from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 
 from ..fixtures.v1 import documentos
@@ -31,6 +32,7 @@ from ..fixtures.v1 import documentos
 PEPPER = b"pepper-integracion-11-3-nunca-real"
 CLAVES = ClavesPaciente(id_paciente="pid-integracion-11-3", id_alt_paciente=None, version_clave=1)
 ID_EPISODIO = "episodio-integracion-11-3"
+CLAVE_DOCUMENTO = generar_clave_documento(PEPPER, "f" * 64)
 
 # Identidad sintética inyectada deliberadamente en texto libre y headers, para
 # poder afirmar que NINGUNA de estas cadenas crudas sobrevive en la salida.
@@ -65,7 +67,7 @@ def test_registro_de_laboratorio_no_tiene_pii_segun_motor_real(tmp_path, motor: 
         ),
     )
 
-    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, motor_pii=motor)
+    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, clave_documento=CLAVE_DOCUMENTO, motor_pii=motor)
     bloque = f"{registro.contenido} {registro.adicionales}"
 
     # el laboratorio no tiene ningún campo de texto libre (a diferencia del
@@ -93,7 +95,7 @@ def test_registro_de_ecg_no_tiene_pii_segun_motor_real(tmp_path, motor: MotorPii
         ),
     )
 
-    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, motor_pii=motor)
+    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, clave_documento=CLAVE_DOCUMENTO, motor_pii=motor)
     bloque = f"{registro.contenido} {registro.adicionales}"
 
     assert _NOMBRE_PACIENTE not in bloque
@@ -122,7 +124,7 @@ def test_registro_de_eco_con_texto_libre_mencionando_pii_no_tiene_pii_segun_moto
         ),
     )
 
-    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, motor_pii=motor)
+    registro = construir_registro(documento, CLAVES, id_episodio=ID_EPISODIO, pepper=PEPPER, clave_documento=CLAVE_DOCUMENTO, motor_pii=motor)
     bloque = f"{registro.contenido} {registro.adicionales}"
 
     assert _NOMBRE_PACIENTE not in bloque

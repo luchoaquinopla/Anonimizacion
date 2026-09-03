@@ -33,12 +33,15 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.parseo.ecg_mortara import ContenidoEcg
 from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEco, SeccionTextoEco
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
+from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
+SHA256_SINTETICO_TEST = "e" * 64  # huella inventada de 64 hex, ningún valor real
+CLAVE_DOCUMENTO_TEST = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO_TEST)
 
 
 @pytest.fixture()
@@ -157,7 +160,7 @@ def _registro_laboratorio() -> RegistroAnonimizado:
         adicionales={"medico_derivante": "Dr. Roberto Diaz"},
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    return construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+    return construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
 
 def test_escribir_registro_laboratorio_crea_filas_eav(escritor: EscritorPostgres, motor) -> None:
@@ -181,7 +184,7 @@ def test_escribir_registro_ecg_crea_fila_ancha(escritor: EscritorPostgres, motor
         adicionales={},
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    registro = construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+    registro = construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
     escritor.escribir_registro(registro)
@@ -212,7 +215,7 @@ def test_escribir_registro_eco_pivota_medidas_conocidas_y_guarda_extras_en_adici
         adicionales={"medico_solicitante": "Dr. Ana Lopez"},
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    registro = construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+    registro = construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
     escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
     escritor.escribir_registro(registro)
@@ -240,7 +243,7 @@ def test_escribir_registro_tipo_no_reconocido_lanza_value_error(escritor: Escrit
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
     with pytest.raises(ValueError):
-        construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+        construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
 
 # --- estudio: fecha y hora por documento -----------------------------------
@@ -262,7 +265,7 @@ def _registro_con_hora(hora: time | None, precision: PrecisionHora) -> RegistroA
         ),
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    return construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST)
+    return construir_registro(documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
 
 
 def test_escribir_registro_crea_estudio_y_enlaza_la_medicion(escritor: EscritorPostgres, motor) -> None:

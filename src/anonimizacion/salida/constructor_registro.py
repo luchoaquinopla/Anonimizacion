@@ -29,6 +29,13 @@
    `pii/redaccion.py::redactar_texto` sobre cada sección de texto libre
    antes de armar `ContenidoEcoSalida.secciones_texto`.
 
+5. Propagar `clave_documento` (spec `escritura-idempotente`): argumento
+   obligatorio de palabra clave -- ya derivado por el llamador
+   (`pipeline/ejecutor.py::_resolver_documento`, vía
+   `pseudonimizacion.claves.generar_clave_documento`) -- que se adjunta tal
+   cual al `RegistroAnonimizado` final. Obligatorio y sin default a
+   propósito: ningún llamador nuevo puede omitirla en silencio.
+
 Tampoco decide el pivote ancho de `MedidaEco` a columnas fijas de
 `medicion_eco` -- eso es una decisión de la capa SQL, no del ensamblado de
 dominio (ver `destinos/postgres.py`).
@@ -166,6 +173,7 @@ def construir_registro(
     *,
     id_episodio: str,
     pepper: bytes,
+    clave_documento: str,
     motor_pii: DetectorEntidades | None = None,
 ) -> RegistroAnonimizado:
     """Ensambla el `RegistroAnonimizado` final: cero PII, `contenido` tipado por `TipoDocumento`."""
@@ -201,4 +209,5 @@ def construir_registro(
         precision_hora=documento.precision_hora,
         contenido=contenido,
         adicionales=_adicionales_sin_personal(adicionales),
+        clave_documento=clave_documento,
     )
