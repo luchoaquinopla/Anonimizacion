@@ -111,6 +111,7 @@ class Estudio(Base):
     """
 
     __tablename__ = "estudio"
+    __table_args__ = (UniqueConstraint("clave_documento", name="uq_estudio_clave_documento"),)
 
     id_estudio: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_episodio: Mapped[str] = mapped_column(
@@ -120,6 +121,13 @@ class Estudio(Base):
     fecha_estudio: Mapped[date] = mapped_column(Date, nullable=False)
     hora_estudio: Mapped[time | None] = mapped_column(Time, nullable=True)
     precision_hora: Mapped[str] = mapped_column(String, nullable=False)
+    #: Identidad estable del documento (HMAC del sha256, ver
+    #: `pseudonimizacion/claves.py::generar_clave_documento`). Es lo que permite
+    #: reconocer un reprocesamiento y no duplicar. Nace OPCIONAL y sin relleno
+    #: hacia atras: las filas escritas antes de este cambio no tienen forma de
+    #: derivarla sin releer el documento original, y `NULL` no colisiona con
+    #: `NULL` en la restriccion unica, asi que conviven sin romper nada.
+    clave_documento: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class MedicionEcg(Base):

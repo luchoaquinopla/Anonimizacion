@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import date
 
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.modelos import RegistroAnonimizado
@@ -117,10 +118,18 @@ class EscritorPostgres:
         el estudio, quedaria una fila huerfana sin ninguna medicion, indistinguible de
         un documento legitimamente vacio.
 
-        No resuelve la idempotencia de `escribir_registro`: reprocesar el mismo
-        documento crea un `estudio` duplicado, igual que ya ocurre con las mediciones.
-        Queda fuera de alcance por decision del diseno -- arreglarlo exige una
-        identidad de documento estable que hoy no llega a `RegistroAnonimizado`.
+        Reprocesar el mismo documento NO duplica. La guarda tiene dos capas, y las
+        dos hacen falta: un `SELECT` previo por `clave_documento` evita el trabajo
+        en el caso normal, y la restriccion unica de `estudio` es la autoridad
+        final ante la carrera que ese `SELECT` no cierra -- dos trabajadores
+        pueden consultar antes de que ninguno haya commiteado. El `IntegrityError`
+        resultante se trata como "ya escrito", no como fallo: un reprocesamiento
+        es un caso normal de operacion.
+
+        Un registro SIN `clave_documento` conserva el comportamiento anterior e
+        inserta siempre. No hay garantia posible: la clave se deriva del contenido
+        y una fila escrita antes de este cambio no puede recuperarla sin releer el
+        documento original.
         """
         if registro.tipo_documento not in (
             TipoDocumento.LABORATORIO,
@@ -129,24 +138,51 @@ class EscritorPostgres:
         ):
             raise ValueError(f"tipo_documento no soportado por EscritorPostgres: {registro.tipo_documento!r}")
 
-        with Session(self._engine) as sesion, sesion.begin():
-            estudio = Estudio(
-                id_episodio=registro.id_episodio,
-                tipo_documento=registro.tipo_documento.value,
-                fecha_estudio=registro.fecha_estudio,
-                hora_estudio=registro.hora_estudio,
-                precision_hora=registro.precision_hora.value,
-            )
-            sesion.add(estudio)
-            sesion.flush()  # asigna id_estudio sin cerrar la transaccion
-            id_estudio = estudio.id_estudio
+        with Session(self._engine) as sesion:
+            try:
+                # La consulta y la insercion van en la MISMA transaccion: separarlas
+                # ampliaria la ventana de la carrera sin ganar nada.
+                with sesion.begin():
+                    if self._existe_documento(sesion, registro.clave_documento):
+                        return
+                    self._insertar(registro, sesion)
+            except IntegrityError:
+                # Carrera: otro trabajador inserto la misma `clave_documento` entre
+                # nuestra consulta y nuestra insercion. La restriccion unica es la
+                # autoridad final; el documento ya esta escrito y no hay nada que
+                # hacer. `sesion.begin()` ya revirtio al propagar la excepcion.
+                pass
 
-            if registro.tipo_documento is TipoDocumento.LABORATORIO:
-                self._escribir_laboratorio(registro, sesion, id_estudio)
-            elif registro.tipo_documento is TipoDocumento.ECG:
-                self._escribir_ecg(registro, sesion, id_estudio)
-            else:
-                self._escribir_eco(registro, sesion, id_estudio)
+    @staticmethod
+    def _existe_documento(sesion: Session, clave_documento: str | None) -> bool:
+        if clave_documento is None:
+            return False
+        return (
+            sesion.scalar(
+                select(Estudio.id_estudio).where(Estudio.clave_documento == clave_documento)
+            )
+            is not None
+        )
+
+    def _insertar(self, registro: RegistroAnonimizado, sesion: Session) -> None:
+        estudio = Estudio(
+            id_episodio=registro.id_episodio,
+            tipo_documento=registro.tipo_documento.value,
+            fecha_estudio=registro.fecha_estudio,
+            hora_estudio=registro.hora_estudio,
+            precision_hora=registro.precision_hora.value,
+            clave_documento=registro.clave_documento,
+        )
+        sesion.add(estudio)
+        sesion.flush()  # asigna id_estudio sin cerrar la transaccion
+        id_estudio = estudio.id_estudio
+
+        if registro.tipo_documento is TipoDocumento.LABORATORIO:
+            self._escribir_laboratorio(registro, sesion, id_estudio)
+        elif registro.tipo_documento is TipoDocumento.ECG:
+            self._escribir_ecg(registro, sesion, id_estudio)
+        else:
+            self._escribir_eco(registro, sesion, id_estudio)
 
     def _escribir_laboratorio(
         self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int
