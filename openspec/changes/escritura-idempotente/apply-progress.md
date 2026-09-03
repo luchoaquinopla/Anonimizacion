@@ -126,3 +126,47 @@ obligatorio nuevo).
 `sdd-apply` de nuevo para PR2 (Fases 5-6: columna `estudio.clave_documento`,
 `UniqueConstraint`, migración `0007`, escritura condicional en Postgres,
 incluyendo el ítem 9.2 diferido).
+
+## Lote 2 (PR2) — unicidad y escritura condicional
+
+Fases 5 y 6 completas. `pytest` completo: 526 pasados, 1 omitido.
+
+### Qué se hizo
+
+- `Estudio.clave_documento` (`String(32)`, nullable) con
+  `UniqueConstraint("clave_documento", name="uq_estudio_clave_documento")`.
+- `migrations/versions/0007_clave_documento.py`, encadenada sobre
+  `0006_estudio_y_hora`, con `op.batch_alter_table` porque SQLite no soporta
+  agregar una restricción `UNIQUE` con `ALTER TABLE` directo. Tests de
+  `upgrade`, `downgrade` y del ciclo completo.
+- `escribir_registro` con guarda de dos capas: consulta previa por
+  `clave_documento` para el caso normal, y `IntegrityError` capturado como
+  autoridad final ante la carrera.
+
+### Desvío respecto del plan, con su causa
+
+El plan proponía la consulta previa **antes** de abrir la transacción
+(`SELECT` y luego `with sesion.begin()`). Eso no funciona: `sesion.scalar`
+abre una transacción implícita, y `begin()` después falla con
+`InvalidRequestError: A transaction is already begun on this Session`.
+
+Se unificó todo en una sola transacción, lo cual además es más correcto:
+separar la consulta de la inserción ampliaría la ventana de la carrera sin
+ganar nada.
+
+También se descartó el `sesion.rollback()` explícito del plan: el gestor de
+contexto de `sesion.begin()` ya revierte al propagar la excepción, así que
+llamarlo de nuevo es ruido.
+
+### Comportamiento sin clave
+
+Un registro con `clave_documento` ausente conserva el comportamiento anterior e
+inserta siempre. No hay garantía posible: la clave se deriva del contenido y una
+fila escrita antes de este cambio no puede recuperarla sin releer el documento
+original. Queda fijado por test.
+
+### Qué queda
+
+Fases 10 a 12 (PR3): integración extremo a extremo, compuertas de calibración y
+revalidación de los ensayos de carga, más el ítem 9.2 diferido desde el PR1.
+

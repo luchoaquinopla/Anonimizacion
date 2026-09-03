@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from datetime import date, time
 
+import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.precision_hora import PrecisionHora
@@ -115,3 +117,54 @@ def test_mediciones_enlazan_con_el_estudio_que_las_origino() -> None:
     with Session(motor) as sesion:
         id_estudio = sesion.scalars(sa.select(Estudio.id_estudio)).one()
         assert sesion.scalars(sa.select(MedicionEcg)).one().id_estudio == id_estudio
+
+
+# --- clave_documento: unicidad anclada al documento -------------------------
+#
+# La restriccion vive en `estudio` y no en las tablas de mediciones porque
+# `resultado_laboratorio` es entidad-atributo-valor: una restriccion por analito
+# no expresaria "este documento ya fue escrito".
+
+
+def _estudio(clave: str | None) -> Estudio:
+    return Estudio(
+        id_episodio=_ID_EPISODIO,
+        tipo_documento="ecg",
+        fecha_estudio=date(2024, 3, 4),
+        hora_estudio=time(10, 32, 15),
+        precision_hora=PrecisionHora.SEGUNDO.value,
+        clave_documento=clave,
+    )
+
+
+def test_dos_estudios_con_la_misma_clave_de_documento_colisionan() -> None:
+    motor = _motor_en_memoria()
+
+    with Session(motor) as sesion, sesion.begin():
+        _sembrar_episodio(sesion)
+        sesion.add(_estudio("clave-sintetica-1"))
+
+    with pytest.raises(IntegrityError):
+        with Session(motor) as sesion, sesion.begin():
+            sesion.add(_estudio("clave-sintetica-1"))
+
+
+def test_varias_claves_ausentes_no_colisionan_entre_si() -> None:
+    """La columna nace opcional y sin relleno hacia atras.
+
+    En SQLite y en Postgres, `NULL` no es igual a `NULL` para una restriccion
+    `UNIQUE`, asi que las filas anteriores al cambio conviven sin romper nada.
+    Este test fija ese comportamiento a proposito: si alguna vez se migrara a un
+    motor con otra semantica de NULL, hay que enterarse aca.
+    """
+    motor = _motor_en_memoria()
+
+    with Session(motor) as sesion, sesion.begin():
+        _sembrar_episodio(sesion)
+        sesion.add(_estudio(None))
+        sesion.add(_estudio(None))
+        sesion.add(_estudio(None))
+
+    with Session(motor) as sesion:
+        assert sesion.scalar(sa.select(sa.func.count()).select_from(Estudio)) == 3
+

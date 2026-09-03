@@ -311,3 +311,98 @@ def test_escribir_registro_de_laboratorio_enlaza_todas_sus_filas_al_mismo_estudi
     assert filas
     assert {fila.id_estudio for fila in filas} == {estudios[0].id_estudio}
 
+
+# --- idempotencia: reprocesar no duplica ------------------------------------
+#
+# Reproduce el experimento de la exploracion, ahora como contrato: el mismo
+# documento escrito tres veces dejaba 3 filas en `estudio` y 3 en `medicion_ecg`.
+
+
+def _registro_con_clave(clave: str) -> RegistroAnonimizado:
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate="73", pr_interval="186", qrs_duration="100", qt_qtc="382/420", ejes="63 51 26"
+        ),
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    return construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=clave
+    )
+
+
+def test_escribir_el_mismo_documento_tres_veces_deja_una_sola_fila(
+    escritor: EscritorPostgres, motor
+) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_con_clave(CLAVE_DOCUMENTO_TEST)
+
+    for _ in range(3):
+        escritor.escribir_registro(registro)
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+    assert len(_leer_todas(motor, MedicionEcg)) == 1
+
+
+def test_reprocesar_no_lanza_excepcion(escritor: EscritorPostgres, motor) -> None:
+    """Un reprocesamiento es un caso normal de operacion, no una condicion excepcional."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_con_clave(CLAVE_DOCUMENTO_TEST)
+
+    escritor.escribir_registro(registro)
+    escritor.escribir_registro(registro)  # no debe levantar nada
+
+
+def test_dos_documentos_distintos_del_mismo_episodio_dejan_dos_estudios(
+    escritor: EscritorPostgres, motor
+) -> None:
+    """Evita que la guarda quede por episodio en vez de por documento."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_con_clave("clave-sintetica-a"))
+    escritor.escribir_registro(_registro_con_clave("clave-sintetica-b"))
+
+    assert len(_leer_todas(motor, Estudio)) == 2
+
+
+def test_la_restriccion_unica_resiste_una_carrera(escritor: EscritorPostgres, motor) -> None:
+    """El `SELECT` previo no cierra la carrera: la restriccion es la autoridad.
+
+    Se simula insertando la fila por fuera del escritor DESPUES de que su
+    `SELECT` no la encontro, que es lo que ocurre cuando dos trabajadores
+    escriben el mismo documento a la vez.
+    """
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_con_clave(CLAVE_DOCUMENTO_TEST)
+
+    original = escritor._existe_documento
+
+    def _fingir_que_no_existe(*args, **kwargs):
+        original(*args, **kwargs)
+        return False
+
+    escritor.escribir_registro(registro)
+    escritor._existe_documento = _fingir_que_no_existe
+    try:
+        escritor.escribir_registro(registro)  # no debe propagar IntegrityError
+    finally:
+        escritor._existe_documento = original
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+
+
+def test_un_registro_sin_clave_conserva_el_comportamiento_anterior(
+    escritor: EscritorPostgres, motor
+) -> None:
+    """Sin clave no hay garantia posible, y se documenta como tal."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_con_clave(None)
+
+    escritor.escribir_registro(registro)
+    escritor.escribir_registro(registro)
+
+    assert len(_leer_todas(motor, Estudio)) == 2
+

@@ -151,3 +151,44 @@ def test_ciclo_upgrade_downgrade_upgrade_es_estructuralmente_idempotente(tmp_pat
     for tabla in ("medicion_ecg", "resultado_laboratorio", "medicion_eco"):
         assert "id_estudio" in {columna["name"] for columna in inspector.get_columns(tabla)}
 
+
+def test_migracion_clave_documento_agrega_columna_y_restriccion_unica(tmp_path) -> None:
+    ruta_db = tmp_path / "clave_documento.db"
+    url = f"sqlite:///{ruta_db}"
+
+    command.upgrade(_config_alembic(url), "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    columnas = {columna["name"]: columna for columna in inspector.get_columns("estudio")}
+    assert "clave_documento" in columnas
+    assert columnas["clave_documento"]["nullable"] is True
+
+    restricciones = {r["name"] for r in inspector.get_unique_constraints("estudio")}
+    assert "uq_estudio_clave_documento" in restricciones
+
+
+def test_downgrade_de_clave_documento_vuelve_al_esquema_anterior(tmp_path) -> None:
+    ruta_db = tmp_path / "clave_documento_down.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0006_estudio_y_hora")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    columnas = {columna["name"] for columna in inspector.get_columns("estudio")}
+    assert "clave_documento" not in columnas
+
+
+def test_ciclo_completo_de_clave_documento_es_estructuralmente_idempotente(tmp_path) -> None:
+    ruta_db = tmp_path / "clave_documento_ciclo.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0006_estudio_y_hora")
+    command.upgrade(cfg, "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    assert "clave_documento" in {c["name"] for c in inspector.get_columns("estudio")}
+
