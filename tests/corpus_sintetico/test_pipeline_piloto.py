@@ -29,8 +29,8 @@ def test_piloto_adversarial_ejecuta_cincuenta_casos_punta_a_punta(corridas_pilot
     assert resultado.registros_inspeccionados == 120
     assert resultado.valores_pii_verificados == 572
     assert resultado.cuarentena_por_codigo == {
-        "cobertura_ambigua": 8,
-        "cobertura_incompleta": 19,
+        "episodio_ambiguo": 8,
+        "episodio_incompleto": 19,
         "parseo_incompleto": 2,
     }
     assert resultado.pii_en_salida == 0

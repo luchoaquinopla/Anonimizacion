@@ -68,6 +68,8 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "evidencia_ambigua",
         "valor_discrepante",
         "cobertura_incompleta",
+        "episodio_incompleto",
+        "episodio_ambiguo",
         "cobertura_ambigua",
         "artefacto_sobretamano",
     }

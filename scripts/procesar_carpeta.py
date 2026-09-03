@@ -43,6 +43,7 @@ from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostgres
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.trabajadores.tareas import construir_fabrica_ejecutor
 from anonimizacion.salida.modelos_orm import Base
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
@@ -75,19 +76,21 @@ def main() -> int:
     # separadas del script, a diferencia de `ResolutorClaves()` en memoria.
     resolutor = ResolutorClavesPostgres(destino)
 
-    # Puerto de ingesta (openspec `puerto-de-ingesta`, fase 7): se construye
-    # ANTES del ejecutor porque este último lo necesita para abrir cada
-    # artefacto -- ya no lee `Path(artefacto.uri)` directo.
-    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
-
-    ejecutor = EjecutorPipeline(
+    # Se arma por la MISMA raíz de composición que el trabajador
+    # (`construir_fabrica_ejecutor`) y no a mano: armarlo por separado fue lo que
+    # dejó a este script sin validación de episodio mientras el banco de carga sí
+    # la tenía. Con la fábrica, el script valida igual que producción
+    # (spec `procesamiento-por-grupo`, requisito 6).
+    fabrica = construir_fabrica_ejecutor(
+        raices=(args.entrada,),
         resolutor=resolutor,
         motor=motor,
         pepper=pepper,
         destino=destino,
         cuarentena=cuarentena,
-        fuente=fuente,
     )
+    ejecutor = fabrica()
+    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
 
     print(f"Listando PDFs en {args.entrada}...", file=sys.stderr)
     # `procesar_lote` necesita el lote entero materializado (recibe una

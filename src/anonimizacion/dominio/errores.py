@@ -53,8 +53,21 @@ class CodigoErrorDocumento(str, Enum):
     EVIDENCIA_AUSENTE = "evidencia_ausente"
     EVIDENCIA_AMBIGUA = "evidencia_ambigua"
     VALOR_DISCREPANTE = "valor_discrepante"
+    # COBERTURA_*: nivel CAMPO. Un dato del documento no pudo citarse contra una
+    # unica fuente del PDF (`reconciliacion/inventario.py`,
+    # `reconciliacion/laboratorio_general.py`). Es un problema del parser o del
+    # layout: reprocesar el mismo documento no lo arregla solo.
     COBERTURA_INCOMPLETA = "cobertura_incompleta"
     COBERTURA_AMBIGUA = "cobertura_ambigua"
+    # EPISODIO_*: nivel EPISODIO. El documento esta bien; lo que falla es el
+    # grupo al que pertenece (`pipeline/coordinador_episodios.py`). Se separan de
+    # COBERTURA_* porque son problemas operativos distintos: "a este paciente le
+    # falta el ecocardiograma" se resuelve pidiendolo al origen, "no pude
+    # verificar el potasio" es del parser. Antes compartian codigo y solo podian
+    # distinguirse por la convencion implicita de que el coordinador nunca llena
+    # `campo`/`pagina` -- fragil ante cualquier productor nuevo.
+    EPISODIO_INCOMPLETO = "episodio_incompleto"
+    EPISODIO_AMBIGUO = "episodio_ambiguo"
     # Artefacto apartado en `FuenteLocal.listar()` (`ingesta/fuente.py`) por
     # superar el tope de tamaño configurado. `id_documento` es el sha256 de la
     # RUTA, no del contenido -- el archivo nunca se lee (ver `tamano_bytes`/
