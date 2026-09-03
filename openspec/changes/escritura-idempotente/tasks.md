@@ -113,20 +113,20 @@ Nota de verificación: `tests/integracion/test_momento_estudio_ambos_destinos.py
 ## Fase 9: contenido corregido entra como documento nuevo (Requisito 7)
 
 - [x] 9.1 RED: en `tests/pipeline/test_ejecutor.py` o `tests/salida/test_constructor_registro.py`, test que simula un documento corregido (mismo `id_documento`, `sha256` distinto) y confirma que produce una `clave_documento` distinta de la versión anterior — sin necesidad de código nuevo, es una consecuencia directa de Fases 1 y 4; el test fija el comportamiento explícitamente.
-- [ ] 9.2 DIFERIDO A PR2: test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — depende de la restricción `UNIQUE` de la Fase 5 (fuera de alcance de este PR); sin ella, Postgres ya inserta ambas filas hoy sin garantía real, así que el test no verificaría nada nuevo. Se retoma junto con la Fase 5 en PR2.
+- [x] 9.2 (retomado en PR3, no en PR2: la restricción existe desde el PR2 pero el test de integración vive con los demás de cierre): test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — depende de la restricción `UNIQUE` de la Fase 5 (fuera de alcance de este PR); sin ella, Postgres ya inserta ambas filas hoy sin garantía real, así que el test no verificaría nada nuevo. Se retoma junto con la Fase 5 en PR2.
 - [x] 9.3 GREEN: ajustes de wiring que falten (no debería requerir lógica nueva).
 - [x] 9.4 REFACTOR: ninguno esperado; confirmar en `apply-progress.md` si este comportamiento salió gratis de las fases anteriores o si hizo falta algún ajuste no previsto.
 
 ## Fase 10: integración extremo a extremo — ambos destinos, ambos defectos cerrados
 
-- [ ] 10.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa el mismo documento **tres veces** de punta a punta (`EjecutorPipeline.procesar_lote`) y confirma que Postgres queda con una sola fila de `estudio` y sus mediciones, sin ninguna excepción no controlada.
-- [ ] 10.2 RED: test de integración que publica un episodio de tres documentos vía `PublicadorBundles.publicar` y confirma que el Parquet del episodio conserva los tres — el defecto original de la exploración, ahora cerrado end-to-end.
-- [ ] 10.3 GREEN: ajustes de wiring residuales, si aparecen (no debería requerir lógica nueva si las fases anteriores están completas).
+- [x] 10.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa el mismo documento **tres veces** de punta a punta (`EjecutorPipeline.procesar_lote`) y confirma que Postgres queda con una sola fila de `estudio` y sus mediciones, sin ninguna excepción no controlada.
+- [x] 10.2 RED: test de integración que publica un episodio de tres documentos vía `PublicadorBundles.publicar` y confirma que el Parquet del episodio conserva los tres — el defecto original de la exploración, ahora cerrado end-to-end.
+- [x] 10.3 GREEN: ajustes de wiring residuales, si aparecen (no debería requerir lógica nueva si las fases anteriores están completas).
 
 ## Fase 11: compuertas de calibración — cierre
 
-- [ ] 11.1 Confirmar que las tres compuertas (`compuerta_ecg.py`, `compuerta_laboratorio.py`, `compuerta_ecocardiograma.py`) quedaron actualizadas en la Fase 3, no como lote separado al final — auditoría, no trabajo nuevo si Fase 3 se siguió en orden.
-- [ ] 11.2 `pytest tests/calibracion/` completo en verde.
+- [x] 11.1 Confirmar que las tres compuertas (`compuerta_ecg.py`, `compuerta_laboratorio.py`, `compuerta_ecocardiograma.py`) quedaron actualizadas en la Fase 3, no como lote separado al final — auditoría, no trabajo nuevo si Fase 3 se siguió en orden.
+- [x] 11.2 `pytest tests/calibracion/` completo en verde.
 
 ## Fase 12: oráculos de carga — revalidación, no regeneración asumida (al final de la cadena)
 
