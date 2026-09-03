@@ -170,3 +170,61 @@ original. Queda fijado por test.
 Fases 10 a 12 (PR3): integración extremo a extremo, compuertas de calibración y
 revalidación de los ensayos de carga, más el ítem 9.2 diferido desde el PR1.
 
+## Lote 3 (PR3) — cierre
+
+Fases 10 y 11 completas, Fase 12 parcial con causa declarada. `pytest` completo:
+529 pasados, 1 omitido.
+
+### Fases 10 y 11
+
+Tres tests de integración, todos en verde sin código nuevo: los arreglos ya
+estaban en los dos lotes anteriores. Son confirmación de punta a punta y guardia
+de regresión, no comportamiento nuevo, y la fase lo anticipaba así.
+
+El test de duplicación corre **por `tareas.construir_fabrica_ejecutor`**, la raíz
+de composición de producción, no armando el ejecutor a mano.
+
+Las tres compuertas de calibración ya llevaban `clave_documento` desde la Fase 3.
+
+### Fase 12 — ensayos de carga
+
+| Ensayo | Métrica | Anterior | Ahora | Diferencia |
+|---|---|---|---|---|
+| 1.000 | Tiempo | 222,74 s | 220,47 s | −1,0 % |
+| 1.000 | Memoria pico | 147.136.512 B | 147.099.648 B | −0,03 % |
+| 10.000 | Tiempo | 41,1 min | 40,95 min | −0,4 % |
+| 10.000 | Memoria pico | 285,9 MiB | 304,2 MiB | +6,4 % |
+
+Composición idéntica en ambos, `oraculo_validado: true`, 0 fallos, 0 reintentos,
+`pii_en_salida: 0`. Ningún oráculo se rompió ni hubo que regenerarlo.
+
+Sobre el +6,4 % de memoria a 10.000: las tres últimas corridas dieron 301,3 /
+285,9 / 304,2 MiB. La dispersión entre corridas es del mismo orden que la
+diferencia observada, así que se reporta como variación, no como regresión. No
+se ajusta ninguna constante para disimularla.
+
+### Lo que NO se pudo verificar, y por qué
+
+La tarea 12.3 pedía un invariante nuevo a escala real: `filas en estudio ==
+documentos_aprobados` tras una pasada, y una segunda pasada que no incremente
+ninguna tabla.
+
+**No es verificable en el banco de carga.** `tests/fixtures/corpus_piloto.py:153`
+usa `_DestinoMemoria`: el banco nunca escribe una fila en SQL, así que no existe
+la tabla que habría que contar. Hacerlo posible exigiría cambiar el banco para
+usar un destino real, lo cual agregaría miles de escrituras a SQLite, alteraría
+tiempo y memoria, e invalidaría la comparación con todas las corridas previas.
+
+La idempotencia contra el escritor real está cubierta por
+`tests/integracion/test_reprocesar_no_duplica.py`, que pasa por la fábrica de
+producción: menor escala, pero escritor de verdad.
+
+Que el banco de carga corra sobre un cableado que producción no usa es un
+hallazgo por derecho propio, hermano del que ya se registró sobre el coordinador
+de episodios. Merece su propio cambio y no se resuelve acá.
+
+### Estado del cambio
+
+`escritura-idempotente` completo: 12 fases, 3 PRs, con la salvedad declarada de
+la 12.3.
+

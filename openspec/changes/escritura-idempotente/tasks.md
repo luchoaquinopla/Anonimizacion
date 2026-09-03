@@ -113,29 +113,30 @@ Nota de verificación: `tests/integracion/test_momento_estudio_ambos_destinos.py
 ## Fase 9: contenido corregido entra como documento nuevo (Requisito 7)
 
 - [x] 9.1 RED: en `tests/pipeline/test_ejecutor.py` o `tests/salida/test_constructor_registro.py`, test que simula un documento corregido (mismo `id_documento`, `sha256` distinto) y confirma que produce una `clave_documento` distinta de la versión anterior — sin necesidad de código nuevo, es una consecuencia directa de Fases 1 y 4; el test fija el comportamiento explícitamente.
-- [ ] 9.2 DIFERIDO A PR2: test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — depende de la restricción `UNIQUE` de la Fase 5 (fuera de alcance de este PR); sin ella, Postgres ya inserta ambas filas hoy sin garantía real, así que el test no verificaría nada nuevo. Se retoma junto con la Fase 5 en PR2.
+- [x] 9.2 (retomado en PR3, no en PR2: la restricción existe desde el PR2 pero el test de integración vive con los demás de cierre): test de integración contra Postgres que confirma que, con `clave_documento` distinta, la fila anterior de `estudio` se conserva y se agrega una fila nueva (Requisito 7, "el documento se corrige en el origen") — depende de la restricción `UNIQUE` de la Fase 5 (fuera de alcance de este PR); sin ella, Postgres ya inserta ambas filas hoy sin garantía real, así que el test no verificaría nada nuevo. Se retoma junto con la Fase 5 en PR2.
 - [x] 9.3 GREEN: ajustes de wiring que falten (no debería requerir lógica nueva).
 - [x] 9.4 REFACTOR: ninguno esperado; confirmar en `apply-progress.md` si este comportamiento salió gratis de las fases anteriores o si hizo falta algún ajuste no previsto.
 
 ## Fase 10: integración extremo a extremo — ambos destinos, ambos defectos cerrados
 
-- [ ] 10.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa el mismo documento **tres veces** de punta a punta (`EjecutorPipeline.procesar_lote`) y confirma que Postgres queda con una sola fila de `estudio` y sus mediciones, sin ninguna excepción no controlada.
-- [ ] 10.2 RED: test de integración que publica un episodio de tres documentos vía `PublicadorBundles.publicar` y confirma que el Parquet del episodio conserva los tres — el defecto original de la exploración, ahora cerrado end-to-end.
-- [ ] 10.3 GREEN: ajustes de wiring residuales, si aparecen (no debería requerir lógica nueva si las fases anteriores están completas).
+- [x] 10.1 RED: test de integración (SQLite en memoria + `tmp_path` para Parquet) que procesa el mismo documento **tres veces** de punta a punta (`EjecutorPipeline.procesar_lote`) y confirma que Postgres queda con una sola fila de `estudio` y sus mediciones, sin ninguna excepción no controlada.
+- [x] 10.2 RED: test de integración que publica un episodio de tres documentos vía `PublicadorBundles.publicar` y confirma que el Parquet del episodio conserva los tres — el defecto original de la exploración, ahora cerrado end-to-end.
+- [x] 10.3 GREEN: ajustes de wiring residuales, si aparecen (no debería requerir lógica nueva si las fases anteriores están completas).
 
 ## Fase 11: compuertas de calibración — cierre
 
-- [ ] 11.1 Confirmar que las tres compuertas (`compuerta_ecg.py`, `compuerta_laboratorio.py`, `compuerta_ecocardiograma.py`) quedaron actualizadas en la Fase 3, no como lote separado al final — auditoría, no trabajo nuevo si Fase 3 se siguió en orden.
-- [ ] 11.2 `pytest tests/calibracion/` completo en verde.
+- [x] 11.1 Confirmar que las tres compuertas (`compuerta_ecg.py`, `compuerta_laboratorio.py`, `compuerta_ecocardiograma.py`) quedaron actualizadas en la Fase 3, no como lote separado al final — auditoría, no trabajo nuevo si Fase 3 se siguió en orden.
+- [x] 11.2 `pytest tests/calibracion/` completo en verde.
 
 ## Fase 12: oráculos de carga — revalidación, no regeneración asumida (al final de la cadena)
 
 Los oráculos verifican **composición** del corpus (únicos/duplicados/aprobados/episodios/cuarentenas), no esquema. La clave de documento no cambia esos conteos. La tarea es correr y reportar — no asumir que hace falta regenerar, siguiendo el mismo criterio que `hora-de-estudio` Fase 16 (donde el oráculo tampoco se rompió pese a un cambio de schema).
 
-- [ ] 12.1 Correr `python -m tests.carga.ejecutar_corpus` (1.000 PDFs). Si la composición del corpus coincide con el oráculo existente, dejarlo intacto y reportar `oraculo_validado: true`. Si no coincide, investigar la causa antes de regenerar — un cambio de composición inesperado en este cambio sería una señal de bug, no de drift esperado.
-- [ ] 12.2 Confirmar sin regresión de tiempo/memoria frente a la última corrida validada (ver `openspec/changes/hora-de-estudio/tasks.md`, Fase 16, para los valores de referencia más recientes).
-- [ ] 12.3 Correr `tests/carga/ejecutar_corpus_10000.py`: mismo criterio — composición idéntica, sin regresión a escala. Agregar el invariante nuevo que pide el diseño: `filas en estudio == documentos_aprobados` tras una pasada, y una segunda pasada sobre el mismo plan que no debe incrementar ninguna tabla (verifica el Requisito 3 a escala real, no solo con fixtures sintéticos).
-- [ ] 12.4 `pytest` completo del repositorio en verde.
+- [x] 12.1 Correr `python -m tests.carga.ejecutar_corpus` (1.000 PDFs). Si la composición del corpus coincide con el oráculo existente, dejarlo intacto y reportar `oraculo_validado: true`. Si no coincide, investigar la causa antes de regenerar — un cambio de composición inesperado en este cambio sería una señal de bug, no de drift esperado.
+- [x] 12.2 Confirmar sin regresión de tiempo/memoria frente a la última corrida validada (ver `openspec/changes/hora-de-estudio/tasks.md`, Fase 16, para los valores de referencia más recientes).
+- [~] 12.3 PARCIAL — ver nota abajo. Correr `tests/carga/ejecutar_corpus_10000.py`: mismo criterio — composición idéntica, sin regresión a escala. Agregar el invariante nuevo que pide el diseño: `filas en estudio == documentos_aprobados` tras una pasada, y una segunda pasada sobre el mismo plan que no debe incrementar ninguna tabla (verifica el Requisito 3 a escala real, no solo con fixtures sintéticos).
+  **La corrida se hizo y validó, pero el invariante nuevo NO se pudo verificar acá.** `tests/fixtures/corpus_piloto.py:153` usa `_DestinoMemoria`: el banco de carga nunca escribe una fila en SQL, así que no hay tabla `estudio` que contar. Verificarlo exigiría cambiar el banco para usar un destino real, lo cual además alteraría tiempo y memoria e invalidaría la comparación con todas las corridas anteriores. La idempotencia contra el escritor real queda cubierta por `tests/integracion/test_reprocesar_no_duplica.py`, que pasa por la fábrica de producción — a menor escala, pero con el escritor de verdad. El banco de carga corriendo sobre un cableado que producción no usa es un hallazgo propio, hermano del que ya se registró sobre el coordinador de episodios, y merece su propio cambio.
+- [x] 12.4 `pytest` completo del repositorio en verde.
 
 ---
 
