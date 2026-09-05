@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Protocol
 
@@ -75,6 +75,14 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 # duplica el número en dos lugares).
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
+# El grupo ES la unidad completa de trabajo (design.md, Decisión 6): no hay un
+# lote posterior de esta misma corrida que pueda traer el estudio faltante,
+# así que no hay nada que dejar pendiente. Con `False` la coordinación
+# devolvería `episodios_pendientes` que `_coordinar_resueltos` no sabe
+# contabilizar -- ver el centinela en `tests/pipeline/test_particion_total_del_lote.py`.
+# No se expone como parámetro público: ofrecer la perilla sin la contabilidad
+# detrás sería ofrecer la trampa con un nombre bonito.
+_GRUPO_ES_UNIDAD_COMPLETA = True
 _CODIGO_CUARENTENA_POR_MOTIVO = {
     MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.EPISODIO_AMBIGUO,
     MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.EPISODIO_INCOMPLETO,
@@ -256,7 +264,19 @@ class EjecutorPipeline:
         with self._fuente.abrir(artefacto) as flujo:
             return extraer_texto_de_flujo(flujo)
 
-    def procesar_lote(self, items: Sequence[ItemLote]) -> tuple[ResultadoDocumento, ...]:
+    def procesar_lote(
+        self, items: Sequence[ItemLote], *, corrida_id: str | None = None
+    ) -> tuple[ResultadoDocumento, ...]:
+        """Procesa el lote completo, aislando el fallo por documento.
+
+        `corrida_id` (spec `trazabilidad-por-corrida`, design.md Decisión 1):
+        parámetro HERMANO del lote, nunca una cuarta clave de `ItemLote` ni de
+        la referencia de cola -- eso rompería el centinela de claves exactas
+        de `trabajadores/tareas.py::procesar_grupo`. Se copia tal cual a
+        `RegistroAnonimizado.corrida_id` (`_emitir`) y a
+        `ErrorDocumento.corrida_id` (`_a_fallo`), y no participa de ninguna
+        decisión del pipeline: es un dato de trazabilidad, no de negocio.
+        """
         resultados: list[ResultadoDocumento] = []
         resueltos: list[_DocumentoResuelto] = []
 
@@ -264,9 +284,18 @@ class EjecutorPipeline:
             try:
                 resueltos.append(self._resolver_documento(item))
             except ErrorParseo as excepcion:
-                resultados.append(self._a_fallo(item.id_documento, excepcion, getattr(excepcion, "tipo_documento", None)))
+                resultados.append(
+                    self._a_fallo(
+                        item.id_documento,
+                        excepcion,
+                        getattr(excepcion, "tipo_documento", None),
+                        corrida_id=corrida_id,
+                    )
+                )
 
-        resueltos, resultado_vinculacion, fallos_coordinacion = self._coordinar_resueltos(resueltos)
+        resueltos, resultado_vinculacion, fallos_coordinacion = self._coordinar_resueltos(
+            resueltos, corrida_id=corrida_id
+        )
         resultados.extend(fallos_coordinacion)
         # episodios ya escritos EN ESTE LOTE (fix post-PR9): `escribir_episodio`
         # es idempotente del lado del destino (ver `EscritorPostgres.
@@ -279,10 +308,14 @@ class EjecutorPipeline:
             id_episodio = resultado_vinculacion.id_episodio_por_documento[resuelto.id_documento]
             try:
                 resultados.append(
-                    self._emitir(resuelto, id_episodio, resultado_vinculacion, episodios_escritos)
+                    self._emitir(resuelto, id_episodio, resultado_vinculacion, episodios_escritos, corrida_id=corrida_id)
                 )
             except ErrorParseo as excepcion:
-                resultados.append(self._a_fallo(resuelto.id_documento, excepcion, resuelto.documento.tipo_documento))
+                resultados.append(
+                    self._a_fallo(
+                        resuelto.id_documento, excepcion, resuelto.documento.tipo_documento, corrida_id=corrida_id
+                    )
+                )
 
         return tuple(resultados)
 
@@ -349,7 +382,7 @@ class EjecutorPipeline:
         return self._vincular_episodios(documentos, self._pepper)
 
     def _coordinar_resueltos(
-        self, resueltos: list[_DocumentoResuelto]
+        self, resueltos: list[_DocumentoResuelto], *, corrida_id: str | None = None
     ) -> tuple[list[_DocumentoResuelto], ResultadoVinculacion, list[FalloDocumento]]:
         if self._coordinar_episodios is None:
             return resueltos, self._vincular_episodios_resueltos(resueltos), []
@@ -363,7 +396,9 @@ class EjecutorPipeline:
             )
             for resuelto in resueltos
         ]
-        coordinacion = self._coordinar_episodios(documentos, pepper=self._pepper, corrida_cerrada=True)
+        coordinacion = self._coordinar_episodios(
+            documentos, pepper=self._pepper, corrida_cerrada=_GRUPO_ES_UNIDAD_COMPLETA
+        )
         resultado_vinculacion = self._resultado_vinculacion_desde_coordinacion(coordinacion)
         resueltos_aprobados = [
             resuelto
@@ -378,10 +413,27 @@ class EjecutorPipeline:
                     etapa=Etapa.COORDINACION.value,
                 ),
                 resuelto.documento.tipo_documento,
+                corrida_id=corrida_id,
             )
             for resuelto in resueltos
             if (motivo := coordinacion.documentos_en_cuarentena.get(resuelto.id_documento)) is not None
         ]
+        # Invariante de la Decisión 6: todo resuelto cae exactamente en una de
+        # las dos puertas (aprobado o cuarentena). Un `episodios_pendientes`
+        # no vacío -- imposible hoy con `_GRUPO_ES_UNIDAD_COMPLETA` fijo, pero
+        # alcanzable si alguien inyecta un coordinador distinto -- dejaría
+        # documentos sin contabilizar en ninguna de las dos listas: fallar acá
+        # es preferible a que ese documento se evapore del embudo en silencio.
+        contabilizados = {resuelto.id_documento for resuelto in resueltos_aprobados}
+        contabilizados.update(fallo.id_documento for fallo in fallos)
+        sin_contabilizar = {resuelto.id_documento for resuelto in resueltos} - contabilizados
+        if sin_contabilizar:
+            raise RuntimeError(
+                f"_coordinar_resueltos dejo {len(sin_contabilizar)} documento(s) sin contabilizar "
+                "(ni aprobados ni en cuarentena) -- _GRUPO_ES_UNIDAD_COMPLETA asume que la "
+                "coordinacion nunca deja episodios_pendientes; si el coordinador inyectado los "
+                "produjo de todos modos, no hay contabilidad para ellos en este pipeline"
+            )
         return resueltos_aprobados, resultado_vinculacion, fallos
 
     @staticmethod
@@ -410,6 +462,8 @@ class EjecutorPipeline:
         id_episodio: str,
         resultado_vinculacion: ResultadoVinculacion,
         episodios_escritos: set[str],
+        *,
+        corrida_id: str | None = None,
     ) -> ExitoDocumento:
         """Escribe el episodio (si todavía no se escribió en este lote) y luego el registro.
 
@@ -437,13 +491,16 @@ class EjecutorPipeline:
             )
             episodios_escritos.add(id_episodio)
 
-        registro = self._construir_registro(
-            resuelto.documento,
-            resuelto.claves,
-            id_episodio=id_episodio,
-            pepper=self._pepper,
-            clave_documento=resuelto.clave_documento,
-            motor_pii=self._motor,
+        registro = replace(
+            self._construir_registro(
+                resuelto.documento,
+                resuelto.claves,
+                id_episodio=id_episodio,
+                pepper=self._pepper,
+                clave_documento=resuelto.clave_documento,
+                motor_pii=self._motor,
+            ),
+            corrida_id=corrida_id,
         )
         _ejecutar_con_reintentos(
             lambda: self._destino.escribir_registro(registro), etapa=Etapa.SALIDA.value, dormir=self._dormir
@@ -456,7 +513,14 @@ class EjecutorPipeline:
             timestamp=_ahora(),
         )
 
-    def _a_fallo(self, id_documento: str, excepcion: ErrorParseo, tipo_documento: TipoDocumento | None = None) -> FalloDocumento:
+    def _a_fallo(
+        self,
+        id_documento: str,
+        excepcion: ErrorParseo,
+        tipo_documento: TipoDocumento | None = None,
+        *,
+        corrida_id: str | None = None,
+    ) -> FalloDocumento:
         error = ErrorDocumento(
             id_documento=id_documento,
             etapa=excepcion.etapa,
@@ -464,6 +528,7 @@ class EjecutorPipeline:
             campo=excepcion.campo,
             pagina=excepcion.pagina,
             tipo_documento=tipo_documento,
+            corrida_id=corrida_id,
         )
         try:
             self._cuarentena.registrar(error)

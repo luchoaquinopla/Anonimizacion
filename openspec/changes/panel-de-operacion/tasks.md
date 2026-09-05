@@ -91,7 +91,8 @@ main en orden). El corte natural de dos tramos (esquema+propagación / web) fue 
 | # | Comando | Qué debe dar verde |
 |---|---|---|
 | 1 | `pytest tests/salida/test_migraciones.py tests/salida/test_modelos_orm.py tests/web/test_reporte_cuarentena.py tests/dominio/` | `upgrade`/`downgrade` de `0008` contra SQLite con duplicados previos; registrar dos veces deja una fila; dos corridas dejan dos; el conteo doble de `GET /cuarentena` queda cerrado |
-| 2 | `pytest tests/pipeline/ tests/ingesta/ tests/integracion/test_reprocesar_no_duplica.py` | El centinela de partición total pasa de rojo a verde; el script produce una corrida con inventario; `estudio`/`cuarentena` quedan atribuidas, sobretamaño incluido |
+| 2 | `pytest tests/pipeline/ tests/integracion/test_reprocesar_no_duplica.py` | El centinela de partición total pasa de rojo a verde; `corrida_id` llega a `estudio` y a `cuarentena` por el camino de éxito y por el de fallo |
+| 2.5 | `pytest tests/ingesta/ tests/scripts/` | El script produce una corrida con inventario; el sobretamaño apartado antes de tener huella queda igualmente atribuido |
 | 3 | `pytest tests/pipeline/ tests/carga/` | Los tres centinelas de observabilidad verdes; los ensayos de mil y diez mil sin degradación de tiempo |
 | 4 | `pytest tests/web/test_embudo_corrida.py tests/web/test_rutas_corridas.py` | `GET /corridas/{id}/embudo` responde números correctos; los seis bordes cubiertos; **el test de solapamiento reporta `residuo < 0` y `cierra: false`**; el arranque sin motor responde 503, no falla |
 | 5 | `pytest tests/web/` | La página se sirve desde un proceso real; no referencia la red; lleva script en línea; dibuja el descuadre; `tests/web/test_plantilla_reporte.py:59-71` sigue en verde |
@@ -183,35 +184,56 @@ seguir con el Tramo 3.
 - [x] 3.9 REFACTOR: `pytest tests/salida/ tests/web/test_reporte_cuarentena.py` en verde; actualizar
       el docstring de `EscritorCuarentena.registrar` para describir la guarda nueva.
 
+> **El Tramo 2 se partió en dos PRs durante el apply.** La implementación completa de las Fases 4-6
+> llegó a 763 líneas, muy por encima del presupuesto, y dejaba `LanzadorCorrida` y
+> `CuarentenaDeCorrida` sin llamador de producción hasta que se modificara
+> `scripts/procesar_carpeta.py`. El corte evita las dos cosas a la vez:
+>
+> - **PR2 — propagación (Fases 4, 5, 6.10-6.12), ~420 líneas.** `corrida_id` viaja por
+>   `procesar_lote`/`procesar_grupo` y llega a las filas. Tiene llamadores reales desde el primer
+>   commit.
+> - **PR2.5 — inventario (Fases 6.1-6.9), ~400 líneas.** `registrar_documentos`, `LanzadorCorrida`
+>   y `CuarentenaDeCorrida` entran **junto con** el cableado del script que los usa, de modo que
+>   ninguna pieza queda huérfana ni siquiera transitoriamente.
+>
+> El motivo de fondo: este proyecto ya arrastra tres subsistemas construidos, verdes y
+> desconectados. Un huérfano "por un PR nomás" es exactamente cómo empezaron los tres.
+
 ## Fase 4 (Tramo 2): partición total del lote (Decisión 6)
 
-- [ ] 4.1 RED: en `tests/pipeline/test_particion_total_del_lote.py` (nuevo), coordinador de
+- [x] 4.1 RED: en `tests/pipeline/test_particion_total_del_lote.py` (nuevo), coordinador de
       episodios falso que devuelve un episodio en `episodios_pendientes` no vacío; correr
       `procesar_lote` y afirmar `len(resultados) == len(items)` — **rojo hoy**: los pendientes se
       pierden en silencio.
-- [ ] 4.2 RED: segundo test en el mismo archivo — el caso normal (sin pendientes) también cumple
+- [x] 4.2 RED: segundo test en el mismo archivo — el caso normal (sin pendientes) también cumple
       `len(resultados) == len(items)`.
-- [ ] 4.3 GREEN: en `pipeline/ejecutor.py`, nombrar `_GRUPO_ES_UNIDAD_COMPLETA = True` (reemplaza el
+- [x] 4.3 GREEN: en `pipeline/ejecutor.py`, nombrar `_GRUPO_ES_UNIDAD_COMPLETA = True` (reemplaza el
       `True` anónimo de la línea ~366) con el comentario de la invariante; `_coordinar_resueltos`
       lanza `RuntimeError` si algún resuelto no cae ni en aprobados ni en cuarentena.
-- [ ] 4.4 REFACTOR: `pytest tests/pipeline/` en verde; confirmar que `_GRUPO_ES_UNIDAD_COMPLETA` NO
+- [x] 4.4 REFACTOR: `pytest tests/pipeline/` en verde; confirmar que `_GRUPO_ES_UNIDAD_COMPLETA` NO
       se expone como parámetro público — exponerla sin la contabilidad detrás es ofrecer la trampa
       con una perilla.
 
+> **Resuelto durante el apply (tarea 4.1).** El enunciado pedía literalmente
+> `len(resultados) == len(items)`, pero la Decisión 6 del diseño elige **fallar ruidoso** con
+> `RuntimeError` ante un pendiente no contabilizado. Las dos cosas son excluyentes: una excepción
+> no retorna nada que medir. Se resolvió a favor de la decisión cerrada, y el test quedó como
+> `pytest.raises(RuntimeError)`.
+
 ## Fase 5 (Tramo 2): `corrida_id` viaja por `procesar_lote`/`procesar_grupo`
 
-- [ ] 5.1 RED: extender el centinela de claves exactas de `procesar_grupo` — la referencia por
+- [x] 5.1 RED: extender el centinela de claves exactas de `procesar_grupo` — la referencia por
       documento sigue teniendo **exactamente** `{id_documento, uri, sha256}` aunque
       `procesar_grupo` reciba `corrida_id` como parámetro hermano del lote.
-- [ ] 5.2 RED: test que llama `EjecutorPipeline.procesar_lote(items, corrida_id="c1")` y confirma
+- [x] 5.2 RED: test que llama `EjecutorPipeline.procesar_lote(items, corrida_id="c1")` y confirma
       que el `RegistroAnonimizado` emitido trae `corrida_id == "c1"`.
-- [ ] 5.3 RED: test equivalente para el camino de fallo — un ítem apartado produce un
+- [x] 5.3 RED: test equivalente para el camino de fallo — un ítem apartado produce un
       `ErrorDocumento` con `corrida_id == "c1"`.
-- [ ] 5.4 GREEN: agregar `corrida_id: str | None = None` a `procesar_lote`; copiarlo en `_emitir`
+- [x] 5.4 GREEN: agregar `corrida_id: str | None = None` a `procesar_lote`; copiarlo en `_emitir`
       (a `RegistroAnonimizado`) y en `_a_fallo` (a `ErrorDocumento`); agregar
       `corrida_id: str` a `procesar_grupo(corrida_id, referencias)` y propagarlo a `procesar_lote`
       sin tocar la construcción de `ItemLote`.
-- [ ] 5.5 REFACTOR: `pytest tests/pipeline/` en verde; confirmar por lectura que ningún módulo del
+- [x] 5.5 REFACTOR: `pytest tests/pipeline/` en verde; confirmar por lectura que ningún módulo del
       núcleo importa `RepositorioCorridas` ni consulta la tabla `corrida`.
 
 ## Fase 6 (Tramo 2): inventario — `registrar_documentos`, `LanzadorCorrida`, `CuarentenaDeCorrida`
@@ -243,12 +265,12 @@ seguir con el Tramo 3.
       `procesar_grupo` — falla porque el script no lo hace todavía.
 - [ ] 6.9 GREEN: modificar `scripts/procesar_carpeta.py` para usar `LanzadorCorrida` y pasar
       `corrida_id` a `procesar_grupo`.
-- [ ] 6.10 RED: extender `tests/integracion/test_reprocesar_no_duplica.py` a cuarentena — reprocesar
+- [x] 6.10 RED: extender `tests/integracion/test_reprocesar_no_duplica.py` a cuarentena — reprocesar
       el mismo grupo no aumenta el conteo de filas en `cuarentena` de esa corrida (spec
       `escritura-idempotente` delta, "reprocesar la misma corrida no duplica el apartado").
-- [ ] 6.11 GREEN: ajustes de wiring residuales si 6.10 los revela (no debería requerir lógica nueva
+- [x] 6.11 GREEN: ajustes de wiring residuales si 6.10 los revela (no debería requerir lógica nueva
       si 3.5 y 5.4 están completas).
-- [ ] 6.12 REFACTOR: `pytest tests/ingesta/ tests/pipeline/ tests/integracion/test_reprocesar_no_duplica.py`
+- [x] 6.12 REFACTOR: `pytest tests/ingesta/ tests/pipeline/ tests/integracion/test_reprocesar_no_duplica.py`
       en verde.
 
 ## Fase 7 (Tramo 3): observabilidad cableada en la raíz de composición (Decisión 7)

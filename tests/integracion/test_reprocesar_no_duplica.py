@@ -28,7 +28,7 @@ from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves  # n
 from anonimizacion.salida.cuarentena import EscritorCuarentena  # noqa: E402
 from anonimizacion.salida.destinos.parquet import EscritorParquet  # noqa: E402
 from anonimizacion.salida.destinos.postgres import EscritorPostgres  # noqa: E402
-from anonimizacion.salida.modelos_orm import Base, Estudio  # noqa: E402
+from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio  # noqa: E402
 from anonimizacion.salida.publicador_bundles import PublicadorBundles  # noqa: E402
 from anonimizacion.trabajadores import tareas  # noqa: E402
 
@@ -97,7 +97,7 @@ def test_procesar_el_mismo_grupo_tres_veces_por_la_fabrica_real_no_duplica(
         # El mismo mensaje de grupo, tres veces: es lo que ocurre cuando una
         # corrida se corta y se relanza sobre el mismo corpus.
         for _ in range(3):
-            resultados = tareas.procesar_grupo(referencias)
+            resultados = tareas.procesar_grupo("corrida-idem", referencias)
             assert {resultado["estado"] for resultado in resultados} == {"exito"}
     finally:
         tareas._fabrica_ejecutor = None
@@ -110,6 +110,57 @@ def test_procesar_el_mismo_grupo_tres_veces_por_la_fabrica_real_no_duplica(
         "sin clave de documento no hay garantia de idempotencia: la fabrica de "
         "produccion tiene que estar propagandola"
     )
+
+
+def test_reprocesar_el_mismo_grupo_no_duplica_la_cuarentena(tmp_path, motor: MotorPii) -> None:
+    """6.10: extiende el criterio de `escritura-idempotente` a cuarentena --
+    reprocesar bajo la MISMA corrida no duplica el apartado (spec
+    `trazabilidad-por-corrida`, Decisión 4: `UNIQUE(corrida_id, id_documento)`).
+
+    Un documento solo (sin los otros dos tipos requeridos) va siempre a
+    cuarentena por `episodio_incompleto` -- mismo camino que
+    `test_wiring_produccion.py::test_un_documento_suelto_por_la_fabrica_real_va_a_cuarentena`,
+    reprocesado tres veces con el mismo `corrida_id`.
+    """
+    artefacto = documentos.escribir_pdf(
+        tmp_path,
+        "lab-idem-cuarentena",
+        documentos.texto_laboratorio(
+            nombre="Ana Sintetica IdemQ",
+            dni="20555778",
+            fecha_nac="04/04/1991",
+            numero_peticion="PET-IDEM-Q1",
+            fecha="10/01/2024",
+        ),
+    )
+    referencias = [{"id_documento": "doc-idem-q-0", "uri": artefacto.uri, "sha256": artefacto.sha256}]
+
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    destino = EscritorPostgres(engine)
+    cuarentena = EscritorCuarentena(engine)
+
+    fabrica = tareas.construir_fabrica_ejecutor(
+        raices=(tmp_path,),
+        resolutor=ResolutorClaves(),
+        motor=motor,
+        pepper=PEPPER,
+        destino=destino,
+        cuarentena=cuarentena,
+    )
+    tareas.configurar_ejecutor(fabrica)
+    try:
+        for _ in range(3):
+            (resultado,) = tareas.procesar_grupo("corrida-idem-cuarentena", referencias)
+            assert resultado["codigo"] == "episodio_incompleto"
+    finally:
+        tareas._fabrica_ejecutor = None
+
+    with Session(engine) as sesion:
+        filas = sesion.scalars(sa.select(Cuarentena)).all()
+
+    assert len(filas) == 1, "reprocesar la misma corrida no debe duplicar el apartado"
+    assert filas[0].corrida_id == "corrida-idem-cuarentena"
 
 
 def test_publicar_un_episodio_de_tres_documentos_los_conserva_a_los_tres() -> None:

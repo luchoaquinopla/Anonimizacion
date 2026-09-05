@@ -27,10 +27,12 @@ class _EjecutorFake:
 
     def __init__(self) -> None:
         self.lotes_procesados: list[list[ItemLote]] = []
+        self.corridas_id_recibidas: list[str | None] = []
 
-    def procesar_lote(self, items):
+    def procesar_lote(self, items, *, corrida_id=None):
         # Un resultado por documento: el lote ya no es de tamano uno.
         self.lotes_procesados.append(list(items))
+        self.corridas_id_recibidas.append(corrida_id)
         from datetime import datetime, timezone
 
         from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -64,27 +66,44 @@ def _referencia(id_documento: str, sha256: str) -> dict[str, str]:
 
 def test_procesar_grupo_sin_configurar_ejecutor_falla_explicito() -> None:
     with pytest.raises(RuntimeError):
-        tareas.procesar_grupo([_referencia("doc-1", "a" * 64)])
+        tareas.procesar_grupo("corrida-1", [_referencia("doc-1", "a" * 64)])
 
 
-def test_procesar_grupo_solo_recibe_referencias() -> None:
-    """Prueba por construcción de que no hay por dónde colar contenido ni PII."""
+def test_procesar_grupo_recibe_exactamente_corrida_id_y_referencias() -> None:
+    """Centinela de claves exactas, extendido (design.md Decisión 1): `corrida_id`
+    viaja como parámetro HERMANO del lote, nunca como una cuarta clave de la
+    referencia por documento -- eso es lo que se verifica más abajo."""
     import inspect
 
     parametros = list(inspect.signature(tareas.procesar_grupo.run).parameters)
-    assert parametros == ["referencias"]
+    assert parametros == ["corrida_id", "referencias"]
 
 
 def test_las_referencias_solo_llevan_id_uri_y_sha256() -> None:
     fake = _EjecutorFake()
     tareas.configurar_ejecutor(lambda: fake)
 
-    tareas.procesar_grupo([_referencia("doc-1", "a" * 64)])
+    tareas.procesar_grupo("corrida-1", [_referencia("doc-1", "a" * 64)])
 
     (item,) = fake.lotes_procesados[0]
     assert item.id_documento == "doc-1"
     assert item.artefacto.uri == "s3://bucket/doc-1.pdf"
     assert item.artefacto.sha256 == "a" * 64
+
+
+def test_corrida_id_no_se_cuela_en_la_referencia_por_documento() -> None:
+    """`corrida_id` no es una cuarta clave de la referencia: `ItemLote` sigue
+    siendo exactamente `{id_documento, artefacto}` (ver
+    `test_item_lote_no_gano_ningun_campo_nuevo` en `test_ejecutor.py`), y
+    `procesar_grupo` lo propaga aparte, al `procesar_lote` del ejecutor."""
+    fake = _EjecutorFake()
+    tareas.configurar_ejecutor(lambda: fake)
+
+    tareas.procesar_grupo("corrida-1", [_referencia("doc-1", "a" * 64)])
+
+    (item,) = fake.lotes_procesados[0]
+    assert set(item.__dataclass_fields__) == {"id_documento", "artefacto"}
+    assert fake.corridas_id_recibidas == ["corrida-1"]
 
 
 def test_procesar_grupo_manda_todos_los_documentos_en_un_solo_lote() -> None:
@@ -97,11 +116,12 @@ def test_procesar_grupo_manda_todos_los_documentos_en_un_solo_lote() -> None:
     tareas.configurar_ejecutor(lambda: fake)
 
     tareas.procesar_grupo(
+        "corrida-1",
         [
             _referencia("doc-ecg", "a" * 64),
             _referencia("doc-lab", "b" * 64),
             _referencia("doc-eco", "c" * 64),
-        ]
+        ],
     )
 
     assert len(fake.lotes_procesados) == 1, "el grupo debe viajar como un unico lote"
@@ -113,14 +133,14 @@ def test_procesar_grupo_vacio_falla_explicito() -> None:
     tareas.configurar_ejecutor(lambda: fake)
 
     with pytest.raises(ValueError):
-        tareas.procesar_grupo([])
+        tareas.procesar_grupo("corrida-1", [])
 
 
 def test_procesar_grupo_via_delay_no_requiere_broker_real() -> None:
     fake = _EjecutorFake()
     tareas.configurar_ejecutor(lambda: fake)
 
-    async_result = tareas.procesar_grupo.delay([_referencia("doc-2", "b" * 64)])
+    async_result = tareas.procesar_grupo.delay("corrida-1", [_referencia("doc-2", "b" * 64)])
 
     assert async_result.get()[0]["id_documento"] == "doc-2"
 
