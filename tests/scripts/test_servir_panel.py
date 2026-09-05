@@ -32,6 +32,20 @@ from anonimizacion.salida.modelos_orm import Base, Estudio
 # loopback real: ese guardia protege que el PIPELINE sea offline (spec
 # `pii-detection`), no que este servidor de desarrollo pueda probarse contra
 # sí mismo por loopback.
+#
+# Esto depende del ORDEN DE IMPORT, y es frágil por eso (auditado en la
+# revisión de seguridad de este cambio): si en el futuro otro `conftest.py`
+# también parchea `socket.socket.connect` a nivel de módulo, y ese parche
+# corre ANTES de que ESTE módulo se importe, `_CONNECT_REAL` capturaría la
+# versión YA parcheada -- este test seguiría pasando, pero creyendo que usa
+# un socket real cuando en realidad seguiría bloqueado (falso verde
+# silencioso). No se corrige acá porque hoy no hay ningún otro parche de
+# `connect` en el árbol de conftests y cambiarlo es una decisión de alcance
+# mayor. La alternativa más robusta, para cuando haga falta: un fixture
+# dedicado (p.ej. `sin_guardia_de_red`) que el guardia de sesión reconozca
+# por un marcador explícito de pytest (`@pytest.mark.red_real`) y salga sin
+# aplicar el parche para ese test puntual, en vez de depender de qué módulo
+# se importó primero.
 _CONNECT_REAL = socket.socket.connect
 
 _RUTA_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "servir_panel.py"
@@ -52,6 +66,27 @@ def test_el_servidor_es_wsgiref_con_threading_mixin() -> None:
 
     assert issubclass(modulo._ServidorConHilos, socketserver.ThreadingMixIn)
     assert issubclass(modulo._ServidorConHilos, WSGIServer)
+
+
+def test_por_defecto_escucha_solo_en_localhost() -> None:
+    """Hallazgo de seguridad: `make_server("", ...)` equivale a `0.0.0.0` --
+    el panel (datos operativos sin autenticación, sin TLS) quedaría expuesto
+    a toda la red del instituto por defecto. El default correcto es
+    `127.0.0.1`; exponerlo a la red exige `--escuchar-red` a propósito.
+    """
+    modulo = _cargar_script()
+
+    assert modulo._resolver_host(escuchar_red=False) == "127.0.0.1"
+    assert modulo._resolver_host(escuchar_red=True) == ""
+
+
+def test_el_flag_escuchar_red_es_explicito_y_apagado_por_defecto(monkeypatch) -> None:
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+
+    args = modulo._parsear_args()
+
+    assert args.escuchar_red is False
 
 
 def test_el_servidor_real_responde_una_peticion_http_real(tmp_path, monkeypatch) -> None:
