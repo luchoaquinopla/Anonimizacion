@@ -577,37 +577,66 @@ seguir con el Tramo 3.
 
 ## Fase 10 (Tramo 5): pantalla y punto de entrada
 
-- [ ] 10.1 RED: en `tests/web/test_plantilla_panel.py` (nuevo), `"http://" not in pagina`,
+- [x] 10.1 RED: en `tests/web/test_plantilla_panel.py` (nuevo), `"http://" not in pagina`,
       `"https://" not in pagina`, `"<script src" not in pagina` **y** `"<script>" in pagina` — el
       polling en línea es un requisito, no un accidente.
-- [ ] 10.2 GREEN: crear `src/anonimizacion/web/plantilla_panel.py`: HTML por f-strings, CSS en
+- [x] 10.2 GREEN: crear `src/anonimizacion/web/plantilla_panel.py`: HTML por f-strings, CSS en
       línea, misma paleta que `plantilla_reporte.py`, con el `<script>` de polling
       (`fetch`/`setInterval` 1-2 s) en línea.
-- [ ] 10.3 RED: test que confirma que un código de cuarentena con marcado HTML llega escapado, y
+- [x] 10.3 RED: test que confirma que un código de cuarentena con marcado HTML llega escapado, y
       que el script de refresco usa `textContent` — literal ausencia de `innerHTML` en el JS
       embebido.
-- [ ] 10.4 GREEN: implementar el escape de contenido dinámico y `textContent` en el refresco.
-- [ ] 10.5 RED — **el centinela de solapamiento, parte de pantalla (cierra el Punto 1)**: un embudo
+- [x] 10.4 GREEN: implementar el escape de contenido dinámico y `textContent` en el refresco.
+- [x] 10.5 RED — **el centinela de solapamiento, parte de pantalla (cierra el Punto 1)**: un embudo
       con residuo negativo se dibuja con su propia ficha ("Descuadre: N documentos con más de un
       desenlace" + explicación) en vez de un cero.
-- [ ] 10.6 GREEN: implementar la ficha de descuadre en `plantilla_panel.py`, símbolo y etiqueta
+- [x] 10.6 GREEN: implementar la ficha de descuadre en `plantilla_panel.py`, símbolo y etiqueta
       propios en la paleta de estado.
-- [ ] 10.7 VERIFICACIÓN de regresión (Punto 6, no RED/GREEN — es un centinela ya existente): correr
+- [x] 10.7 VERIFICACIÓN de regresión (Punto 6, no RED/GREEN — es un centinela ya existente): correr
       `tests/web/test_plantilla_reporte.py:59-71` tal cual y confirmar que sigue en verde con el JS
       de polling del panel ya en línea. Esa aserción (`"<script" not in pagina`) pertenece al
       reporte de cuarentena y **no se copia** al panel, que sí lleva script. Confirmar además que
       `pyproject.toml` no ganó ninguna dependencia nueva.
-- [ ] 10.8 RED: test que confirma que `GET /panel/{id_corrida}` sirve HTML con el primer pintado ya
+- [x] 10.8 RED: test que confirma que `GET /panel/{id_corrida}` sirve HTML con el primer pintado ya
       con números, sin depender de que corra ningún `fetch`.
-- [ ] 10.9 GREEN: agregar la ruta `GET /panel/{id_corrida}` en `rutas_corridas.py`, sirviendo
+- [x] 10.9 GREEN: agregar la ruta `GET /panel/{id_corrida}` en `rutas_corridas.py`, sirviendo
       `plantilla_panel` con el embudo ya calculado en el primer response; hereda la guarda de 9.11
       para el caso sin motor configurado.
-- [ ] 10.10 RED: en `tests/scripts/test_servir_panel.py`, test que confirma que
+- [x] 10.10 RED: en `tests/scripts/test_servir_panel.py`, test que confirma que
       `scripts/servir_panel.py` levanta un `wsgiref.simple_server` con
       `socketserver.ThreadingMixIn` y responde a una petición real.
-- [ ] 10.11 GREEN: crear `scripts/servir_panel.py` con el punto de entrada WSGI del diseño.
-- [ ] 10.12 REFACTOR: `pytest tests/web/` completo en verde; `pytest` completo del repositorio en
+- [x] 10.11 GREEN: crear `scripts/servir_panel.py` con el punto de entrada WSGI del diseño.
+- [x] 10.12 REFACTOR: `pytest tests/web/` completo en verde; `pytest` completo del repositorio en
       verde; confirmar en `apply-progress.md` que `pyproject.toml` no cambió.
+
+> **Nota de apply (Fase 10)**: `tests/scripts/test_servir_panel.py` necesita una conexión de
+> loopback TCP real para probar el servidor real de punta a punta (`urllib.request.urlopen` contra
+> `127.0.0.1`). El guardia de red de `tests/conftest.py` (`_bloquear_llamadas_de_red_reales`,
+> tasks.md 11.5 de otro cambio) parchea `socket.socket.connect` para TODA la sesión de tests, sin
+> excepción de loopback. Se capturó la implementación real de `connect` al importar el módulo del
+> test (antes de que el fixture de sesión la parchee, porque la colección de pytest ocurre antes
+> del setup de fixtures) y se restauró sólo dentro del único test que necesita loopback real, vía
+> `monkeypatch`. El guardia protege que el PIPELINE sea offline (spec `pii-detection`); no aplica a
+> un servidor de desarrollo que se prueba contra sí mismo por loopback, y queda documentado en el
+> propio test. Separado: se detectó que `sqlite://` con el pool por defecto de SQLAlchemy le da a
+> cada hilo su propia base en memoria vacía (`_ServidorConHilos` atiende cada request en un hilo
+> nuevo) — el test usa `StaticPool` + `check_same_thread=False` para compartir una sola base entre
+> el hilo de setup y el hilo del servidor.
+>
+> Paleta de marcha del embudo (`en_vuelo`, `sin_avance`, `completa`, `descuadre`): reusa los cuatro
+> valores exactos de `reporte_cuarentena.PRESENTACION` (`#898781`, `#fab219`, `#d03b3b`; el cuarto,
+> `#ec835a`, queda sin usar en esta pantalla) — ningún color nuevo. `completa` y `en_vuelo` comparten
+> el neutro porque ninguno de los dos requiere acción del operador; símbolo y etiqueta los
+> distinguen igual (el color nunca viaja solo).
+>
+> La ficha de descuadre se omite del todo del HTML servido cuando `cierra` es verdadero (no se
+> emite oculta con `display:none`): así un residuo positivo no deja ningún rastro del texto
+> "Descuadre: ..." en la página, ni siquiera invisible. El `<script>` de refresco sí conoce el texto
+> completo (vía una constante embebida con `json.dumps`) para poder pintar la ficha si un refresco
+> posterior encuentra `cierra: false` sin recargar la página.
+>
+> `pyproject.toml`: sin cambios — verificado con `git diff --stat main...HEAD -- pyproject.toml`
+> (sin salida).
 
 ---
 
