@@ -75,6 +75,14 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 # duplica el número en dos lugares).
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
+# El grupo ES la unidad completa de trabajo (design.md, Decisión 6): no hay un
+# lote posterior de esta misma corrida que pueda traer el estudio faltante,
+# así que no hay nada que dejar pendiente. Con `False` la coordinación
+# devolvería `episodios_pendientes` que `_coordinar_resueltos` no sabe
+# contabilizar -- ver el centinela en `tests/pipeline/test_particion_total_del_lote.py`.
+# No se expone como parámetro público: ofrecer la perilla sin la contabilidad
+# detrás sería ofrecer la trampa con un nombre bonito.
+_GRUPO_ES_UNIDAD_COMPLETA = True
 _CODIGO_CUARENTENA_POR_MOTIVO = {
     MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.EPISODIO_AMBIGUO,
     MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.EPISODIO_INCOMPLETO,
@@ -363,7 +371,9 @@ class EjecutorPipeline:
             )
             for resuelto in resueltos
         ]
-        coordinacion = self._coordinar_episodios(documentos, pepper=self._pepper, corrida_cerrada=True)
+        coordinacion = self._coordinar_episodios(
+            documentos, pepper=self._pepper, corrida_cerrada=_GRUPO_ES_UNIDAD_COMPLETA
+        )
         resultado_vinculacion = self._resultado_vinculacion_desde_coordinacion(coordinacion)
         resueltos_aprobados = [
             resuelto
@@ -382,6 +392,22 @@ class EjecutorPipeline:
             for resuelto in resueltos
             if (motivo := coordinacion.documentos_en_cuarentena.get(resuelto.id_documento)) is not None
         ]
+        # Invariante de la Decisión 6: todo resuelto cae exactamente en una de
+        # las dos puertas (aprobado o cuarentena). Un `episodios_pendientes`
+        # no vacío -- imposible hoy con `_GRUPO_ES_UNIDAD_COMPLETA` fijo, pero
+        # alcanzable si alguien inyecta un coordinador distinto -- dejaría
+        # documentos sin contabilizar en ninguna de las dos listas: fallar acá
+        # es preferible a que ese documento se evapore del embudo en silencio.
+        contabilizados = {resuelto.id_documento for resuelto in resueltos_aprobados}
+        contabilizados.update(fallo.id_documento for fallo in fallos)
+        sin_contabilizar = {resuelto.id_documento for resuelto in resueltos} - contabilizados
+        if sin_contabilizar:
+            raise RuntimeError(
+                f"_coordinar_resueltos dejo {len(sin_contabilizar)} documento(s) sin contabilizar "
+                "(ni aprobados ni en cuarentena) -- _GRUPO_ES_UNIDAD_COMPLETA asume que la "
+                "coordinacion nunca deja episodios_pendientes; si el coordinador inyectado los "
+                "produjo de todos modos, no hay contabilidad para ellos en este pipeline"
+            )
         return resueltos_aprobados, resultado_vinculacion, fallos
 
     @staticmethod
