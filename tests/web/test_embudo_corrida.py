@@ -290,11 +290,55 @@ def test_etapas_no_declaradas_no_participan_del_embudo() -> None:
     assert len(embudo.etapas) == 7
 
 
-def test_no_proyecta_pii() -> None:
-    # Confirmación por lectura (8.14) de que ningún dataclass del módulo
-    # tiene un campo que pudiera transportar `ruta_autorizada` o
-    # `huella_contenido`.
+def test_los_dataclasses_de_salida_no_tienen_campos_llamados_como_columnas_de_pii() -> None:
+    """Chequeo débil y deliberadamente acotado: sólo mira los NOMBRES de los
+    campos de los dataclasses de salida, nunca el SQL que arma
+    `construir_embudo`. No protegería contra un futuro `select(Cuarentena)`
+    completo que trajera esas columnas al proceso aunque después no las
+    expusiera acá -- eso lo cubre
+    `test_las_consultas_reales_nunca_proyectan_columnas_de_pii`, en
+    `tests/integracion/test_embudo_corrida_integracion.py`, que inspecciona
+    el SQL compilado de verdad.
+    """
     campos_embudo = set(Embudo.__dataclass_fields__)
     campos_perdida = set(PerdidaEtapa.__dataclass_fields__)
     assert "ruta_autorizada" not in campos_embudo | campos_perdida
     assert "huella_contenido" not in campos_embudo | campos_perdida
+
+
+def test_la_cache_purga_entradas_vencidas_y_no_crece_sin_limite() -> None:
+    """La memoización de 1s (design.md, "Plan de acceso") no dice nada de
+    purgar -- si nada la limpia, cada `corrida_id` alguna vez consultado deja
+    una entrada muerta para siempre en un plano de control que corre meses
+    sin reiniciarse. `construir_embudo` recibe un reloj inyectable (mismo
+    patrón que `dormir` en `pipeline/ejecutor.py`) para poder simular el paso
+    del tiempo sin dormir de verdad.
+    """
+    from anonimizacion.web import embudo_corrida
+
+    embudo_corrida._CACHE.clear()
+    motor = _motor_vacio_para_pruebas_de_cache()
+
+    reloj = {"t": 0.0}
+
+    for i in range(50):
+        # Cada consulta separada por 10s: muy por encima del TTL de 1s, así
+        # que ninguna corrida previa debería sobrevivir a la siguiente lectura.
+        reloj["t"] = i * 10.0
+        embudo_corrida.construir_embudo(motor, f"corrida-{i}", reloj=lambda: reloj["t"])
+
+    assert len(embudo_corrida._CACHE) < 50, (
+        "la cache crecio sin limite: cada corrida_id alguna vez consultado "
+        "dejo una entrada que nadie purgo"
+    )
+    assert len(embudo_corrida._CACHE) == 1  # solo la ultima, todavia fresca
+
+
+def _motor_vacio_para_pruebas_de_cache():
+    import sqlalchemy as sa
+
+    from anonimizacion.salida.modelos_orm import Base
+
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    return motor

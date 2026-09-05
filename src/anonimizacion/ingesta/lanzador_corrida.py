@@ -118,6 +118,34 @@ class LanzadorCorrida:
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
 
     def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:
+        """Avanza `corrida` en memoria y persiste, o falla ruidoso.
+
+        Nota operativa (revisión fresca, panel-de-operacion): si este
+        `RuntimeError` se dispara en la SEGUNDA llamada (la transición a
+        `PROCESANDO`), el inventario ya se escribió y comiteó por completo
+        (`registrar_documentos` corrió antes, y es lo único que se ejecuta
+        entre las dos llamadas) -- sólo la fila de `corrida` quedó sin
+        avanzar, trabada en `inventariando`. Hoy esto sólo puede pasar por
+        corrupción externa a la fila de `corrida` (un `UPDATE` manual, una
+        migración que le tocó la columna `version`): cada `lanzar()` genera
+        su propio `corrida_id` con `uuid4()`, así que no hay dos llamadores
+        compitiendo por la misma fila -- no hay carrera real que lo dispare
+        en operación normal.
+
+        Si aparece de todos modos: NO hay una segunda corrida a la que
+        migrar el inventario ya escrito (`documento_corrida` está atado a
+        este `corrida_id` por FK) y NO hay un método para forzar el avance
+        de `corrida.estado` sin pasar por `Corrida.avanzar_a` (a propósito:
+        saltarse esa validación es la misma clase de puerta trasera que este
+        cambio evita en otros lados). La recuperación manual correcta es leer
+        `corrida.version` real desde la base, confirmar que el inventario
+        de `documento_corrida` para este `corrida_id` está completo, y
+        corregir `corrida.estado`/`version` a mano contra esa versión real
+        -- no reintentar `lanzar()`, que generaría un `corrida_id` nuevo y
+        un inventario duplicado del mismo directorio. No hay automatismo
+        para este caso: es deliberado, para no enmascarar la corrupción que
+        lo causó.
+        """
         version_antes = corrida.version
         corrida.avanzar_a(destino)
         if not self.repositorio.actualizar_corrida(corrida, version_esperada=version_antes):
@@ -125,5 +153,6 @@ class LanzadorCorrida:
                 f"actualizar_corrida rechazo la transicion a {destino.value} para "
                 f"{corrida.id_corrida}: la version persistida ya no era {version_antes}. "
                 "lanzar() es la unica escritora de esta corrida -- esto es una corrupcion "
-                "real, no una carrera esperable."
+                "real, no una carrera esperable. Ver el docstring de _avanzar_y_persistir "
+                "para la recuperacion manual."
             )

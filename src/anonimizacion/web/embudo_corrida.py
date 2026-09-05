@@ -26,7 +26,7 @@ de que un documento quedó contado en más de un destino.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -234,7 +234,30 @@ def calcular_embudo(
 #: Embudo)`. Los tests que necesitan bypassear la memoización llaman
 #: `_CACHE.clear()` -- acceso directo deliberado, no una API pública nueva sin
 #: llamador real.
+#:
+#: `design.md` fija el TTL pero no dice nada de purgar -- completándolo, no
+#: contradiciéndolo: un plano de control que corre meses sin reiniciarse
+#: acumularía una entrada MUERTA por cada `corrida_id` que alguna vez se
+#: consultó, para siempre, si nada la sacara. Se eligió purgar las entradas
+#: vencidas en cada lectura (`_purgar_vencidas`, llamada al principio de
+#: `construir_embudo`) en vez de un tope de tamaño con desalojo LRU: el TTL ya
+#: es de un segundo, así que el costo de purgar es barrer un dict con a lo
+#: sumo "corridas distintas consultadas en el último segundo" entradas --
+#: nunca más que eso, porque cualquier entrada más vieja ya se purgó en la
+#: lectura anterior. Un tope de tamaño exigiría además una política de
+#: desalojo (LRU u otra) para decidir CUÁL corrida sacar bajo presión, y acá
+#: no hace falta: el TTL ya acota el tamaño solo.
 _CACHE: dict[str, tuple[float, Embudo]] = {}
+
+
+def _purgar_vencidas(marca: float) -> None:
+    vencidas = [
+        corrida_id
+        for corrida_id, (marca_cacheada, _) in _CACHE.items()
+        if (marca - marca_cacheada) >= _TTL_MEMOIZACION_SEG
+    ]
+    for corrida_id in vencidas:
+        del _CACHE[corrida_id]
 
 
 def _min_opcional(a: datetime | None, b: datetime | None) -> datetime | None:
@@ -253,7 +276,13 @@ def _max_opcional(a: datetime | None, b: datetime | None) -> datetime | None:
     return max(a, b)
 
 
-def construir_embudo(motor: Engine, corrida_id: str, *, ahora: datetime | None = None) -> Embudo:
+def construir_embudo(
+    motor: Engine,
+    corrida_id: str,
+    *,
+    ahora: datetime | None = None,
+    reloj: Callable[[], float] = time.monotonic,
+) -> Embudo:
     """Lee las tres consultas agregadas del diseño y arma el embudo real.
 
     Nunca proyecta `ruta_autorizada` ni `huella_contenido` (Requisito 6):
@@ -261,9 +290,15 @@ def construir_embudo(motor: Engine, corrida_id: str, *, ahora: datetime | None =
     sólo aportan columnas de conteo y de tiempo, nunca la fila completa.
     Nunca lee `documento_corrida.estado` (Decisión 5): el `count(*)` no
     proyecta esa columna.
+
+    `reloj` es inyectable (mismo patrón que `dormir` en
+    `pipeline/ejecutor.py`): en producción es `time.monotonic`, y los tests
+    que necesitan simular el paso del tiempo -- por ejemplo, para confirmar
+    que `_CACHE` purga entradas vencidas -- pasan uno propio.
     """
     momento = ahora if ahora is not None else _ahora_utc()
-    marca = time.monotonic()
+    marca = reloj()
+    _purgar_vencidas(marca)
     cacheado = _CACHE.get(corrida_id)
     if cacheado is not None and (marca - cacheado[0]) < _TTL_MEMOIZACION_SEG:
         return cacheado[1]

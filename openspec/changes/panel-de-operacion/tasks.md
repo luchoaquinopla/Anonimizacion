@@ -550,6 +550,31 @@ seguir con el Tramo 3.
 > lugares: un descuadre real tiene que verse en el resumen agregado igual que en el JSON completo,
 > nunca disimulado en un campo que además queda expuesto en una ruta más vieja.
 
+> **Corrección del presupuesto de este tramo (post-revisión fresca)**: el reporte de apply había
+> caracterizado el exceso sobre el estimado (~380-390 líneas, `design.md`) como "casi todo cobertura
+> de tests, no lógica de producción". Los números reales lo desmienten:
+>
+> | | Líneas reales | Archivos |
+> |---|---|---|
+> | Producción (`src/`) | **555** | `embudo_corrida.py`, `servicio_corridas.py`, `rutas_corridas.py`, `repositorio_corridas.py`, `lanzador_corrida.py` |
+> | Tests | 880 | `test_embudo_corrida.py`, `test_servicio_corridas.py`, `test_rutas_corridas.py`, `test_embudo_corrida_integracion.py`, `test_repositorio_corridas.py`, `test_lanzador_corrida.py` |
+> | **Total** | **1.435** | (`git diff --stat main...HEAD` sobre este tramo) |
+>
+> La columna "Líneas est." de la tabla de tramos (arriba, ~380-390) se refiere a producción, igual
+> que en las demás filas — así que la producción sola de este tramo ya superó ese estimado en
+> **~46 %**, sin contar los tests. Caracterizarlo como "fueron los tests" era impreciso y dejaba una
+> base falsa para la próxima estimación.
+>
+> **Por qué salió más grande de lo previsto**: el estimado original no contempló (a) las tres
+> consultas agregadas con su lógica de combinación en Python (`_min_opcional`/`_max_opcional`,
+> ensamblado de `perdidas` por etapa/código) en vez de una sola consulta simple; (b) los seis bordes
+> de "Rango de tiempo restante" como una función propia (`_estimar`) con su propia complejidad
+> condicional; (c) `ServicioCorridasReal` completo (crear/consultar/reintentar + serialización del
+> contrato JSON) contado dentro de "modelo de lectura y JSON" sin una línea propia en la tabla de
+> tramos; y (d) el cierre del hallazgo de persistencia de `corrida.estado`
+> (`RepositorioCorridas.actualizar_corrida` + su cableado en `LanzadorCorrida`), que no estaba
+> previsto en ningún estimado de este tramo porque no era parte del enunciado original de la Fase 9.
+
 ## Fase 10 (Tramo 5): pantalla y punto de entrada
 
 - [ ] 10.1 RED: en `tests/web/test_plantilla_panel.py` (nuevo), `"http://" not in pagina`,

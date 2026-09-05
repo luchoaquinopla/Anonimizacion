@@ -36,6 +36,7 @@ from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
 from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio
 from anonimizacion.salida.modelos_salida import ContenidoLaboratorioSalida
+from anonimizacion.web import embudo_corrida
 from anonimizacion.web.embudo_corrida import construir_embudo
 
 PEPPER = b"pepper-panel-de-operacion-no-usar-en-produccion"
@@ -326,3 +327,38 @@ def test_el_residuo_es_cero_al_terminar_una_corrida_sintetica_sin_fallos() -> No
     assert embudo.apartados == 0
     assert embudo.residuo == 0
     assert embudo.cierra is True
+
+
+def test_las_consultas_reales_nunca_proyectan_columnas_de_pii() -> None:
+    """El chequeo fuerte que pidió la revisión: inspecciona el SQL COMPILADO
+    que `construir_embudo` ejecuta de verdad contra un motor real, no los
+    nombres de campo de los dataclasses de salida (eso lo cubre el test
+    débil en `tests/web/test_embudo_corrida.py`, y dice explícitamente que no
+    alcanza). Un futuro `select(Cuarentena)` sin proyección explícita -- que
+    trajera `ruta_autorizada`/`huella_contenido` al proceso aunque después no
+    se expusieran en el `Embudo` -- pondría este test en rojo.
+    """
+    engine = _motor_vacio()
+    repositorio = RepositorioCorridas(engine)
+    corrida_id = "corrida-auditoria-sql"
+    repositorio.crear_corrida(Corrida.crear(corrida_id))
+    repositorio.registrar_documentos(
+        [DocumentoCorrida.inventariado(corrida_id=corrida_id, huella_contenido="d" * 64, ruta_autorizada="/r/pii.pdf")]
+    )
+
+    sentencias: list[str] = []
+
+    def _capturar(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        sentencias.append(statement)
+
+    sa.event.listen(engine, "before_cursor_execute", _capturar)
+    try:
+        embudo_corrida._CACHE.clear()
+        construir_embudo(engine, corrida_id)
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", _capturar)
+
+    assert sentencias, "no se ejecuto ninguna consulta -- este test no probaria nada"
+    combinado = " ".join(s.lower() for s in sentencias)
+    assert "ruta_autorizada" not in combinado
+    assert "huella_contenido" not in combinado
