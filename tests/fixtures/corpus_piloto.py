@@ -10,8 +10,8 @@ from pathlib import Path
 
 from anonimizacion.dominio.modelos import ClavesPaciente, RegistroAnonimizado
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria
-from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
-from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
+from anonimizacion.pipeline.ejecutor import ItemLote
+from anonimizacion.trabajadores.tareas import construir_fabrica_ejecutor
 from anonimizacion.pipeline.resultado import ExitoDocumento
 
 from .pdf_sintetico import crear_pdf_corrupto, generar_corpus_clinico
@@ -158,22 +158,29 @@ def ejecutar_corpus_sintetico(
         nonlocal reintentos
         reintentos += 1
 
-    # rewiring del puerto de ingesta (fase 7, openspec `puerto-de-ingesta`):
-    # `EjecutorPipeline` ya no lee `Path(artefacto.uri)` por su cuenta -- una
-    # `FuenteLocal` propia (no la usada para el inventario de arriba, que
-    # trae su propia dedup/cuarentena) le sirve para abrir los artefactos.
-    fuente_ejecutor = FuenteLocal(raices=(directorio,), directorio=entrada)
-    ejecutor = EjecutorPipeline(
+    # El banco pasa por la MISMA raiz de composicion que el trabajador
+    # (`construir_fabrica_ejecutor`) y no arma `EjecutorPipeline` a mano. Es
+    # deliberado: armarlo por separado fue lo que dejo al banco midiendo un
+    # cableado que produccion no usaba -- inyectaba el coordinador de episodios
+    # cuando produccion no lo hacia, de modo que sus conteos de cuarentena
+    # describian un camino que el trabajador no recorria. Cualquier cableado
+    # nuevo que se agregue a la fabrica ahora llega al banco solo.
+    #
+    # Lo unico que se sobrescribe son los dobles que el banco NECESITA para
+    # correr en segundos en vez de horas: un motor de PII offline (el real carga
+    # spaCy), una resolucion de claves sintetica, y un `dormir` que cuenta
+    # reintentos en lugar de dormirlos. El destino en memoria es igualmente
+    # deliberado: el banco mide el pipeline, no la escritura a Postgres.
+    ejecutor = construir_fabrica_ejecutor(
+        raices=(directorio,),
         resolutor=object(),
         motor=_MotorPiiOffline(),
         pepper=b"pepper-piloto-sintetico",
         destino=destino,
         cuarentena=cuarentena,
-        fuente=fuente_ejecutor,
         dormir=contar_reintento,
         resolver_claves=_resolver_claves,
-        coordinar_episodios=coordinar_episodios,
-    )
+    )()
     resultados = ejecutor.procesar_lote(items)
     codigos = Counter(error.codigo.value for error in cuarentena.errores)
     pii_en_salida = contar_coincidencias_pii(destino.registros, valores_pii)

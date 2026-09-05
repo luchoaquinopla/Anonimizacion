@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
+
+# Celery en modo eager para TODA la suite, no por modulo de test. Tiene que
+# quedar seteado antes de que cualquier import construya la app: en cuanto un
+# fixture importa `trabajadores/tareas.py` -- cosa que hace el banco de carga
+# desde que se arma por la fabrica de produccion -- la app se configura con el
+# broker real y `.delay()` intenta abrir una conexion a Redis, que el guardia de
+# red de mas abajo bloquea. Ponerlo por modulo lo hacia depender del orden de
+# recoleccion de pytest.
+os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
 
 import pytest
 
