@@ -238,33 +238,48 @@ seguir con el Tramo 3.
 
 ## Fase 6 (Tramo 2): inventario — `registrar_documentos`, `LanzadorCorrida`, `CuarentenaDeCorrida`
 
-- [ ] 6.1 RED: en `tests/ingesta/test_repositorio_corridas.py`, test que llama
+- [x] 6.1 RED: en `tests/ingesta/test_repositorio_corridas.py`, test que llama
       `RepositorioCorridas.registrar_documentos(documentos, tamano_lote=1000)` y falla porque el
       método no existe.
-- [ ] 6.2 GREEN: agregar `registrar_documentos(documentos, *, tamano_lote=1000) -> int` a
+- [x] 6.2 GREEN: agregar `registrar_documentos(documentos, *, tamano_lote=1000) -> int` a
       `RepositorioCorridas` — una sesión por lote de `tamano_lote`, misma guarda de idempotencia
       por `(corrida_id, huella_contenido)` que `registrar_documento`, que se conserva sin cambios.
-- [ ] 6.3 RED: test que llama `registrar_documentos` dos veces con el mismo lote (misma corrida) y
+- [x] 6.3 RED: test que llama `registrar_documentos` dos veces con el mismo lote (misma corrida) y
       confirma que `uq_documento_corrida_huella` evita duplicar el denominador.
-- [ ] 6.4 RED: en `tests/ingesta/test_lanzador_corrida.py` (nuevo), test que llama
+- [x] 6.4 RED: en `tests/ingesta/test_lanzador_corrida.py` (nuevo), test que llama
       `LanzadorCorrida.lanzar(ruta)` y confirma `corrida_id` + referencias devueltos, con la
       corrida avanzada `CREADA → INVENTARIANDO → PROCESANDO` — falla porque `LanzadorCorrida` no
       existe.
-- [ ] 6.5 GREEN: crear `ingesta/lanzador_corrida.py` con `LanzadorCorrida`: crea la `Corrida`,
+- [x] 6.5 GREEN: crear `ingesta/lanzador_corrida.py` con `LanzadorCorrida`: crea la `Corrida`,
       avanza a `INVENTARIANDO`, llama `fuente.listar()` con el sumidero decorado, llama
       `registrar_documentos(...)`, avanza a `PROCESANDO`, devuelve `corrida_id` + referencias.
-- [ ] 6.6 RED: test que confirma que un artefacto apartado por sobretamaño en `FuenteLocal` (antes
+- [x] 6.6 RED: test que confirma que un artefacto apartado por sobretamaño en `FuenteLocal` (antes
       de calcular su huella) llega a cuarentena con el `corrida_id` correcto — falla porque
       `CuarentenaDeCorrida` no existe.
-- [ ] 6.7 GREEN: crear `CuarentenaDeCorrida` (dataclass frozen que envuelve un `SumideroCuarentena`
+- [x] 6.7 GREEN: crear `CuarentenaDeCorrida` (dataclass frozen que envuelve un `SumideroCuarentena`
       y estampa `corrida_id` en cada `ErrorDocumento` vía `replace()` antes de delegar) en
       `ingesta/lanzador_corrida.py`; `LanzadorCorrida` arma la fuente de enumeración con este
       sumidero.
-- [ ] 6.8 RED: en `tests/scripts/test_procesar_carpeta.py`, test que confirma que
+- [x] 6.8 RED: en `tests/scripts/test_procesar_carpeta.py`, test que confirma que
       `scripts/procesar_carpeta.py` usa `LanzadorCorrida` y propaga `corrida_id` hasta
       `procesar_grupo` — falla porque el script no lo hace todavía.
-- [ ] 6.9 GREEN: modificar `scripts/procesar_carpeta.py` para usar `LanzadorCorrida` y pasar
+- [x] 6.9 GREEN: modificar `scripts/procesar_carpeta.py` para usar `LanzadorCorrida` y pasar
       `corrida_id` a `procesar_grupo`.
+
+> **Bug encontrado y cerrado durante el apply de 6.8/6.9 (PR 2.5), fuera del enunciado literal de
+> la tarea pero bloqueante para su propio criterio de aceptación**: `EscritorPostgres._insertar`
+> (Fase 3, ya mergeada) nunca copiaba `corrida_id` de `RegistroAnonimizado` a la fila `Estudio`, y
+> `modelos_orm.py::Estudio.creado_en` no tenía el `default=_ahora_utc` que `design.md` (tabla de
+> columnas) ya pedía para esa columna — quedó declarada `nullable=True` sin default, a diferencia
+> de `Cuarentena.creado_en`. Ningún test de Fase 3/5 lo detectó porque todos verifican
+> `RegistroAnonimizado.corrida_id`/`ErrorDocumento.corrida_id` contra dobles de prueba, nunca contra
+> el `EscritorPostgres` real escribiendo en una base. El primer test end-to-end real desde
+> `scripts/procesar_carpeta.py` (6.8) lo hizo visible: sin este fix, `corrida_id` quedaba en
+> `None` en TODA fila de `estudio`, sin importar qué tan bien propagara el pipeline el parámetro —
+> no era un problema del script, era un problema de la Fase 3. Fix de 2 líneas:
+> `Estudio(..., corrida_id=registro.corrida_id)` en `_insertar`, y `default=_ahora_utc` agregado a
+> la columna. Ningún test existente de Fase 1-6.7 dependía del comportamiento anterior (nadie
+> verificaba `creado_en`/`corrida_id` contra `EscritorPostgres` real).
 - [x] 6.10 RED: extender `tests/integracion/test_reprocesar_no_duplica.py` a cuarentena — reprocesar
       el mismo grupo no aumenta el conteo de filas en `cuarentena` de esa corrida (spec
       `escritura-idempotente` delta, "reprocesar la misma corrida no duplica el apartado").
