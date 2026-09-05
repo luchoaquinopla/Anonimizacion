@@ -10,6 +10,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
+from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.modelos_orm import Base, Cuarentena
 from anonimizacion.web.reporte_cuarentena import AccionRequerida, construir_reporte
 
@@ -105,6 +107,42 @@ def test_un_codigo_desconocido_no_se_pierde_en_silencio() -> None:
 
     assert reporte.total == 1
     assert reporte.por_accion[AccionRequerida.SIN_CLASIFICAR].total == 1
+
+
+# --- defecto de conteo doble YA MERGEADO (`modelos_orm.py`, `cuarentena.py`) --
+#
+# `cuarentena` no tiene ninguna restricción única, a diferencia de `estudio`
+# (`uq_estudio_clave_documento`). Reprocesar el mismo documento -- p.ej. un
+# reintento de Celery sobre el mismo grupo -- deja DOS filas, y este reporte,
+# que ya está entregado, las cuenta dos veces. Este test reproduce el defecto
+# tal cual está hoy, antes de tocar el esquema (Fase 3, tasks.md 3.1).
+
+
+def test_reprocesar_la_misma_corrida_no_duplica_el_conteo_del_reporte() -> None:
+    """Hoy (código ya mergeado, sin guarda) esto FALLA: quedan dos filas y el
+    reporte cuenta dos veces el mismo documento. Pasa a verde recién con 3.5
+    (tasks.md 3.6): la guarda de dos capas por `(corrida_id, id_documento)`."""
+    motor = sa.create_engine("sqlite://")
+    Base.metadata.create_all(motor)
+    escritor = EscritorCuarentena(motor)
+    error = ErrorDocumento(
+        id_documento="doc-reprocesado",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        corrida_id="corrida-1",
+    )
+
+    escritor.registrar(error)
+    escritor.registrar(error)  # misma corrida, mismo documento: un reproceso
+
+    with Session(motor) as sesion:
+        total_filas = sesion.scalar(sa.select(sa.func.count()).select_from(Cuarentena))
+    assert total_filas == 1, "reprocesar la misma corrida no debe duplicar el apartado"
+
+    reporte = construir_reporte(motor)
+    assert reporte.por_accion[AccionRequerida.REVISAR_EL_PROGRAMA].total == 1, (
+        "el reporte no debe heredar el conteo doble de un reproceso"
+    )
 
 
 def test_el_reporte_vacio_no_falla() -> None:

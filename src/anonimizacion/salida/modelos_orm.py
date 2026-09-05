@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -111,7 +111,10 @@ class Estudio(Base):
     """
 
     __tablename__ = "estudio"
-    __table_args__ = (UniqueConstraint("clave_documento", name="uq_estudio_clave_documento"),)
+    __table_args__ = (
+        UniqueConstraint("clave_documento", name="uq_estudio_clave_documento"),
+        Index("ix_estudio_corrida_creado", "corrida_id", "creado_en"),
+    )
 
     id_estudio: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_episodio: Mapped[str] = mapped_column(
@@ -128,6 +131,17 @@ class Estudio(Base):
     #: derivarla sin releer el documento original, y `NULL` no colisiona con
     #: `NULL` en la restriccion unica, asi que conviven sin romper nada.
     clave_documento: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: Corrida que escribio esta fila (spec `trazabilidad-por-corrida`,
+    #: Requisito 1). Sin FK hacia `corrida` a proposito (design.md): la tabla
+    #: `corrida` es plano de control, esta es plano de datos, y una FK haria
+    #: que la fila administrativa fuera requisito para escribir salida clinica.
+    corrida_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: Momento propio de esta fila, distinto de `episodio.fecha_ancla` -- sin
+    #: el, no hay forma de calcular una tasa de avance (spec
+    #: `trazabilidad-por-corrida`, Requisito 1). `NULL` para las filas
+    #: preexistentes: no se sabe cuando se escribieron, y un relleno con la
+    #: fecha de la migracion seria una mentira.
+    creado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MedicionEcg(Base):
@@ -225,6 +239,15 @@ class Cuarentena(Base):
     """
 
     __tablename__ = "cuarentena"
+    __table_args__ = (
+        # Clave de idempotencia (design.md, Decisión 4): un documento produce
+        # como mucho un apartado por corrida. `NULL` no colisiona con `NULL`
+        # ni en SQLite ni en Postgres, así que las filas sin corrida (el
+        # script sin corrida, los tests, los fixtures legados) conviven sin
+        # ninguna garantía -- eso es lo que ya pasaba, y sigue pasando.
+        UniqueConstraint("corrida_id", "id_documento", name="uq_cuarentena_corrida_documento"),
+        Index("ix_cuarentena_corrida_creado", "corrida_id", "creado_en"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_documento: Mapped[str] = mapped_column(String, index=True, nullable=False)
@@ -239,6 +262,9 @@ class Cuarentena(Base):
     tamano_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tope_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
+    #: Corrida que produjo este apartado (spec `trazabilidad-por-corrida`,
+    #: Requisito 1). Sin FK hacia `corrida`, mismo motivo que en `Estudio`.
+    corrida_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class CorridaOrm(Base):
@@ -264,8 +290,14 @@ class DocumentoCorridaOrm(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Sin índice propio a propósito (migración 0008 lo elimina): el prefijo de
+    # `uq_documento_corrida_huella (corrida_id, huella_contenido)` ya cubre
+    # cualquier consulta por `corrida_id` solo. Un índice aparte sería
+    # estrictamente redundante y se pagaría en cada una de las inserciones
+    # del inventario sin aportar nada (design.md, "Los dos índices de una
+    # columna de `documento_corrida`, revisados de verdad").
     corrida_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("corrida.id_corrida"), index=True, nullable=False
+        String(36), ForeignKey("corrida.id_corrida"), nullable=False
     )
     huella_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
     ruta_autorizada: Mapped[str] = mapped_column(String, nullable=False)

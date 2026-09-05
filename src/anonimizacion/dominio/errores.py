@@ -90,6 +90,12 @@ class ErrorDocumento:
     # el tope de tamaño leyendo el reporte, sin re-derivar nada del filesystem.
     tamano_bytes: int | None = None
     tope_bytes: int | None = None
+    # Corrida que produjo este apartado (spec `trazabilidad-por-corrida`,
+    # Requisito 1). Opcional al final, mismo precedente que `clave_documento`
+    # en `RegistroAnonimizado`: nace `None` para no romper fixtures ni
+    # llamadores existentes -- incluidos los apartados por sobretamaño en
+    # `FuenteLocal`, que ocurren antes de que exista ninguna corrida.
+    corrida_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.campo is not None:

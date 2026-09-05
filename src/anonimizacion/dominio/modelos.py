@@ -89,3 +89,9 @@ class RegistroAnonimizado:
     # en el dataclass -- las filas legadas y los fixtures sintéticos de otras
     # fases no la traen y no deben romperse. `construir_registro` la exige.
     clave_documento: str | None = None
+    # Corrida que produjo este registro (spec `trazabilidad-por-corrida`,
+    # Requisito 1). Opcional al final, mismo precedente que `clave_documento`:
+    # nace `None` para no romper fixtures ni llamadores existentes que todavía
+    # no conocen su corrida. `procesar_lote`/`procesar_grupo` lo propagan
+    # (Tramo 2 de `panel-de-operacion`, fuera de alcance de este cambio).
+    corrida_id: str | None = None

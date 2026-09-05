@@ -86,6 +86,7 @@ def test_registrar_persiste_solo_metadata_segura_de_reconciliacion() -> None:
         "tamano_bytes",
         "tope_bytes",
         "creado_en",
+        "corrida_id",
     }
 
 
@@ -101,6 +102,82 @@ def test_registrar_persiste_tipo_documento_seguro() -> None:
         fila = sesion.scalars(sa.select(Cuarentena)).one()
 
     assert fila.tipo_documento == "laboratorio"
+
+
+# --- idempotencia por corrida (spec `escritura-idempotente` delta, design.md
+#     Decisión 4): reprocesar la misma corrida no duplica; corridas distintas
+#     son historial, no duplicado. -------------------------------------------
+
+
+def test_reprocesar_la_misma_corrida_no_duplica_el_apartado() -> None:
+    motor = _motor()
+    escritor = EscritorCuarentena(motor)
+    error = ErrorDocumento(
+        id_documento="doc-1",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        corrida_id="corrida-1",
+    )
+
+    escritor.registrar(error)
+    escritor.registrar(error)  # mismo motivo, misma corrida: un reproceso
+
+    with sa.orm.Session(motor) as sesion:
+        filas = sesion.scalars(sa.select(Cuarentena)).all()
+    assert len(filas) == 1
+
+
+def test_dos_corridas_distintas_dejan_dos_filas_para_el_mismo_documento() -> None:
+    """Historial entre corridas, no duplicado (design.md, tabla de Decisión 4)."""
+    motor = _motor()
+    escritor = EscritorCuarentena(motor)
+
+    escritor.registrar(
+        ErrorDocumento(
+            id_documento="doc-1",
+            etapa="parseo",
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            corrida_id="corrida-1",
+        )
+    )
+    escritor.registrar(
+        ErrorDocumento(
+            id_documento="doc-1",
+            etapa="parseo",
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            corrida_id="corrida-2",
+        )
+    )
+
+    with sa.orm.Session(motor) as sesion:
+        filas = sesion.scalars(sa.select(Cuarentena)).all()
+    assert len(filas) == 2
+    assert {fila.corrida_id for fila in filas} == {"corrida-1", "corrida-2"}
+
+
+def test_la_segunda_insercion_concurrente_captura_integrity_error_sin_propagar(monkeypatch) -> None:
+    """La carrera que el `SELECT` previo no cierra: dos trabajadores pueden
+    consultar antes de que ninguno haya commiteado, y los dos ven "no existe".
+    Se fuerza acá parcheando `_ya_registrado` para que siempre de negativo --
+    así la segunda `registrar` llega a la insercion real y choca contra la
+    restricción única. `registrar` debe resolverlo sin propagar (ver
+    docstring de `EscritorCuarentena.registrar`)."""
+    motor = _motor()
+    escritor = EscritorCuarentena(motor)
+    monkeypatch.setattr(EscritorCuarentena, "_ya_registrado", staticmethod(lambda sesion, error: False))
+    error = ErrorDocumento(
+        id_documento="doc-1",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        corrida_id="corrida-1",
+    )
+
+    escritor.registrar(error)
+    escritor.registrar(error)  # el SELECT parcheado dice "no existe": debe chocar contra la UNIQUE
+
+    with sa.orm.Session(motor) as sesion:
+        filas = sesion.scalars(sa.select(Cuarentena)).all()
+    assert len(filas) == 1
 
 
 def test_registrar_persiste_tamano_y_tope_de_sobretamano(tmp_path) -> None:
