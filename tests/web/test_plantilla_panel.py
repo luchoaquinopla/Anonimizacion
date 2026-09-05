@@ -63,6 +63,21 @@ def test_el_refresco_usa_textcontent_y_nunca_innerhtml() -> None:
     assert "textContent" in pagina
 
 
+def test_un_corrida_id_con_cierre_de_script_no_rompe_el_script_real() -> None:
+    """Hallazgo de seguridad: `json.dumps` no escapa `</`, así que un valor con
+    `</script>` cerraría la etiqueta real en medio del literal. Hoy
+    `corrida_id` siempre es un `uuid4()` y la ruta rechaza `/` antes de
+    llegar acá -- pero la plantilla tiene que defenderse sola, no depender de
+    ese filtro externo.
+    """
+    pagina = renderizar_panel(_payload(corrida_id="</script><script>alert(1)</script>"))
+
+    assert "</script><script>alert(1)</script>" not in pagina
+    assert "<\\/script>" in pagina
+    # Sigue habiendo exactamente un `<script>` real de refresco.
+    assert pagina.count("<script>\n(function () {") == 1
+
+
 def test_un_codigo_de_cuarentena_con_marcado_llega_escapado() -> None:
     """10.3: un código con HTML incrustado no se interpreta en el primer pintado."""
     pagina = renderizar_panel(
@@ -82,28 +97,48 @@ def test_un_codigo_de_cuarentena_con_marcado_llega_escapado() -> None:
     assert "&lt;img" in pagina
 
 
-def test_un_residuo_negativo_dibuja_la_ficha_de_descuadre() -> None:
+def test_un_residuo_negativo_dibuja_la_ficha_de_descuadre_visible() -> None:
     """10.5: un embudo con residuo negativo se dibuja con su propia ficha, nunca un cero."""
     pagina = renderizar_panel(_payload(residuo=-3, cierra=False, marcha="descuadre"))
 
-    assert 'id="ficha-descuadre"' in pagina
+    assert 'id="ficha-descuadre">' in pagina  # visible: sin `style="display: none"`
     assert "Descuadre: 3 documentos con más de un desenlace" in pagina
     assert "reprocesamiento duplicado" in pagina
+    # La ficha "En proceso" es la que no aplica acá, y queda oculta.
+    assert 'id="ficha-en-proceso" style="display: none">' in pagina
 
 
-def test_un_residuo_no_negativo_no_deja_rastro_del_texto_de_descuadre() -> None:
-    """10.6: sin descuadre real, la ficha queda vacía y oculta en el cuerpo servido.
-
-    El texto "Descuadre: ..." SÍ aparece dentro del `<script>` (la plantilla
-    de refresco que el JS usaría si un fetch posterior encontrara
-    `cierra: false`) -- lo que no puede aparecer es el marcado VISIBLE de la
-    ficha en el cuerpo de la página servida.
+def test_un_residuo_no_negativo_muestra_en_proceso_y_oculta_el_descuadre() -> None:
+    """10.6 (decisión de apply): "En proceso" y "Descuadre" son mutuamente
+    excluyentes según `cierra`. La que no aplica queda OCULTA con CSS
+    (`display: none`), no omitida del marcado -- ambas viven siempre en el
+    DOM para que el `<script>` pueda alternar su visibilidad con un cambio de
+    `style` y `textContent`, sin depender de `innerHTML` para crear nodos
+    nuevos si un refresco posterior cambia de estado. No hay dato sensible en
+    juego: son conteos administrativos ya derivados de tablas sin PII.
     """
     pagina = renderizar_panel(_payload(residuo=10, cierra=True, marcha="en_vuelo"))
-    cuerpo, _, _script = pagina.partition("<script>")
 
-    assert "Descuadre:" not in cuerpo
-    assert 'id="ficha-descuadre" style="display: none">' in cuerpo
+    assert 'id="ficha-en-proceso">' in pagina  # visible: sin `style="display: none"`
+    assert 'id="valor-residuo">10' in pagina
+    assert 'id="ficha-descuadre" style="display: none">' in pagina
+
+
+def test_la_ficha_residuo_se_llama_en_proceso_no_por_el_nombre_del_campo() -> None:
+    """El nombre técnico (`residuo`) vive en el JSON, no en la pantalla --
+    mismo criterio que `reporte_cuarentena.py` aplicó a los códigos internos.
+    """
+    pagina = renderizar_panel(_payload(residuo=10, cierra=True))
+
+    assert "En proceso" in pagina
+    assert ">Residuo<" not in pagina
+
+
+def test_la_ficha_apartados_explica_que_requieren_revision() -> None:
+    pagina = renderizar_panel(_payload())
+
+    assert "Requieren revisión" in pagina
+    assert 'href="/cuarentena"' in pagina
 
 
 def test_el_primer_pintado_ya_trae_los_numeros() -> None:
@@ -121,3 +156,51 @@ def test_las_siete_etapas_se_dibujan_en_orden() -> None:
 
     assert pagina.index("Ingesta") < pagina.index("Extracción") < pagina.index("Parseo")
     assert "Detección" not in pagina
+
+
+def test_la_barra_mide_la_perdida_relativa_a_la_peor_etapa() -> None:
+    """La barra tiene que variar entre etapas -- si midiera `llegaron/entraron`
+    a mitad de corrida, las siete darían ~el mismo ancho y no comunicarían
+    nada. Acá "coordinacion" tiene 10x más apartados que "salida": su barra
+    tiene que ser la más larga, y "salida" una fracción chica de esa barra.
+    """
+    pagina = renderizar_panel(
+        _payload(
+            etapas=[
+                {"etapa": "ingesta", "llegaron": 100, "apartados": 0, "codigos": {}},
+                {"etapa": "extraccion", "llegaron": 100, "apartados": 0, "codigos": {}},
+                {"etapa": "parseo", "llegaron": 100, "apartados": 0, "codigos": {}},
+                {"etapa": "reconciliacion", "llegaron": 100, "apartados": 0, "codigos": {}},
+                {"etapa": "coordinacion", "llegaron": 100, "apartados": 20, "codigos": {"episodio_incompleto": 20}},
+                {"etapa": "pseudonimizacion", "llegaron": 80, "apartados": 0, "codigos": {}},
+                {"etapa": "salida", "llegaron": 80, "apartados": 2, "codigos": {"error_transitorio_agotado": 2}},
+            ]
+        )
+    )
+
+    assert 'id="etapa-coordinacion-barra" style="width: 100.0%"' in pagina
+    assert 'id="etapa-salida-barra" style="width: 10.0%"' in pagina
+    assert 'id="etapa-ingesta-barra" style="width: 0.0%"' in pagina
+
+
+def test_no_hay_codigo_muerto_en_el_js() -> None:
+    """`etiquetasEtapa` se definía y nunca se usaba -- una pista falsa para
+    quien mantenga esta pantalla."""
+    pagina = renderizar_panel(_payload())
+
+    assert "etiquetasEtapa" not in pagina
+
+
+def test_el_throughput_se_oculta_cuando_la_estimacion_es_descuadre() -> None:
+    """No puede convivir "no se puede estimar" con dos números de throughput
+    al lado -- contradice el mensaje."""
+    pagina = renderizar_panel(_payload(estimacion={"situacion": "descuadre"}))
+
+    assert 'id="linea-throughput" style="display: none"' in pagina
+
+
+def test_el_throughput_se_muestra_cuando_hay_estimacion_disponible() -> None:
+    pagina = renderizar_panel(_payload())
+
+    assert 'id="linea-throughput">' in pagina  # visible: sin `style="display: none"`
+    assert "500.0" in pagina
