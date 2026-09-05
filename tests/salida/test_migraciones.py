@@ -192,3 +192,123 @@ def test_ciclo_completo_de_clave_documento_es_estructuralmente_idempotente(tmp_p
     inspector = sa.inspect(sa.create_engine(url))
     assert "clave_documento" in {c["name"] for c in inspector.get_columns("estudio")}
 
+
+# --- 0008_corrida_en_salida: corrida_id en estudio y cuarentena --------------
+
+
+def test_migracion_0008_agrega_corrida_id_en_estudio_y_cuarentena(tmp_path) -> None:
+    ruta_db = tmp_path / "corrida_en_salida.db"
+    url = f"sqlite:///{ruta_db}"
+
+    command.upgrade(_config_alembic(url), "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+
+    columnas_estudio = {columna["name"]: columna for columna in inspector.get_columns("estudio")}
+    assert "corrida_id" in columnas_estudio
+    assert columnas_estudio["corrida_id"]["nullable"] is True
+    assert "creado_en" in columnas_estudio
+    assert columnas_estudio["creado_en"]["nullable"] is True
+
+    indices_estudio = {indice["name"] for indice in inspector.get_indexes("estudio")}
+    assert "ix_estudio_corrida_creado" in indices_estudio
+
+    columnas_cuarentena = {columna["name"]: columna for columna in inspector.get_columns("cuarentena")}
+    assert "corrida_id" in columnas_cuarentena
+    assert columnas_cuarentena["corrida_id"]["nullable"] is True
+
+    restricciones_cuarentena = {r["name"] for r in inspector.get_unique_constraints("cuarentena")}
+    assert "uq_cuarentena_corrida_documento" in restricciones_cuarentena
+
+    indices_cuarentena = {indice["name"] for indice in inspector.get_indexes("cuarentena")}
+    assert "ix_cuarentena_corrida_creado" in indices_cuarentena
+
+    indices_documento_corrida = {indice["name"] for indice in inspector.get_indexes("documento_corrida")}
+    assert "ix_documento_corrida_corrida_id" not in indices_documento_corrida, (
+        "redundante con uq_documento_corrida_huella -- ver design.md"
+    )
+
+
+def test_migracion_0008_conserva_duplicados_preexistentes_de_cuarentena(tmp_path) -> None:
+    """Fija el punto de partida real: hay duplicados de `id_documento` sin
+    corrida en el sistema hoy (ningún reintento de Celery tenía restricción
+    que lo impidiera). La migración 0008 no los toca -- ver design.md,
+    Decisión 4: los `NULL` no colisionan entre sí, así que la restricción
+    única se crea sobre ellos sin deduplicar ni rellenar nada."""
+    ruta_db = tmp_path / "duplicados_previos.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "0007_clave_documento")
+
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        for _ in range(2):
+            conexion.execute(
+                sa.text(
+                    "INSERT INTO cuarentena (id_documento, etapa, codigo, creado_en) "
+                    "VALUES ('doc-duplicado', 'parseo', 'parseo_incompleto', :ahora)"
+                ),
+                {"ahora": "2026-01-01T00:00:00+00:00"},
+            )
+
+    command.upgrade(cfg, "head")
+
+    motor = sa.create_engine(url)
+    inspector = sa.inspect(motor)
+    columnas_cuarentena = {columna["name"] for columna in inspector.get_columns("cuarentena")}
+    assert "corrida_id" in columnas_cuarentena, "0008 debe agregar corrida_id sin tocar filas existentes"
+
+    with motor.connect() as conexion:
+        total = conexion.execute(
+            sa.text("SELECT count(*) FROM cuarentena WHERE id_documento = 'doc-duplicado'")
+        ).scalar_one()
+    assert total == 2, "la migracion no debe deduplicar ni rellenar nada sobre filas preexistentes"
+
+
+def test_downgrade_de_0008_vuelve_al_esquema_de_clave_documento(tmp_path) -> None:
+    ruta_db = tmp_path / "corrida_en_salida_downgrade.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0007_clave_documento")
+
+    inspector = sa.inspect(sa.create_engine(url))
+
+    columnas_estudio = {columna["name"] for columna in inspector.get_columns("estudio")}
+    assert "corrida_id" not in columnas_estudio
+    assert "creado_en" not in columnas_estudio
+
+    columnas_cuarentena = {columna["name"] for columna in inspector.get_columns("cuarentena")}
+    assert "corrida_id" not in columnas_cuarentena
+
+    restricciones_cuarentena = {r["name"] for r in inspector.get_unique_constraints("cuarentena")}
+    assert "uq_cuarentena_corrida_documento" not in restricciones_cuarentena
+
+    indices_documento_corrida = {indice["name"] for indice in inspector.get_indexes("documento_corrida")}
+    assert "ix_documento_corrida_corrida_id" in indices_documento_corrida, (
+        "downgrade debe restaurar el indice que 0008 elimino"
+    )
+
+
+def test_ciclo_upgrade_downgrade_upgrade_de_0008_es_estructuralmente_idempotente(tmp_path) -> None:
+    ruta_db = tmp_path / "corrida_en_salida_ciclo.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0007_clave_documento")
+    command.upgrade(cfg, "head")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    columnas_estudio = {columna["name"] for columna in inspector.get_columns("estudio")}
+    assert "corrida_id" in columnas_estudio
+    assert "creado_en" in columnas_estudio
+
+    columnas_cuarentena = {columna["name"] for columna in inspector.get_columns("cuarentena")}
+    assert "corrida_id" in columnas_cuarentena
+
+    restricciones_cuarentena = {r["name"] for r in inspector.get_unique_constraints("cuarentena")}
+    assert "uq_cuarentena_corrida_documento" in restricciones_cuarentena
+
