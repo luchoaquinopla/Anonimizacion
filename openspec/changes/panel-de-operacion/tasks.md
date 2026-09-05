@@ -383,12 +383,26 @@ seguir con el Tramo 3.
 >    ninguno de los cuales es texto libre con PII real; correrles NER es, en la práctica, trabajo
 >    sin beneficio de protección adicional sobre esos campos puntuales, pero es exactamente lo que
 >    la capa 2 hace por diseño ("por si terminara conteniendo texto libre con PII incrustada por
->    error"). Con 2-3 llamadas de ~4,2 ms por documento, el costo estimado es de ~8-13 ms
->    adicionales por documento — sobre un promedio medido de ~224 ms/documento en el ensayo de mil
->    (Fase 7.9), esto es un **~4-6 % de overhead adicional estimado, no vuelto a medir en esta
->    ronda** (el maintainer indicó explícitamente que no hacía falta correr el ensayo de nuevo). Se
->    deja escrito para que la próxima corrida completa de mil o diez mil documentos lo confirme o
->    lo descarte con datos reales, en vez de que aparezca como una sorpresa en el número total.
+>    error"). A partir del microbenchmark se estimó un overhead de ~8-13 ms por documento, es decir
+>    un **~4-6 %**.
+>
+>    **Esa estimación resultó equivocada por un factor de cinco, y se midió.** Se corrió el ensayo
+>    de mil dos veces con el motor cableado, en la misma máquina y el mismo día que las dos corridas
+>    sin cablear, con el corpus y el código idénticos salvo esta línea:
+>
+>    | Motor en la bitácora | Corrida 1 | Corrida 2 | Promedio |
+>    |---|---|---|---|
+>    | No | 218,5 s | 216,8 s | 217,7 s |
+>    | Sí | 219,9 s | 219,2 s | 219,6 s |
+>
+>    Diferencia real: **~1,9 s sobre ~218 s, es decir 0,87 %** — no 4-6 %. Sobre una corrida de
+>    100.000 documentos estimada en ocho horas, son unos cuatro minutos, no media hora.
+>
+>    Con ese dato la decisión es clara y se mantiene el cableado: menos del 1 % de rendimiento a
+>    cambio de que la segunda capa de redacción opere completa y no en modo degradado. La lección
+>    metodológica queda asentada aparte: **un microbenchmark multiplicado por una cantidad supuesta
+>    de llamadas no es una medición**, y en este caso erró cinco veces. La decisión correcta se
+>    tomó recién con el experimento controlado.
 >
 > 2. **Documentado, NO arreglado: `ColectorMetricas` no tiene consumidor en producción.**
 >    Verificado por lectura: `MetricasEnMemoria` se construye de nuevo dentro de cada llamada a
