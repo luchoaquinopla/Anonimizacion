@@ -692,6 +692,31 @@ seguir con el Tramo 3.
 >    silencioso). Queda documentado en el propio test junto con la alternativa más robusta (un
 >    fixture con marcador explícito de pytest, en vez de depender del orden de import) para cuando
 >    haga falta — no se cambia ahora porque no hay ningún otro parche de `connect` en el árbol.
+>
+> **Ronda final de revisión — dos hallazgos más:**
+> 1. **Seguía habiendo jerga interna, en el lugar que más importa.** El estado de la corrida salía
+>    crudo en el subtítulo (`procesando`, `completada_con_cuarentena`, valores de enum en
+>    snake_case en la primera línea que lee el operador), y la columna "Motivos" del embudo
+>    mostraba los códigos de cuarentena sin traducir (`episodio_incompleto`,
+>    `error_transitorio_agotado`, etc.) pese a que `reporte_cuarentena.py` **ya tiene** esa
+>    traducción escrita en `_EXPLICACION_POR_CODIGO`, y el propio docstring de `plantilla_panel.py`
+>    afirmaba aplicar "el mismo criterio". Se cerró en dos partes: (a) `_ETIQUETA_ESTADO` traduce
+>    los ocho valores de `EstadoCorrida` más el `"desconocida"` de `ServicioCorridasReal`; (b) la
+>    tabla de códigos se **extrajo** a `src/anonimizacion/web/codigos_cuarentena.py`
+>    (`EXPLICACION_POR_CODIGO`), y tanto `reporte_cuarentena.py` como `plantilla_panel.py` la
+>    importan de ahí — no hay dos copias que puedan desincronizarse. Un código o estado sin
+>    traducción se muestra crudo como último recurso, tanto en el primer pintado (Python) como en
+>    cada refresco (JS, con las mismas tablas embebidas vía `_json_para_script`) — perder el dato
+>    es peor que mostrarlo feo, misma decisión que `AccionRequerida.SIN_CLASIFICAR`.
+> 2. **El escape de `_json_para_script` sólo cubría `</`, y había más secuencias que rompen el
+>    contexto `<script>`.** Verificado ejecutando: `<!--` sin su `-->` de cierre pone al
+>    tokenizador de HTML5 en el estado "script data escaped", y el `</script>` REAL de la plantilla
+>    deja de interpretarse como cierre — el resto del documento pasa a tratarse como texto de
+>    script. No explotable hoy (mismo motivo que el hallazgo de `</`: `corrida_id` es un `uuid4()`),
+>    pero dejar el arreglo cubriendo sólo un vector después de haber señalado el problema es peor que
+>    no haberlo tocado. Se extendió el reemplazo a `<!--`/`-->`, y el docstring de
+>    `_json_para_script` ahora enumera explícitamente qué cubre (`</`, `<!--`, `-->`) y qué NO
+>    (`<script` sin cierre, `]]>` — ninguno de los dos altera el tokenizador de HTML5).
 
 ---
 
