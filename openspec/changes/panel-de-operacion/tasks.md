@@ -238,33 +238,84 @@ seguir con el Tramo 3.
 
 ## Fase 6 (Tramo 2): inventario — `registrar_documentos`, `LanzadorCorrida`, `CuarentenaDeCorrida`
 
-- [ ] 6.1 RED: en `tests/ingesta/test_repositorio_corridas.py`, test que llama
+- [x] 6.1 RED: en `tests/ingesta/test_repositorio_corridas.py`, test que llama
       `RepositorioCorridas.registrar_documentos(documentos, tamano_lote=1000)` y falla porque el
       método no existe.
-- [ ] 6.2 GREEN: agregar `registrar_documentos(documentos, *, tamano_lote=1000) -> int` a
+- [x] 6.2 GREEN: agregar `registrar_documentos(documentos, *, tamano_lote=1000) -> int` a
       `RepositorioCorridas` — una sesión por lote de `tamano_lote`, misma guarda de idempotencia
       por `(corrida_id, huella_contenido)` que `registrar_documento`, que se conserva sin cambios.
-- [ ] 6.3 RED: test que llama `registrar_documentos` dos veces con el mismo lote (misma corrida) y
+- [x] 6.3 RED: test que llama `registrar_documentos` dos veces con el mismo lote (misma corrida) y
       confirma que `uq_documento_corrida_huella` evita duplicar el denominador.
-- [ ] 6.4 RED: en `tests/ingesta/test_lanzador_corrida.py` (nuevo), test que llama
+- [x] 6.4 RED: en `tests/ingesta/test_lanzador_corrida.py` (nuevo), test que llama
       `LanzadorCorrida.lanzar(ruta)` y confirma `corrida_id` + referencias devueltos, con la
       corrida avanzada `CREADA → INVENTARIANDO → PROCESANDO` — falla porque `LanzadorCorrida` no
       existe.
-- [ ] 6.5 GREEN: crear `ingesta/lanzador_corrida.py` con `LanzadorCorrida`: crea la `Corrida`,
+- [x] 6.5 GREEN: crear `ingesta/lanzador_corrida.py` con `LanzadorCorrida`: crea la `Corrida`,
       avanza a `INVENTARIANDO`, llama `fuente.listar()` con el sumidero decorado, llama
       `registrar_documentos(...)`, avanza a `PROCESANDO`, devuelve `corrida_id` + referencias.
-- [ ] 6.6 RED: test que confirma que un artefacto apartado por sobretamaño en `FuenteLocal` (antes
+- [x] 6.6 RED: test que confirma que un artefacto apartado por sobretamaño en `FuenteLocal` (antes
       de calcular su huella) llega a cuarentena con el `corrida_id` correcto — falla porque
       `CuarentenaDeCorrida` no existe.
-- [ ] 6.7 GREEN: crear `CuarentenaDeCorrida` (dataclass frozen que envuelve un `SumideroCuarentena`
+- [x] 6.7 GREEN: crear `CuarentenaDeCorrida` (dataclass frozen que envuelve un `SumideroCuarentena`
       y estampa `corrida_id` en cada `ErrorDocumento` vía `replace()` antes de delegar) en
       `ingesta/lanzador_corrida.py`; `LanzadorCorrida` arma la fuente de enumeración con este
       sumidero.
-- [ ] 6.8 RED: en `tests/scripts/test_procesar_carpeta.py`, test que confirma que
+- [x] 6.8 RED: en `tests/scripts/test_procesar_carpeta.py`, test que confirma que
       `scripts/procesar_carpeta.py` usa `LanzadorCorrida` y propaga `corrida_id` hasta
       `procesar_grupo` — falla porque el script no lo hace todavía.
-- [ ] 6.9 GREEN: modificar `scripts/procesar_carpeta.py` para usar `LanzadorCorrida` y pasar
+- [x] 6.9 GREEN: modificar `scripts/procesar_carpeta.py` para usar `LanzadorCorrida` y pasar
       `corrida_id` a `procesar_grupo`.
+
+> **Bug encontrado y cerrado durante el apply de 6.8/6.9 (PR 2.5), fuera del enunciado literal de
+> la tarea pero bloqueante para su propio criterio de aceptación**: `EscritorPostgres._insertar`
+> (Fase 3, ya mergeada) nunca copiaba `corrida_id` de `RegistroAnonimizado` a la fila `Estudio`, y
+> `modelos_orm.py::Estudio.creado_en` no tenía el `default=_ahora_utc` que `design.md` (tabla de
+> columnas) ya pedía para esa columna — quedó declarada `nullable=True` sin default, a diferencia
+> de `Cuarentena.creado_en`. Ningún test de Fase 3/5 lo detectó porque todos verifican
+> `RegistroAnonimizado.corrida_id`/`ErrorDocumento.corrida_id` contra dobles de prueba, nunca contra
+> el `EscritorPostgres` real escribiendo en una base. El primer test end-to-end real desde
+> `scripts/procesar_carpeta.py` (6.8) lo hizo visible: sin este fix, `corrida_id` quedaba en
+> `None` en TODA fila de `estudio`, sin importar qué tan bien propagara el pipeline el parámetro —
+> no era un problema del script, era un problema de la Fase 3. Fix de 2 líneas:
+> `Estudio(..., corrida_id=registro.corrida_id)` en `_insertar`, y `default=_ahora_utc` agregado a
+> la columna. Ningún test existente de Fase 1-6.7 dependía del comportamiento anterior (nadie
+> verificaba `creado_en`/`corrida_id` contra `EscritorPostgres` real).
+
+> **Addendum post-revisión fresca (PR 2.5), tres puntos cerrados antes de aprobar:**
+>
+> 1. **Test unitario aislado del escritor.** `tests/salida/destinos/test_postgres.py` gana
+>    `test_escribir_registro_persiste_corrida_id_y_creado_en` (y su contraparte
+>    `test_escribir_registro_sin_corrida_id_deja_corrida_id_en_none`, que fija el caso sin corrida):
+>    apuntan directo a `EscritorPostgres.escribir_registro` contra el escritor real, sin bajar por
+>    `procesar_grupo` ni por el script. Antes de este addendum, la única protección del fix era el
+>    test end-to-end de 6.8 — si el bug reaparece, ahora se detecta acá, en el mismo lugar donde se
+>    escondió dos PRs.
+>
+> 2. **El banco de carga y `_DestinoMemoria` — decisión, no divergencia asumida en silencio.**
+>    `tests/fixtures/corpus_piloto.py` no pasa por `LanzadorCorrida` ni por `procesar_grupo` (correcto:
+>    eso es orquestación administrativa, no algo que el banco deba medir) **y además** escribe contra
+>    `_DestinoMemoria`, un doble, no contra `EscritorPostgres` real. Antes del punto 1, eso era un
+>    punto ciego: exactamente el tipo de superficie sin cubrir donde se escondió el bug de
+>    `corrida_id`/`creado_en` — un destino en memoria nunca iba a ejercitar `_insertar`. **Con el
+>    punto 1 cubierto, deja de serlo**: la corrección del escritor real ya tiene su propio test de
+>    integración (`test_postgres.py`, aislado), así que el banco puede seguir midiendo throughput
+>    puro contra un destino en memoria sin dejar ningún camino de escritura real sin verificar. La
+>    separación de responsabilidades queda: `test_postgres.py` prueba que `EscritorPostgres` escribe
+>    bien; `corpus_piloto.py` prueba cuánto tarda el pipeline en llegar a escribir, sin que el costo
+>    de una sesión SQL real contamine esa medición. No se modificó `corpus_piloto.py`.
+>
+> 3. **Cambio de comportamiento observable para el operador — documentado, no descubierto después.**
+>    Antes de 6.9, el script imprimía por consola `id_paciente`/`id_episodio` truncados de cada
+>    éxito (leídos directo de `ExitoDocumento`). Al pasar a `procesar_grupo`, el reporte pasa a
+>    construirse desde `resumen_trazable()` (`pipeline/resultado.py`), cuya whitelist fija **no**
+>    incluye esos dos campos — es deliberado en ese módulo, no un descuido de este cambio. Se gana:
+>    consistencia con la postura anti-PII del proyecto (el mismo dato que nunca se loguea en la cola
+>    ni en la bitácora, tampoco se imprime acá). Se pierde: una ayuda de depuración manual — antes,
+>    al correr el script a mano, se podía ver a qué paciente/episodio fue a parar cada documento sin
+>    ir a la base; ahora hay que consultar `estudio`/`episodio` directamente por `corrida_id` para
+>    esa correlación. Ninguna tarea de 6.8/6.9 mencionaba este cambio de salida; queda asentado acá
+>    para que no se descubra el día que alguien la extrañe.
+
 - [x] 6.10 RED: extender `tests/integracion/test_reprocesar_no_duplica.py` a cuarentena — reprocesar
       el mismo grupo no aumenta el conteo de filas en `cuarentena` de esa corrida (spec
       `escritura-idempotente` delta, "reprocesar la misma corrida no duplica el apartado").

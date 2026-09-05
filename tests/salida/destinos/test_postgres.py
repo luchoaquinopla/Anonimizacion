@@ -21,6 +21,7 @@ corregido post-PR5, commit 07da933).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, time
 
 import pytest
@@ -332,6 +333,42 @@ def _registro_con_clave(clave: str) -> RegistroAnonimizado:
     return construir_registro(
         documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=clave
     )
+
+
+# --- corrida_id / creado_en: bug cerrado en `panel-de-operacion` PR 2.5 ----
+#
+# `_insertar` construía `Estudio(...)` sin `corrida_id=registro.corrida_id`,
+# y `Estudio.creado_en` no tenía el `default=_ahora_utc` que `design.md` ya
+# pedía -- ambos quedaban en `None` en TODA fila real, sin importar qué tan
+# bien el pipeline propagara el parámetro. Ningún test de Fase 3/5 lo detectó
+# porque todos verificaban `RegistroAnonimizado.corrida_id` contra dobles; el
+# primer test end-to-end real (`tests/scripts/test_procesar_carpeta.py`) lo
+# hizo visible. Este test es la protección quirúrgica y aislada: apunta
+# directo al método donde el defecto se escondió, sin bajar por
+# `procesar_grupo` ni por el script si algún día vuelve a romperse.
+
+
+def test_escribir_registro_persiste_corrida_id_y_creado_en(escritor: EscritorPostgres, motor) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = replace(_registro_con_clave(CLAVE_DOCUMENTO_TEST), corrida_id="corrida-test-1")
+
+    escritor.escribir_registro(registro)
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    assert estudio.corrida_id == "corrida-test-1"
+    assert estudio.creado_en is not None
+
+
+def test_escribir_registro_sin_corrida_id_deja_corrida_id_en_none(escritor: EscritorPostgres, motor) -> None:
+    """Sin `corrida_id` explícito (default `None` de `RegistroAnonimizado`), la
+    fila sigue sin corrida -- no inventar una identidad que nadie asignó."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_con_clave(CLAVE_DOCUMENTO_TEST))
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    assert estudio.corrida_id is None
+    assert estudio.creado_en is not None  # el default de Python igual estampa el momento de escritura
 
 
 def test_escribir_el_mismo_documento_tres_veces_deja_una_sola_fila(

@@ -25,6 +25,20 @@ el laboratorio ya estuviera en la base. Ahora usa `ResolutorClavesPostgres`
 (`pseudonimizacion/resolutor_claves.py`), que delega contra la tabla real
 `vinculo_paciente` via `EscritorPostgres` -- el puente persiste entre
 corridas separadas del script, no solo dentro de un mismo lote.
+
+Fix `panel-de-operacion` (tasks.md 6.8-6.9, PR 2.5): este script armaba
+`FuenteLocal`/`ItemLote` a mano y llamaba `EjecutorPipeline.procesar_lote(items)`
+directo, sin ningun `corrida_id` -- ni la corrida ni el inventario quedaban
+registrados en ningun lado. Ahora usa `LanzadorCorrida` (crea la `Corrida`,
+inventaria via `RepositorioCorridas.registrar_documentos`) y
+`trabajadores.tareas.procesar_grupo` -- la MISMA tarea Celery que despachara
+produccion, llamada en directo (no `.delay()`: este script corre sincronico,
+sin broker, y llamar la tarea como funcion ejercita exactamente el mismo
+codigo que corre en el worker) -- para que `corrida_id` viaje hasta
+`estudio`/`cuarentena` (design.md, "Recorrido"). Es tambien el primer
+llamador de produccion real de `LanzadorCorrida`/`CuarentenaDeCorrida`
+(Fase 6.4-6.7): sin este cambio quedaban con tests pero sin ningun camino
+que los ejecutara fuera de la suite.
 """
 
 from __future__ import annotations
@@ -35,16 +49,17 @@ from collections import Counter
 from pathlib import Path
 
 import sqlalchemy as sa
+from sqlalchemy import Engine
 
-from anonimizacion.ingesta.fuente import FuenteLocal
+from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
+from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.pii.motor import MotorPii
-from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ExitoDocumento, FalloDocumento, ItemLote
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostgres
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres
-from anonimizacion.trabajadores.tareas import construir_fabrica_ejecutor
 from anonimizacion.salida.modelos_orm import Base
+from anonimizacion.trabajadores import tareas
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 
@@ -56,17 +71,21 @@ def _parsear_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = _parsear_args()
+def ejecutar(
+    *,
+    entrada: Path,
+    engine: Engine,
+    motor: MotorPii,
+    pepper: bytes,
+    tope_bytes: int | None = None,
+) -> int:
+    """Lanza una corrida sobre `entrada` y procesa su inventario de punta a punta.
 
-    print(f"Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
-    pepper = obtener_pepper()
-
-    print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
-    motor = MotorPii()
-
-    print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
-    engine = sa.create_engine(args.db_url)
+    Separado de `main()` para poder ejercitarlo con un motor/engine inyectados
+    en tests (`tests/scripts/test_procesar_carpeta.py`) sin tocar argparse,
+    variables de entorno, ni Postgres real. `tope_bytes=None` es "usar el
+    default de producción" -- mismo convenio que `LanzadorCorrida`/`FuenteLocal`.
+    """
     Base.metadata.create_all(engine, checkfirst=True)
 
     destino = EscritorPostgres(engine)
@@ -81,60 +100,84 @@ def main() -> int:
     # dejó a este script sin validación de episodio mientras el banco de carga sí
     # la tenía. Con la fábrica, el script valida igual que producción
     # (spec `procesamiento-por-grupo`, requisito 6).
-    fabrica = construir_fabrica_ejecutor(
-        raices=(args.entrada,),
+    fabrica = tareas.construir_fabrica_ejecutor(
+        raices=(entrada,),
         resolutor=resolutor,
         motor=motor,
         pepper=pepper,
         destino=destino,
         cuarentena=cuarentena,
+        **({"tope_bytes": tope_bytes} if tope_bytes is not None else {}),
     )
-    ejecutor = fabrica()
-    fuente = FuenteLocal(raices=(args.entrada,), directorio=args.entrada, cuarentena=cuarentena)
+    tareas.configurar_ejecutor(fabrica)
 
-    print(f"Listando PDFs en {args.entrada}...", file=sys.stderr)
-    # `procesar_lote` necesita el lote entero materializado (recibe una
-    # `Sequence`, y la coordinación de episodios opera sobre el lote
-    # completo): la pereza de `listar()` rinde en el camino de despacho a
-    # cola, no acá (design.md, "Migración de consumidores").
-    artefactos = list(fuente.listar())
-    if not artefactos:
+    # `LanzadorCorrida` es el único punto donde nace una corrida (design.md,
+    # "Recorrido"): crea la fila `corrida`, inventaría vía `FuenteLocal` +
+    # `RepositorioCorridas.registrar_documentos`, y devuelve las referencias
+    # ya en la forma exacta que exige `procesar_grupo`. Un artefacto apartado
+    # por sobretamaño (antes de calcular su huella, así que nunca llega al
+    # inventario) igual queda atribuido a esta corrida vía `CuarentenaDeCorrida`,
+    # que `LanzadorCorrida` arma internamente.
+    lanzador = LanzadorCorrida(
+        repositorio=RepositorioCorridas(engine),
+        cuarentena=cuarentena,
+        **({"tope_bytes": tope_bytes} if tope_bytes is not None else {}),
+    )
+    print(f"Lanzando corrida sobre {entrada}...", file=sys.stderr)
+    lanzamiento = lanzador.lanzar(entrada)
+
+    if not lanzamiento.referencias:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
         return 1
 
-    items = [ItemLote(id_documento=a.sha256, artefacto=a) for a in artefactos]
-    print(f"Procesando {len(items)} documento(s)...", file=sys.stderr)
+    print(
+        f"Corrida {lanzamiento.corrida_id}: procesando {len(lanzamiento.referencias)} documento(s)...",
+        file=sys.stderr,
+    )
+    # `procesar_grupo` es la MISMA tarea Celery real que despachara producción
+    # (llamada en directo, no `.delay()`: este script corre sincrónico, sin
+    # broker) -- el único llamador que hace real `corrida_id` de punta a punta
+    # hasta `estudio`/`cuarentena`.
+    resultados = tareas.procesar_grupo(lanzamiento.corrida_id, lanzamiento.referencias)
 
-    resultados = ejecutor.procesar_lote(items)
-
-    exitos = [r for r in resultados if isinstance(r, ExitoDocumento)]
-    fallos = [r for r in resultados if isinstance(r, FalloDocumento)]
+    exitos = [r for r in resultados if r["estado"] == "exito"]
+    fallos = [r for r in resultados if r["estado"] != "exito"]
 
     print()
-    print(f"=== Resultado: {len(exitos)} éxito(s), {len(fallos)} en cuarentena ===")
+    print(f"=== Corrida {lanzamiento.corrida_id}: {len(exitos)} éxito(s), {len(fallos)} en cuarentena ===")
     print()
 
     if exitos:
         print("Éxitos:")
         for r in exitos:
-            resumen = r.resumen_trazable()
-            print(
-                f"  - {resumen['id_documento'][:12]}...  tipo={resumen['tipo_documento']:<15}"
-                f"  id_paciente={r.id_paciente[:16]}...  id_episodio={r.id_episodio[:16]}..."
-            )
+            print(f"  - {r['id_documento'][:12]}...  tipo={r['tipo_documento']:<15}")
 
     if fallos:
         print()
         print("Cuarentena (motivo -> cantidad):")
-        for codigo, cantidad in Counter(r.error.codigo.value for r in fallos).items():
+        for codigo, cantidad in Counter(r["codigo"] for r in fallos).items():
             print(f"  - {codigo}: {cantidad}")
         print()
         print("Detalle por documento:")
         for r in fallos:
-            resumen = r.resumen_trazable()
-            print(f"  - {resumen['id_documento'][:12]}...  etapa={resumen['etapa']}  codigo={resumen['codigo']}")
+            print(f"  - {r['id_documento'][:12]}...  etapa={r['etapa']}  codigo={r['codigo']}")
 
     return 0
+
+
+def main() -> int:
+    args = _parsear_args()
+
+    print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
+    pepper = obtener_pepper()
+
+    print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
+    motor = MotorPii()
+
+    print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
+    engine = sa.create_engine(args.db_url)
+
+    return ejecutar(entrada=args.entrada, engine=engine, motor=motor, pepper=pepper)
 
 
 if __name__ == "__main__":

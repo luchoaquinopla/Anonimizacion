@@ -165,6 +165,13 @@ class EscritorPostgres:
         )
 
     def _insertar(self, registro: RegistroAnonimizado, sesion: Session) -> None:
+        # `corrida_id` viaja tal cual desde `RegistroAnonimizado` (spec
+        # `trazabilidad-por-corrida`, design.md "Recorrido"): sin esto, ningún
+        # llamador -- ni `procesar_grupo`, ni `scripts/procesar_carpeta.py` --
+        # puede hacer que `corrida_id` llegue de punta a punta hasta `estudio`,
+        # sin importar qué tan bien propague el pipeline el parámetro.
+        # `creado_en` no se pasa acá: el default de Python de la columna
+        # (`_ahora_utc`, `modelos_orm.py`) ya lo estampa al insertar.
         estudio = Estudio(
             id_episodio=registro.id_episodio,
             tipo_documento=registro.tipo_documento.value,
@@ -172,6 +179,7 @@ class EscritorPostgres:
             hora_estudio=registro.hora_estudio,
             precision_hora=registro.precision_hora.value,
             clave_documento=registro.clave_documento,
+            corrida_id=registro.corrida_id,
         )
         sesion.add(estudio)
         sesion.flush()  # asigna id_estudio sin cerrar la transaccion
