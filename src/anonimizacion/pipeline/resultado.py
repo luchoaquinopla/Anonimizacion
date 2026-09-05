@@ -7,7 +7,8 @@ superficie pensada para eso: por construcción devuelve un `dict` con un
 conjunto fijo y acotado de claves -- mismo principio que `ErrorDocumento`
 (`dominio/errores.py`): campos explícitos, nunca un dump genérico de la
 excepción o del documento. No hace falta un módulo de bitácora separado acá
-(eso es `observabilidad/bitacora_segura.py`, Fase 10, todavía no construida)
+(eso es `observabilidad/bitacora_segura.py`, cableado en
+`pipeline/ejecutor.py::procesar_lote` desde el Tramo 3 de `panel-de-operacion`)
 -- alcanza con que lo que este módulo expone ya sea imposible de que
 contenga PII.
 

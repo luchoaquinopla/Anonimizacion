@@ -30,6 +30,8 @@ from pathlib import Path
 from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria, RegistroDeHuellas
+from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
+from anonimizacion.observabilidad.metricas import ColectorMetricas, MetricasEnMemoria
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import DestinoCuarentena, DestinoEscritura, EjecutorPipeline, ItemLote
@@ -77,6 +79,14 @@ def construir_fabrica_ejecutor(
     # validacion de episodio (ver `tests/carga/test_cableado_del_banco.py`).
     dormir: Callable[[float], None] | None = None,
     resolver_claves: Callable[..., object] | None = None,
+    # `metricas`/`bitacora` (design.md, Decisión 7): misma semántica que
+    # `dormir`/`resolver_claves` de acá arriba -- `None` significa "usar el
+    # valor de producción" (`MetricasEnMemoria()`/`BitacoraSegura()`), nunca
+    # "desactivar la observabilidad". El punto de inyección existe para que
+    # los tests puedan espiar sin duplicar esta fábrica -- ver
+    # `tests/pipeline/test_observabilidad_cableada.py`.
+    metricas: ColectorMetricas | None = None,
+    bitacora: BitacoraSegura | None = None,
 ) -> FabricaEjecutor:
     """Arma la `FabricaEjecutor` real para registrar con `configurar_ejecutor`.
 
@@ -118,6 +128,21 @@ def construir_fabrica_ejecutor(
             # se publica sin aviso -- ver
             # `tests/pipeline/test_modo_sin_validacion_de_episodio.py`.
             coordinar_episodios=coordinar_episodios,
+            # `None` = produccion (design.md, Decision 7): a diferencia de
+            # `dormir`/`resolver_claves`, acá SIEMPRE se pasa una instancia --
+            # el default de `EjecutorPipeline` es "sin observabilidad", y esa
+            # semántica es correcta para sus tests unitarios pero NO para esta
+            # raíz de composición real.
+            metricas=metricas if metricas is not None else MetricasEnMemoria(),
+            # `motor_pii=motor` (revisión fresca post-Tramo 3): sin esto, la
+            # capa 2 de redacción de `BitacoraSegura` queda en modo degradado
+            # (solo regex de DNI, ver docstring de `bitacora_segura.py`). El
+            # `motor` ya está cargado y es el MISMO que usa el resto del
+            # pipeline (`EjecutorPipeline._emitir` lo inyecta en
+            # `construir_registro`/`redactar_texto` -- ver `pii/redaccion.py`):
+            # compartirlo acá no agrega estado nuevo, `MotorPii.detectar` no
+            # acumula nada entre llamadas.
+            bitacora=bitacora if bitacora is not None else BitacoraSegura(motor_pii=motor),
         )
 
     return _fabrica
