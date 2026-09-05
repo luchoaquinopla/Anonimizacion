@@ -29,8 +29,17 @@ InicioRespuesta = Callable[[str, list[tuple[str, str]]], object]
 AplicacionWsgi = Callable[[dict[str, object], InicioRespuesta], Iterable[bytes]]
 
 
-def crear_aplicacion_corridas(raices_autorizadas: Sequence[Path], servicio: ServicioCorridas) -> AplicacionWsgi:
-    """Crea el plano de control con una lista cerrada de raíces del servidor."""
+def crear_aplicacion_corridas(
+    raices_autorizadas: Sequence[Path],
+    servicio: ServicioCorridas,
+    motor_lectura: object | None = None,
+) -> AplicacionWsgi:
+    """Crea el plano de control con una lista cerrada de raíces del servidor.
+
+    `motor_lectura` es opcional: sin él, el reporte de cuarentena responde 503
+    en vez de romper. El plano de control tiene que poder levantarse aunque la
+    base de lectura todavía no esté conectada.
+    """
     raices = tuple(raiz.resolve() for raiz in raices_autorizadas)
 
     def aplicacion(entorno: dict[str, object], iniciar_respuesta: InicioRespuesta) -> Iterable[bytes]:
@@ -38,6 +47,8 @@ def crear_aplicacion_corridas(raices_autorizadas: Sequence[Path], servicio: Serv
         ruta = str(entorno["PATH_INFO"])
         if metodo == "POST" and ruta == "/corridas":
             return _crear_corrida(entorno, iniciar_respuesta, raices, servicio)
+        if metodo == "GET" and ruta == "/cuarentena":
+            return _reporte_cuarentena(iniciar_respuesta, motor_lectura)
         if metodo == "GET" and ruta.startswith("/corridas/"):
             return _consultar_corrida(iniciar_respuesta, servicio, ruta.removeprefix("/corridas/"))
         if metodo == "POST" and ruta.startswith("/corridas/") and ruta.endswith("/reintentar"):
@@ -95,4 +106,21 @@ def _responder(iniciar_respuesta: InicioRespuesta, estado: str, contenido: Estad
     datos = asdict(contenido) if isinstance(contenido, EstadoCorridaPortal) else contenido
     cuerpo = json.dumps(datos, separators=(",", ":")).encode()
     iniciar_respuesta(estado, [("Content-Type", "application/json"), ("Content-Length", str(len(cuerpo)))])
+    return [cuerpo]
+
+
+def _reporte_cuarentena(iniciar_respuesta: InicioRespuesta, motor_lectura: object | None) -> Iterable[bytes]:
+    """Sirve el reporte de estudios apartados, agrupado por qué hacer con cada uno."""
+    if motor_lectura is None:
+        iniciar_respuesta("503 Service Unavailable", [("Content-Type", "text/plain; charset=utf-8")])
+        return [b"base de lectura no configurada"]
+
+    from .plantilla_reporte import renderizar_reporte
+    from .reporte_cuarentena import construir_reporte
+
+    cuerpo = renderizar_reporte(construir_reporte(motor_lectura)).encode("utf-8")
+    iniciar_respuesta(
+        "200 OK",
+        [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(cuerpo)))],
+    )
     return [cuerpo]
