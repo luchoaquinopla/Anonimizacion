@@ -96,6 +96,43 @@ def test_metadata_orm_coincide_con_la_migracion(tmp_path) -> None:
     assert set(Base.metadata.tables.keys()) == _TABLAS_ESPERADAS
 
 
+def test_indices_y_restricciones_unicas_del_orm_coinciden_con_la_migracion(tmp_path) -> None:
+    """`Base.metadata.create_all()` y Alembic son DOS caminos que producen el
+    esquema (la mayoría de `tests/salida/` usa el primero; producción usa el
+    segundo). Si divergen, un `create_all` en test corre contra un esquema
+    distinto del real, y un futuro `alembic revision --autogenerate` puede
+    "corregir" la divergencia deshaciendo en silencio una decisión de diseño
+    -- exactamente lo que pasó con `ix_documento_corrida_corrida_id`: la
+    migración 0008 lo elimina (redundante con el prefijo de
+    `uq_documento_corrida_huella`) pero el modelo ORM seguía declarándolo.
+    """
+    from anonimizacion.salida.modelos_orm import Base
+
+    url_alembic = f"sqlite:///{tmp_path / 'via_alembic.db'}"
+    command.upgrade(_config_alembic(url_alembic), "head")
+    inspector_alembic = sa.inspect(sa.create_engine(url_alembic))
+
+    url_orm = f"sqlite:///{tmp_path / 'via_orm.db'}"
+    motor_orm = sa.create_engine(url_orm)
+    Base.metadata.create_all(motor_orm)
+    inspector_orm = sa.inspect(motor_orm)
+
+    for tabla in sorted(_TABLAS_ESPERADAS):
+        indices_alembic = {indice["name"] for indice in inspector_alembic.get_indexes(tabla)}
+        indices_orm = {indice["name"] for indice in inspector_orm.get_indexes(tabla)}
+        assert indices_orm == indices_alembic, (
+            f"{tabla}: índices del ORM ({indices_orm}) no coinciden con los de la "
+            f"migración ({indices_alembic})"
+        )
+
+        unicas_alembic = {r["name"] for r in inspector_alembic.get_unique_constraints(tabla)}
+        unicas_orm = {r["name"] for r in inspector_orm.get_unique_constraints(tabla)}
+        assert unicas_orm == unicas_alembic, (
+            f"{tabla}: restricciones únicas del ORM ({unicas_orm}) no coinciden con "
+            f"las de la migración ({unicas_alembic})"
+        )
+
+
 
 def test_migraciones_tienen_una_unica_cabecera() -> None:
     script = ScriptDirectory.from_config(_config_alembic("sqlite://"))

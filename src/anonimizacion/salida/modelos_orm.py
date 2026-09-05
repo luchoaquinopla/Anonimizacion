@@ -290,8 +290,14 @@ class DocumentoCorridaOrm(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Sin índice propio a propósito (migración 0008 lo elimina): el prefijo de
+    # `uq_documento_corrida_huella (corrida_id, huella_contenido)` ya cubre
+    # cualquier consulta por `corrida_id` solo. Un índice aparte sería
+    # estrictamente redundante y se pagaría en cada una de las inserciones
+    # del inventario sin aportar nada (design.md, "Los dos índices de una
+    # columna de `documento_corrida`, revisados de verdad").
     corrida_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("corrida.id_corrida"), index=True, nullable=False
+        String(36), ForeignKey("corrida.id_corrida"), nullable=False
     )
     huella_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
     ruta_autorizada: Mapped[str] = mapped_column(String, nullable=False)
