@@ -141,8 +141,8 @@ def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) ->
     `corrida_id` (spec `trazabilidad-por-corrida`, design.md Decision 1) viaja
     como parametro HERMANO del lote, nunca como una cuarta clave de la
     referencia por documento -- eso relajaria el centinela de claves exactas
-    de mas abajo. Es un UUID administrativo asignado por `LanzadorCorrida`, no
-    PII: no se deriva de contenido ni de ruta de ningun documento.
+    de mas abajo. Es un UUID administrativo asignado por quien lanza la corrida,
+    no PII: no se deriva de contenido ni de ruta de ningun documento.
     """
     items = [
         ItemLote(

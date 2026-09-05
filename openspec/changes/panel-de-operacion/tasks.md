@@ -91,7 +91,8 @@ main en orden). El corte natural de dos tramos (esquema+propagación / web) fue 
 | # | Comando | Qué debe dar verde |
 |---|---|---|
 | 1 | `pytest tests/salida/test_migraciones.py tests/salida/test_modelos_orm.py tests/web/test_reporte_cuarentena.py tests/dominio/` | `upgrade`/`downgrade` de `0008` contra SQLite con duplicados previos; registrar dos veces deja una fila; dos corridas dejan dos; el conteo doble de `GET /cuarentena` queda cerrado |
-| 2 | `pytest tests/pipeline/ tests/ingesta/ tests/integracion/test_reprocesar_no_duplica.py` | El centinela de partición total pasa de rojo a verde; el script produce una corrida con inventario; `estudio`/`cuarentena` quedan atribuidas, sobretamaño incluido |
+| 2 | `pytest tests/pipeline/ tests/integracion/test_reprocesar_no_duplica.py` | El centinela de partición total pasa de rojo a verde; `corrida_id` llega a `estudio` y a `cuarentena` por el camino de éxito y por el de fallo |
+| 2.5 | `pytest tests/ingesta/ tests/scripts/` | El script produce una corrida con inventario; el sobretamaño apartado antes de tener huella queda igualmente atribuido |
 | 3 | `pytest tests/pipeline/ tests/carga/` | Los tres centinelas de observabilidad verdes; los ensayos de mil y diez mil sin degradación de tiempo |
 | 4 | `pytest tests/web/test_embudo_corrida.py tests/web/test_rutas_corridas.py` | `GET /corridas/{id}/embudo` responde números correctos; los seis bordes cubiertos; **el test de solapamiento reporta `residuo < 0` y `cierra: false`**; el arranque sin motor responde 503, no falla |
 | 5 | `pytest tests/web/` | La página se sirve desde un proceso real; no referencia la red; lleva script en línea; dibuja el descuadre; `tests/web/test_plantilla_reporte.py:59-71` sigue en verde |
