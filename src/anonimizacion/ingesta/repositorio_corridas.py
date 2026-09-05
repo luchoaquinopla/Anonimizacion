@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
@@ -53,6 +55,50 @@ class RepositorioCorridas:
                 )
             )
             return True
+
+    def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
+        """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.
+
+        Motivo medido (design.md, Decisión 5): `registrar_documento` abre una
+        `Session` y una transacción por documento; 100.000 transacciones
+        sueltas son minutos de arranque para un trabajo que en una sesión por
+        millar son segundos. `registrar_documento` se conserva sin cambios --
+        esta es la versión por lote, con la misma guarda de idempotencia por
+        `(corrida_id, huella_contenido)` que `uq_documento_corrida_huella` ya
+        exige: consulta las huellas existentes del lote antes de insertar, así
+        que relanzar la misma corrida (mismo inventario, mismas huellas) no
+        duplica el denominador del embudo.
+
+        Devuelve la cantidad de filas efectivamente insertadas.
+        """
+        insertados = 0
+        for inicio in range(0, len(documentos), tamano_lote):
+            lote = documentos[inicio : inicio + tamano_lote]
+            if not lote:
+                continue
+            with Session(self._motor) as sesion, sesion.begin():
+                existentes = set(
+                    sesion.execute(
+                        select(DocumentoCorridaOrm.corrida_id, DocumentoCorridaOrm.huella_contenido).where(
+                            DocumentoCorridaOrm.corrida_id.in_({d.corrida_id for d in lote}),
+                            DocumentoCorridaOrm.huella_contenido.in_({d.huella_contenido for d in lote}),
+                        )
+                    ).all()
+                )
+                for documento in lote:
+                    if (documento.corrida_id, documento.huella_contenido) in existentes:
+                        continue
+                    sesion.add(
+                        DocumentoCorridaOrm(
+                            corrida_id=documento.corrida_id,
+                            huella_contenido=documento.huella_contenido,
+                            ruta_autorizada=documento.ruta_autorizada,
+                            estado=documento.estado.value,
+                            version=documento.version,
+                        )
+                    )
+                    insertados += 1
+        return insertados
 
     def documentos_para_reanudar(self, id_corrida: str) -> list[DocumentoCorrida]:
         with Session(self._motor) as sesion:

@@ -46,3 +46,70 @@ def test_repositorio_actualiza_estado_solo_con_version_esperada() -> None:
 
     assert repositorio.actualizar_documento(documento, version_esperada=0) is True
     assert repositorio.actualizar_documento(documento, version_esperada=0) is False
+
+
+# --- registrar_documentos por lote (Decisión 5, design.md) -------------------
+#
+# Motivo medido: `registrar_documento` abre una `Session` y una transacción
+# POR DOCUMENTO -- 100.000 transacciones sueltas son minutos de arranque para
+# un trabajo que en una sesión por millar son segundos. `registrar_documento`
+# se conserva sin cambios (y sus tests también); esto es la versión por lote,
+# con la misma guarda de idempotencia por `(corrida_id, huella_contenido)`.
+
+
+def _documentos(corrida_id: str, cantidad: int) -> list[DocumentoCorrida]:
+    return [
+        DocumentoCorrida.inventariado(
+            corrida_id=corrida_id,
+            huella_contenido=f"{indice:0>64}",
+            ruta_autorizada=f"entrada/doc-{indice}.pdf",
+        )
+        for indice in range(cantidad)
+    ]
+
+
+def test_registrar_documentos_no_existe_todavia() -> None:
+    """6.1: falla porque el método no existe -- confirmado RED contra el
+    repositorio actual, que solo tiene `registrar_documento` (singular)."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-lote")
+    repositorio.crear_corrida(corrida)
+
+    assert repositorio.registrar_documentos(_documentos("corrida-lote", 3), tamano_lote=1000) == 3
+
+
+def test_registrar_documentos_particiona_en_varios_lotes() -> None:
+    """Con `tamano_lote` menor a la cantidad total, igual se inventarian todos
+    -- una sesión por lote, no una sesión para todo el inventario."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-lote")
+    repositorio.crear_corrida(corrida)
+
+    total = repositorio.registrar_documentos(_documentos("corrida-lote", 7), tamano_lote=3)
+
+    assert total == 7
+    documentos = repositorio.documentos_para_reanudar("corrida-lote")
+    assert len(documentos) == 7
+
+
+def test_registrar_documentos_dos_veces_no_duplica_el_denominador() -> None:
+    """6.3: `uq_documento_corrida_huella` evita duplicar el denominador del
+    embudo si el mismo inventario se registra dos veces (relanzar la misma
+    corrida)."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-lote")
+    repositorio.crear_corrida(corrida)
+    lote = _documentos("corrida-lote", 5)
+
+    primero = repositorio.registrar_documentos(lote, tamano_lote=1000)
+    segundo = repositorio.registrar_documentos(lote, tamano_lote=1000)
+
+    assert primero == 5
+    assert segundo == 0, "el mismo inventario registrado dos veces no debe duplicar filas"
+    assert len(repositorio.documentos_para_reanudar("corrida-lote")) == 5
