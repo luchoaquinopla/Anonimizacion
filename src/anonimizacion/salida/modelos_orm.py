@@ -141,7 +141,12 @@ class Estudio(Base):
     #: `trazabilidad-por-corrida`, Requisito 1). `NULL` para las filas
     #: preexistentes: no se sabe cuando se escribieron, y un relleno con la
     #: fecha de la migracion seria una mentira.
-    creado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: `default=_ahora_utc` (no `server_default`), calcado del docstring del
+    #: campo arriba y de `design.md` ("NULL = no se sabe cuándo, que es la
+    #: verdad; un `server_default` las dataría con el momento de la migración,
+    #: una mentira"): las filas escritas por Alembic/`create_all` sin este
+    #: default no llevan timestamp, las escritas por el pipeline desde acá sí.
+    creado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=True)
 
 
 class MedicionEcg(Base):
