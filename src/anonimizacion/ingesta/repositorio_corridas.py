@@ -127,6 +127,30 @@ class RepositorioCorridas:
             )
             return resultado.rowcount == 1
 
+    def actualizar_corrida(self, corrida: Corrida, *, version_esperada: int) -> bool:
+        """Persiste `corrida.estado`, mismo bloqueo optimista que `actualizar_documento`.
+
+        Sin esto, las transiciones `CREADA -> INVENTARIANDO -> PROCESANDO` que
+        `Corrida.avanzar_a` hace en memoria (`LanzadorCorrida`, design.md
+        "Recorrido") nunca llegan a `corrida.estado` -- la fila queda en
+        `creada` para siempre, y ese es un campo que después el embudo expone
+        tal cual (`ServicioCorridasReal`, design.md "El contrato JSON").
+        Persistir sólo estas tres transiciones -- nada de cierre en estados
+        terminales -- es justo lo que design.md pide: "el panel deriva la
+        marcha de la evidencia, no del estado" (Decisión 8); esto es
+        trazabilidad administrativa, no un sustituto de esa decisión.
+        """
+        with Session(self._motor) as sesion, sesion.begin():
+            resultado = sesion.execute(
+                update(CorridaOrm)
+                .where(
+                    CorridaOrm.id_corrida == corrida.id_corrida,
+                    CorridaOrm.version == version_esperada,
+                )
+                .values(estado=corrida.estado.value, version=corrida.version)
+            )
+            return resultado.rowcount == 1
+
     @staticmethod
     def _a_documento(fila: DocumentoCorridaOrm) -> DocumentoCorrida:
         return DocumentoCorrida(

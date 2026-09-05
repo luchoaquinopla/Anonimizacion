@@ -519,20 +519,28 @@ seguir con el Tramo 3.
 - [x] 9.12 REFACTOR: `pytest tests/web/` en verde; confirmar que no se tocó ninguna línea de la rama
       `/reintentar` salvo el manejo del 501.
 
-> **Hallazgo de apply, no arreglado en este tramo (fuera del enunciado literal de la Fase 9)**:
-> `ServicioCorridasReal.consultar_corrida`/`crear_corrida` leen `corrida.estado` para el campo
-> `"estado"` del contrato, pero `LanzadorCorrida.lanzar` (Fase 6, ya mergeada) avanza `Corrida` a
-> `INVENTARIANDO`/`PROCESANDO` **sólo en memoria** — nunca vuelve a persistir esa transición en
-> `CorridaOrm.estado` (ver el propio docstring de `LanzadorCorrida`: "ningún consumidor de este
-> tramo lee `corrida.estado` de vuelta"). `ServicioCorridasReal` es el primer consumidor real que sí
-> lo lee, así que hoy el campo `"estado"` del JSON siempre muestra `"creada"`, sin importar cuánto
-> avanzó la corrida. Verificado con test (`tests/web/test_servicio_corridas.py`,
-> `test_crear_corrida_delega_en_el_lanzador_real`) y documentado ahí mismo. No se resuelve acá:
-> agregar la persistencia de esa transición es tocar `LanzadorCorrida`/`RepositorioCorridas`, fuera
-> del alcance literal de la Fase 9 (que sólo pide leer el embudo, no actualizar el estado de
-> corrida), y hacerlo sin que ninguna tarea lo pida sería la misma clase de firma nueva sin
-> llamador real que este cambio evita en otros lados. Queda como pregunta abierta para un cambio
-> futuro.
+> **Hallazgo de apply, cerrado tras revisión del coordinador**: `ServicioCorridasReal` lee
+> `corrida.estado` para el campo `"estado"` del contrato, pero `LanzadorCorrida.lanzar` (Fase 6, ya
+> mergeada) avanzaba `Corrida` a `INVENTARIANDO`/`PROCESANDO` **sólo en memoria** — nunca persistía
+> esa transición en `CorridaOrm.estado`. Con `ServicioCorridasReal` como primer consumidor real de
+> ese campo, la fila quedaba en `"creada"` para siempre y el JSON del embudo mentía durante las ocho
+> horas de la corrida.
+>
+> **Se cerró, acotado a exactamente las tres transiciones que `design.md` (líneas 164-168) reconoce
+> como reales**: `RepositorioCorridas` gana `actualizar_corrida(corrida, *, version_esperada)`,
+> mismo patrón de bloqueo optimista que `actualizar_documento` — nada nuevo inventado.
+> `LanzadorCorrida.lanzar` la llama inmediatamente después de cada uno de sus dos `avanzar_a`
+> (`CREADA → INVENTARIANDO` y `INVENTARIANDO → PROCESANDO`); un conflicto de versión ahí es
+> corrupción real (es la única escritora de esa corrida en todo su recorrido), así que se propaga
+> como `RuntimeError` en vez de tragarse. **No se agregó ningún cierre en estados terminales**: eso
+> sigue expresamente fuera de alcance (`design.md`, "Fuera de alcance" y Decisión 8 — "el panel
+> deriva la marcha de la evidencia, no del estado"). Esta persistencia es sólo trazabilidad
+> administrativa de las tres transiciones que sí ocurren; no sustituye ni toca esa decisión.
+>
+> Verificado con tests: `tests/ingesta/test_repositorio_corridas.py::test_repositorio_actualiza_estado_de_corrida_solo_con_version_esperada`,
+> `tests/ingesta/test_lanzador_corrida.py::test_lanzar_persiste_las_transiciones_de_estado_de_la_corrida`,
+> `tests/web/test_servicio_corridas.py::test_crear_corrida_delega_en_el_lanzador_real` (actualizado)
+> y `test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada` (nuevo).
 >
 > **Decisión de diseño no explícita, tomada durante el apply**: `documentos_pendientes` en
 > `EstadoCorridaPortal` (el resumen agregado legado de `/corridas/{id}`, no el JSON completo del

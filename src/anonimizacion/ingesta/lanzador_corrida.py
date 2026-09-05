@@ -8,6 +8,17 @@ centinela de claves: `{id_documento, uri, sha256}`).
 
 Este módulo no importa `pipeline`: sigue la misma regla que `ingesta/fuente.py`
 (`SumideroCuarentena` propio, satisfecho por tipado estructural).
+
+Las transiciones `CREADA -> INVENTARIANDO -> PROCESANDO` SÍ se persisten
+(hallazgo post-Fase 9, `panel-de-operacion`): `Corrida.avanzar_a` las valida
+en memoria, pero sin escribirlas de vuelta con
+`RepositorioCorridas.actualizar_corrida` la fila de `corrida` queda en
+`creada` para siempre y el campo `estado` del JSON del embudo
+(`ServicioCorridasReal`) miente durante toda la corrida. No se persiste
+ningún cierre en estados terminales -- eso sigue fuera de alcance
+(design.md, "Fuera de alcance"): el panel deriva la marcha de la evidencia,
+no del estado (Decisión 8); esto es sólo trazabilidad administrativa de las
+tres transiciones que sí ocurren de verdad.
 """
 
 from __future__ import annotations
@@ -59,11 +70,13 @@ class LanzadorCorrida:
     `repositorio.crear_corrida` se llama ANTES de inventariar: `documento_corrida.corrida_id`
     es FK contra `corrida.id_corrida` (sin FK no hay dónde insertar el
     inventario). Las transiciones `INVENTARIANDO`/`PROCESANDO` se validan en
-    el objeto `Corrida` en memoria (fallan ruidoso si el orden fuera
-    inválido) pero no se vuelven a persistir: ningún consumidor de este
-    tramo lee `corrida.estado` de vuelta, y agregar un método de
-    actualización sin ese llamador sería la misma pieza huérfana que este
-    cambio evita en otros lados.
+    el objeto `Corrida` en memoria y se persisten con
+    `RepositorioCorridas.actualizar_corrida` inmediatamente después de cada
+    una -- mismo bloqueo optimista que ya usa `actualizar_documento`. `lanzar`
+    es la única escritora de esta corrida en todo su recorrido (nadie más
+    llama `avanzar_a` sobre ella), así que un conflicto de versión acá sería
+    una corrupción real, no una carrera esperable: se deja propagar el
+    `RuntimeError` en vez de tragarlo.
     """
 
     repositorio: RepositorioCorridas
@@ -75,7 +88,7 @@ class LanzadorCorrida:
         corrida_id = str(uuid4())
         corrida = Corrida.crear(corrida_id)
         self.repositorio.crear_corrida(corrida)
-        corrida.avanzar_a(EstadoCorrida.INVENTARIANDO)
+        self._avanzar_y_persistir(corrida, EstadoCorrida.INVENTARIANDO)
 
         sumidero = CuarentenaDeCorrida(interna=self.cuarentena, corrida_id=corrida_id)
         fuente = FuenteLocal(
@@ -96,10 +109,21 @@ class LanzadorCorrida:
         ]
         self.repositorio.registrar_documentos(documentos, tamano_lote=self.tamano_lote_inventario)
 
-        corrida.avanzar_a(EstadoCorrida.PROCESANDO)
+        self._avanzar_y_persistir(corrida, EstadoCorrida.PROCESANDO)
 
         referencias = tuple(
             {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
             for artefacto in artefactos
         )
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
+
+    def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:
+        version_antes = corrida.version
+        corrida.avanzar_a(destino)
+        if not self.repositorio.actualizar_corrida(corrida, version_esperada=version_antes):
+            raise RuntimeError(
+                f"actualizar_corrida rechazo la transicion a {destino.value} para "
+                f"{corrida.id_corrida}: la version persistida ya no era {version_antes}. "
+                "lanzar() es la unica escritora de esta corrida -- esto es una corrupcion "
+                "real, no una carrera esperable."
+            )
