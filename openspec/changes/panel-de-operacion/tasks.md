@@ -356,6 +356,61 @@ seguir con el Tramo 3.
 > corrió SOLO el ensayo de mil documentos (dos veces), NO el de diez mil — se evalúa aparte. Ver
 > `apply-progress` para los cuatro números crudos y la decisión de no interpretarlos acá.
 
+> **Addendum post-revisión fresca (Tramo 3), dos puntos: uno arreglado, uno documentado sin
+> arreglar.**
+>
+> 1. **Arreglado: `BitacoraSegura` se construía sin `motor_pii` en la fábrica de producción.**
+>    `construir_fabrica_ejecutor` ya recibe `motor: MotorPii` como parámetro, pero el default de
+>    `bitacora` (cuando no se inyecta explícitamente) era `BitacoraSegura()` a secas — sin pasarle
+>    ese motor. El propio docstring de `bitacora_segura.py` dice que sin `motor_pii` la capa 2 de
+>    redacción queda en **modo degradado** (solo regex de DNI), y que el composition-root de
+>    producción debería compartir una única instancia. Se verificó antes de tocar nada que
+>    compartir el motor entre el ejecutor y la bitácora es seguro: `MotorPii.detectar` no acumula
+>    estado entre llamadas (es una función pura sobre el texto de entrada contra un
+>    `AnalyzerEngine` ya cargado), y el mismo `motor` ya se comparte hoy entre todos los documentos
+>    de todos los grupos que procesa un worker (`EjecutorPipeline._emitir` lo inyecta en
+>    `construir_registro`/`redactar_texto`, ver `pii/redaccion.py`) — agregar la bitácora como un
+>    lector más no introduce ningún estado ni condición de carrera nueva. Se cableó
+>    `BitacoraSegura(motor_pii=motor)` como default de producción, y se agregó
+>    `test_la_fabrica_comparte_el_motor_pii_con_la_bitacora_de_produccion` en
+>    `tests/pipeline/test_observabilidad_cableada.py`, que falla si alguien vuelve a construir la
+>    bitácora sin motor en la fábrica.
+>
+>    **Costo medido, no ignorado**: `MotorPii.detectar()` sobre una cadena corta (un `id_documento`
+>    opaco, un valor de enum) tarda ~4,2 ms por llamada medido en esta máquina. La whitelist de
+>    `BitacoraSegura` (`CAMPOS_PERMITIDOS`) sólo deja pasar campos estructurados —
+>    `id_documento`/`tipo_documento` en un éxito, `id_documento`/`etapa`/`codigo` en un fallo —,
+>    ninguno de los cuales es texto libre con PII real; correrles NER es, en la práctica, trabajo
+>    sin beneficio de protección adicional sobre esos campos puntuales, pero es exactamente lo que
+>    la capa 2 hace por diseño ("por si terminara conteniendo texto libre con PII incrustada por
+>    error"). Con 2-3 llamadas de ~4,2 ms por documento, el costo estimado es de ~8-13 ms
+>    adicionales por documento — sobre un promedio medido de ~224 ms/documento en el ensayo de mil
+>    (Fase 7.9), esto es un **~4-6 % de overhead adicional estimado, no vuelto a medir en esta
+>    ronda** (el maintainer indicó explícitamente que no hacía falta correr el ensayo de nuevo). Se
+>    deja escrito para que la próxima corrida completa de mil o diez mil documentos lo confirme o
+>    lo descarte con datos reales, en vez de que aparezca como una sorpresa en el número total.
+>
+> 2. **Documentado, NO arreglado: `ColectorMetricas` no tiene consumidor en producción.**
+>    Verificado por lectura: `MetricasEnMemoria` se construye de nuevo dentro de cada llamada a
+>    `_fabrica()` (una por grupo/tarea Celery) y se descarta con el `EjecutorPipeline` al terminar
+>    esa tarea — no persiste entre grupos, no persiste entre documentos de grupos distintos.
+>    Ningún punto de producción llama a `snapshot()` ni a `resumen_operacional()`: el colector
+>    **registra y tira**. Esto es asimétrico respecto de `BitacoraSegura`, que sí produce una
+>    salida consumible (el logger de Python, que un operador puede leer). A diferencia del punto 1,
+>    esto **no se arregla en este cambio**: el embudo del panel (Fases 8-9, Tramo 4) se deriva de
+>    la base de datos (`estudio`/`cuarentena`/`documento_corrida`), no del colector de métricas en
+>    memoria de un worker — agregar un acumulador por proceso ahora sería construir para un
+>    consumidor que todavía no existe, exactamente el patrón de "subsistema huérfano" que este
+>    tramo vino a corregir para `observabilidad/`, no a repetir dentro de ella.
+>
+>    **Pregunta abierta, explícita, no un hallazgo para dentro de seis meses**: ¿`ColectorMetricas`
+>    necesita un patrón de agregación por proceso worker (ej. exponerlo vía un endpoint de
+>    métricas del propio worker, o volcar `resumen_operacional()` a la bitácora al cerrar la
+>    tarea), o directamente no hace falta porque todo lo que el panel necesita ya sale de la base
+>    de datos? No se resuelve acá. Si nadie lo consume nunca, la pregunta correcta en algún punto
+>    futuro es si `ColectorMetricas`/`MetricasEnMemoria` deberían eliminarse en vez de mantenerse
+>    cableados sin lector.
+
 ## Fase 8 (Tramo 4): `embudo_corrida.py` — modelo de lectura
 
 - [ ] 8.1 RED: en `tests/web/test_embudo_corrida.py` (nuevo), serie de timestamps sintética que
