@@ -3,8 +3,15 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
+
+from anonimizacion.dominio.corridas import Corrida
+from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
+from anonimizacion.salida.modelos_orm import Base, Estudio
 from anonimizacion.web.rutas_corridas import EstadoCorridaPortal, crear_aplicacion_corridas
 
 
@@ -85,3 +92,104 @@ def test_rutas_rechazan_pdf_secretos_y_rutas_no_autorizadas(tmp_path: Path) -> N
     assert (estado_secreto, respuesta_secreto) == ("400 Bad Request", {"codigo": "solicitud_no_admitida"})
     assert (estado_ruta, respuesta_ruta) == ("403 Forbidden", {"codigo": "ruta_no_autorizada"})
     assert servicio.solicitudes == []
+
+
+def _motor_con_corrida(corrida_id: str) -> sa.Engine:
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    repositorio = RepositorioCorridas(engine)
+    repositorio.crear_corrida(Corrida.crear(corrida_id))
+    return engine
+
+
+def test_el_embudo_de_una_corrida_responde_antes_que_la_rama_generica(tmp_path: Path) -> None:
+    """9.1/9.2/9.6/9.7: el orden de despacho, o el 404 asegurado.
+
+    `GET /corridas/{id}/embudo` es un GET que cae hoy en la rama genérica de
+    `GET /corridas/...`, donde `_consultar_corrida` rechaza cualquier
+    identificador con `/` -- así que sin la comprobación ANTES de esa rama,
+    esta prueba recibe 404 en vez de 200 con el embudo real.
+    """
+    corrida_id = "corrida-embudo-1"
+    engine = _motor_con_corrida(corrida_id)
+    with Session(engine) as sesion, sesion.begin():
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-embudo-1",
+                corrida_id=corrida_id,
+            )
+        )
+
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio, motor_lectura=engine)
+
+    estado, _encabezados, cuerpo = _solicitar(aplicacion, "GET", f"/corridas/{corrida_id}/embudo")
+
+    assert estado == "200 OK"
+    assert cuerpo["corrida_id"] == corrida_id
+    assert cuerpo["entraron"] == 0  # no se inventarió nada en este test, solo se publicó
+    assert cuerpo["publicados"] == 1
+    assert cuerpo["apartados"] == 0
+    assert cuerpo["cierra"] is False  # 1 publicado contra 0 inventariados: residuo -1
+    assert cuerpo["residuo"] == -1
+    assert set(cuerpo["estimacion"]) == {"situacion"}  # "midiendo": sin números que adivinar
+    assert [e["etapa"] for e in cuerpo["etapas"]] == [
+        "ingesta",
+        "extraccion",
+        "parseo",
+        "reconciliacion",
+        "coordinacion",
+        "pseudonimizacion",
+        "salida",
+    ]
+    # La ruta genérica NUNCA se llamó con este id -- si hubiera caído ahí,
+    # `_ServicioFake.consultar_corrida` habría quedado registrada.
+    assert servicio.solicitudes == []
+
+
+def test_post_reintentar_no_se_rompe_por_el_orden_de_despacho_nuevo(tmp_path: Path) -> None:
+    """9.3: no regresión explícita -- `/reintentar` sigue guardado por `metodo == 'POST'`."""
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio)
+
+    estado, _encabezados, respuesta = _solicitar(aplicacion, "POST", "/corridas/corrida-1/reintentar")
+
+    assert estado == "202 Accepted"
+    assert respuesta["estado"] == "inventariando"
+    assert servicio.solicitudes == [("reintentar", "corrida-1")]
+
+
+def test_embudo_sin_base_de_lectura_responde_no_disponibilidad(tmp_path: Path) -> None:
+    """9.10/9.11: el plano de control arranca sin motor y la ruta responde 503, no rompe."""
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio, motor_lectura=None)
+
+    estado, _encabezados, _cuerpo = _solicitar(aplicacion, "GET", "/corridas/corrida-1/embudo")
+
+    assert estado == "503 Service Unavailable"
+
+
+def test_reintentar_responde_501_cuando_el_servicio_no_lo_implementa(tmp_path: Path) -> None:
+    """9.8/9.9: `reintentar_corrida` real lanza `NotImplementedError` -- la ruta responde 501."""
+
+    @dataclass
+    class _ServicioSinReintento:
+        def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def reintentar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise NotImplementedError("reintentar_corrida: fuera de alcance de panel-de-operacion")
+
+    aplicacion = crear_aplicacion_corridas([tmp_path], _ServicioSinReintento())
+
+    estado, _encabezados, cuerpo = _solicitar(aplicacion, "POST", "/corridas/corrida-1/reintentar")
+
+    assert estado == "501 Not Implemented"
+    assert cuerpo == {"codigo": "reintento_no_implementado"}

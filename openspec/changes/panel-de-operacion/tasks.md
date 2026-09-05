@@ -487,37 +487,60 @@ seguir con el Tramo 3.
 
 ## Fase 9 (Tramo 4): `servicio_corridas.py`, rutas, orden de despacho (Punto 4, no diluir)
 
-- [ ] 9.1 RED — **el orden de las ramas de despacho**: en `tests/web/test_rutas_corridas.py`, un
+- [x] 9.1 RED — **el orden de las ramas de despacho**: en `tests/web/test_rutas_corridas.py`, un
       `GET /corridas/{id}/embudo` contra la aplicación WSGI **actual** falla con 404 porque cae en
       la rama genérica `GET /corridas/...` de `rutas_corridas.py:52`, donde `_consultar_corrida`
       rechaza cualquier identificador que contenga `/`. Este test se escribe y se confirma en rojo
       **antes** de tocar `rutas_corridas.py`.
-- [ ] 9.2 GREEN: insertar la comprobación de `GET /corridas/{id}/embudo` **antes** de la rama
+- [x] 9.2 GREEN: insertar la comprobación de `GET /corridas/{id}/embudo` **antes** de la rama
       genérica de la línea 52. **No tocar** la rama de `/reintentar` (línea 54): sigue guardada por
       `metodo == "POST"` y funciona correctamente hoy — reordenarla es riesgo sin beneficio y queda
       fuera de este cambio.
-- [ ] 9.3 RED: test de no regresión explícito — un `POST /corridas/{id}/reintentar` sigue llegando
+- [x] 9.3 RED: test de no regresión explícito — un `POST /corridas/{id}/reintentar` sigue llegando
       a su rama sin cambio de comportamiento tras 9.2.
-- [ ] 9.4 RED: test que confirma que `ServicioCorridas.crear_corrida(ruta)` delega en
+- [x] 9.4 RED: test que confirma que `ServicioCorridas.crear_corrida(ruta)` delega en
       `LanzadorCorrida` y devuelve un estado real — falla porque hoy es un doble.
-- [ ] 9.5 GREEN: crear `src/anonimizacion/web/servicio_corridas.py`: `crear_corrida` delega en
+- [x] 9.5 GREEN: crear `src/anonimizacion/web/servicio_corridas.py`: `crear_corrida` delega en
       `LanzadorCorrida`; `consultar_corrida` lee el embudo real vía `embudo_corrida.construir_embudo`
       y mapea `documentos_pendientes = sin_desenlace`, `cuarentenas = apartados`;
       `reintentar_corrida` lanza `NotImplementedError`.
-- [ ] 9.6 RED: test que confirma que `GET /corridas/{id}/embudo` responde el contrato JSON completo
+- [x] 9.6 RED: test que confirma que `GET /corridas/{id}/embudo` responde el contrato JSON completo
       (`corrida_id, estado, generado_en, entraron, publicados, apartados, residuo, cierra, marcha,
       etapas, throughput_por_hora, estimacion`) contra un motor real con datos sintéticos.
-- [ ] 9.7 GREEN: implementar la ruta, serializando `Embudo` al contrato exacto del diseño.
-- [ ] 9.8 RED: test que confirma que `POST /corridas/{id}/reintentar` responde 501 con
+- [x] 9.7 GREEN: implementar la ruta, serializando `Embudo` al contrato exacto del diseño.
+- [x] 9.8 RED: test que confirma que `POST /corridas/{id}/reintentar` responde 501 con
       `{"codigo": "reintento_no_implementado"}` — no un 202 falso.
-- [ ] 9.9 GREEN: capturar `NotImplementedError` en la ruta y responder 501 con ese cuerpo.
-- [ ] 9.10 RED — arranque sin base de lectura (spec `portal-de-corridas` delta): la aplicación WSGI
+- [x] 9.9 GREEN: capturar `NotImplementedError` en la ruta y responder 501 con ese cuerpo.
+- [x] 9.10 RED — arranque sin base de lectura (spec `portal-de-corridas` delta): la aplicación WSGI
       se construye con el motor de lectura en `None` y `GET /corridas/{id}/embudo` responde con no
       disponibilidad (503), sin que la construcción de la app falle.
-- [ ] 9.11 GREEN: aceptar `motor: Engine | None` en la raíz de composición web; las rutas que
+- [x] 9.11 GREEN: aceptar `motor: Engine | None` en la raíz de composición web; las rutas que
       dependen de él devuelven 503 con cuerpo explícito cuando es `None`.
-- [ ] 9.12 REFACTOR: `pytest tests/web/` en verde; confirmar que no se tocó ninguna línea de la rama
+- [x] 9.12 REFACTOR: `pytest tests/web/` en verde; confirmar que no se tocó ninguna línea de la rama
       `/reintentar` salvo el manejo del 501.
+
+> **Hallazgo de apply, no arreglado en este tramo (fuera del enunciado literal de la Fase 9)**:
+> `ServicioCorridasReal.consultar_corrida`/`crear_corrida` leen `corrida.estado` para el campo
+> `"estado"` del contrato, pero `LanzadorCorrida.lanzar` (Fase 6, ya mergeada) avanza `Corrida` a
+> `INVENTARIANDO`/`PROCESANDO` **sólo en memoria** — nunca vuelve a persistir esa transición en
+> `CorridaOrm.estado` (ver el propio docstring de `LanzadorCorrida`: "ningún consumidor de este
+> tramo lee `corrida.estado` de vuelta"). `ServicioCorridasReal` es el primer consumidor real que sí
+> lo lee, así que hoy el campo `"estado"` del JSON siempre muestra `"creada"`, sin importar cuánto
+> avanzó la corrida. Verificado con test (`tests/web/test_servicio_corridas.py`,
+> `test_crear_corrida_delega_en_el_lanzador_real`) y documentado ahí mismo. No se resuelve acá:
+> agregar la persistencia de esa transición es tocar `LanzadorCorrida`/`RepositorioCorridas`, fuera
+> del alcance literal de la Fase 9 (que sólo pide leer el embudo, no actualizar el estado de
+> corrida), y hacerlo sin que ninguna tarea lo pida sería la misma clase de firma nueva sin
+> llamador real que este cambio evita en otros lados. Queda como pregunta abierta para un cambio
+> futuro.
+>
+> **Decisión de diseño no explícita, tomada durante el apply**: `documentos_pendientes` en
+> `EstadoCorridaPortal` (el resumen agregado legado de `/corridas/{id}`, no el JSON completo del
+> embudo) se mapea directo a `embudo.residuo` **con signo**, igual que el contrato nuevo — no se
+> agregó ningún `max(0, …)` para ese campo tampoco, aunque `design.md` sólo fija explícitamente "sin
+> clamping" para el contrato del embudo. Se resolvió a favor de la misma invariante en los dos
+> lugares: un descuadre real tiene que verse en el resumen agregado igual que en el JSON completo,
+> nunca disimulado en un campo que además queda expuesto en una ruta más vieja.
 
 ## Fase 10 (Tramo 5): pantalla y punto de entrada
 
