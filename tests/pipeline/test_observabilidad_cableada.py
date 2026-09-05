@@ -196,6 +196,29 @@ def test_sin_inyeccion_explicita_igual_hay_colector(tmp_path, motor: MotorPii) -
     assert isinstance(ejecutor._bitacora, BitacoraSegura)
 
 
+def test_la_fabrica_comparte_el_motor_pii_con_la_bitacora_de_produccion(tmp_path, motor: MotorPii) -> None:
+    """Addendum post-revisión fresca: `BitacoraSegura()` sin `motor_pii` deja su
+    capa 2 de redacción en modo degradado (solo regex de DNI) -- ver docstring
+    de `observabilidad/bitacora_segura.py`. El `motor` ya está disponible como
+    parámetro de `construir_fabrica_ejecutor` (el mismo que usa el ejecutor
+    para el resto del pipeline): la fábrica de producción no debe construir
+    una `BitacoraSegura` a medio armar cuando el dato para armarla completa ya
+    está en la mano."""
+    engine = _engine_con_esquema()
+    fabrica = tareas.construir_fabrica_ejecutor(
+        raices=(tmp_path,),
+        resolutor=ResolutorClaves(),
+        motor=motor,
+        pepper=PEPPER,
+        destino=EscritorPostgres(engine),
+        cuarentena=EscritorCuarentena(engine),
+    )
+
+    ejecutor = fabrica()
+
+    assert ejecutor._bitacora._motor_pii is motor
+
+
 def test_un_colector_que_explota_no_tumba_el_grupo(tmp_path, motor: MotorPii) -> None:
     """7.5: invariante 3 de la propuesta -- la observabilidad es accesoria."""
     artefactos = _grupo_completo(tmp_path, "resiliente")

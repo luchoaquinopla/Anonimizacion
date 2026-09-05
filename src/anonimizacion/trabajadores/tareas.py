@@ -134,7 +134,15 @@ def construir_fabrica_ejecutor(
             # semántica es correcta para sus tests unitarios pero NO para esta
             # raíz de composición real.
             metricas=metricas if metricas is not None else MetricasEnMemoria(),
-            bitacora=bitacora if bitacora is not None else BitacoraSegura(),
+            # `motor_pii=motor` (revisión fresca post-Tramo 3): sin esto, la
+            # capa 2 de redacción de `BitacoraSegura` queda en modo degradado
+            # (solo regex de DNI, ver docstring de `bitacora_segura.py`). El
+            # `motor` ya está cargado y es el MISMO que usa el resto del
+            # pipeline (`EjecutorPipeline._emitir` lo inyecta en
+            # `construir_registro`/`redactar_texto` -- ver `pii/redaccion.py`):
+            # compartirlo acá no agrega estado nuevo, `MotorPii.detectar` no
+            # acumula nada entre llamadas.
+            bitacora=bitacora if bitacora is not None else BitacoraSegura(motor_pii=motor),
         )
 
     return _fabrica
