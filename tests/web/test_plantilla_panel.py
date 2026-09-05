@@ -38,6 +38,8 @@ def _payload(**over: Any) -> dict[str, Any]:
             {"etapa": "pseudonimizacion", "llegaron": 93, "apartados": 0, "codigos": {}},
             {"etapa": "salida", "llegaron": 93, "apartados": 23, "codigos": {"error_transitorio_agotado": 23}},
         ],
+        # Las traducciones de estos tres códigos se verifican explícitamente
+        # en `test_los_motivos_del_embudo_se_traducen_a_texto_llano`.
         "throughput_por_hora": {"optimista": 500.0, "pesimista": 420.5},
         "estimacion": {"situacion": "disponible", "restante_seg_min": 1200, "restante_seg_max": 1800},
     }
@@ -76,6 +78,78 @@ def test_un_corrida_id_con_cierre_de_script_no_rompe_el_script_real() -> None:
     assert "<\\/script>" in pagina
     # Sigue habiendo exactamente un `<script>` real de refresco.
     assert pagina.count("<script>\n(function () {") == 1
+
+
+def test_un_corrida_id_con_comentario_html_no_rompe_el_script_real() -> None:
+    """Segundo hallazgo de seguridad sobre el mismo escape: `</` no alcanza.
+    Dentro de un elemento `<script>`, `<!--` sin su `-->` de cierre pone al
+    tokenizador de HTML5 en el estado "script data escaped", y el
+    `</script>` REAL de esta plantilla deja de interpretarse como cierre --
+    el resto del documento pasa a tratarse como texto de script.
+    """
+    pagina = renderizar_panel(_payload(corrida_id="<!--<script>alert(1)</script>"))
+
+    assert "<!--<script>alert(1)</script>" not in pagina
+    assert "<\\!--" in pagina
+    # El </script> real de refresco sigue siendo el cierre de la página.
+    assert pagina.rstrip().endswith("</html>")
+
+
+def test_el_estado_de_la_corrida_se_traduce_a_texto_llano() -> None:
+    """No jerga interna en la primera línea que lee el operador."""
+    pagina = renderizar_panel(_payload(estado="completada_con_cuarentena"))
+
+    assert "Completada, con cuarentena" in pagina
+    assert ">completada_con_cuarentena<" not in pagina
+
+
+def test_un_estado_de_corrida_desconocido_se_muestra_crudo_como_ultimo_recurso() -> None:
+    """Perder el dato es peor que mostrarlo feo (mismo criterio que
+    `AccionRequerida.SIN_CLASIFICAR` en `reporte_cuarentena.py`)."""
+    pagina = renderizar_panel(_payload(estado="un-estado-que-no-existe-todavia"))
+
+    assert "un-estado-que-no-existe-todavia" in pagina
+
+
+def test_los_motivos_del_embudo_se_traducen_a_texto_llano_y_reusan_la_tabla_de_cuarentena() -> None:
+    """La columna "Motivos" no puede mostrar el código crudo cuando existe
+    traducción: `reporte_cuarentena.py` ya la tiene escrita, y esta pantalla
+    reusa la MISMA tabla (`codigos_cuarentena.EXPLICACION_POR_CODIGO`), no
+    una copia.
+    """
+    from anonimizacion.web.codigos_cuarentena import EXPLICACION_POR_CODIGO
+    from anonimizacion.web.reporte_cuarentena import _EXPLICACION_POR_CODIGO as tabla_del_reporte
+
+    assert EXPLICACION_POR_CODIGO is tabla_del_reporte  # misma tabla, no una copia
+
+    pagina = renderizar_panel(_payload())
+    cuerpo, _, _script = pagina.partition("<script>")
+
+    assert EXPLICACION_POR_CODIGO["episodio_incompleto"] in cuerpo
+    assert EXPLICACION_POR_CODIGO["error_transitorio_agotado"] in cuerpo
+    assert EXPLICACION_POR_CODIGO["artefacto_sobretamano"] in cuerpo
+    # El código crudo NO aparece en el cuerpo visible -- sí puede aparecer
+    # dentro del `<script>`, que embebe la tabla completa para que el
+    # refresco también traduzca (ver `etiquetasCodigo` en `_script_polling`).
+    assert "episodio_incompleto" not in cuerpo
+    assert "error_transitorio_agotado" not in cuerpo
+
+
+def test_un_codigo_de_motivo_sin_traduccion_se_muestra_crudo_como_ultimo_recurso() -> None:
+    pagina = renderizar_panel(
+        _payload(
+            etapas=[
+                {
+                    "etapa": "salida",
+                    "llegaron": 10,
+                    "apartados": 1,
+                    "codigos": {"codigo-que-todavia-no-esta-en-la-tabla": 1},
+                }
+            ]
+        )
+    )
+
+    assert "codigo-que-todavia-no-esta-en-la-tabla" in pagina
 
 
 def test_un_codigo_de_cuarentena_con_marcado_llega_escapado() -> None:

@@ -25,11 +25,22 @@ pantalla es útil antes de que corra un solo `fetch`, y sigue siendo legible
 si el JavaScript está deshabilitado.
 
 Se rotula por lo que la persona necesita entender, no por el nombre de la
-variable (mismo criterio que `reporte_cuarentena.py` aplicó a los códigos de
-cuarentena): `residuo` es el nombre del campo en el JSON -- lo consumen
-programas --, pero en pantalla se llama "En proceso", con una nota que
-explica qué significa. Lo mismo para "Apartados": lleva una nota que dice
-que requieren revisión y linkea al reporte de cuarentena.
+variable ni por el código interno (mismo criterio que `reporte_cuarentena.py`
+aplicó a los códigos de cuarentena, aplicado ACÁ TAMBIÉN, no sólo declarado):
+`residuo` es el nombre del campo en el JSON -- lo consumen programas --, pero
+en pantalla se llama "En proceso", con una nota que explica qué significa.
+Lo mismo para "Apartados": lleva una nota que dice que requieren revisión y
+linkea al reporte de cuarentena. El estado de la corrida (`procesando`,
+`completada_con_cuarentena`, ...) se traduce con `_ETIQUETA_ESTADO`, y los
+códigos de la columna "Motivos" del embudo reusan -- **no copian** --
+`codigos_cuarentena.EXPLICACION_POR_CODIGO`, la misma tabla que
+`reporte_cuarentena.py` ya usa para su detalle por documento: dos tablas
+iguales en dos módulos se desincronizan sin falta, y ahí tendríamos dos
+pantallas diciendo cosas distintas del mismo código de error. Un código o un
+estado sin traducción no se descarta ni rompe nada: se muestra crudo como
+último recurso (misma decisión que `reporte_cuarentena.py` tomó con
+`AccionRequerida.SIN_CLASIFICAR`) -- perder el dato es peor que mostrarlo
+feo.
 
 Un residuo negativo (design.md, Decisión 9) nunca se muestra como un cero:
 se dibuja como su propia ficha de descuadre, con símbolo, etiqueta y
@@ -50,6 +61,8 @@ import json
 from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any
+
+from .codigos_cuarentena import EXPLICACION_POR_CODIGO
 
 _ETIQUETA_ETAPA: dict[str, str] = {
     "ingesta": "Ingesta",
@@ -77,6 +90,47 @@ _PRESENTACION_MARCHA: dict[str, tuple[str, str, str]] = {
     "sin_avance": (_COLOR_ADVERTENCIA, "▲", "Sin avance"),
     "descuadre": (_COLOR_CRITICO, "■", "Descuadre"),
 }
+
+#: `dominio.estados_corrida.EstadoCorrida` (más "desconocida", el fallback de
+#: `ServicioCorridasReal` cuando la corrida no tiene fila) traducido a texto
+#: llano -- el mismo criterio que la columna "Motivos": nada de snake_case
+#: crudo en la primera línea que lee el operador.
+_ETIQUETA_ESTADO: dict[str, str] = {
+    "creada": "Creada",
+    "inventariando": "Inventariando",
+    "procesando": "Procesando",
+    "reconciliando": "Reconciliando",
+    "publicando": "Publicando",
+    "completada": "Completada",
+    "completada_con_cuarentena": "Completada, con cuarentena",
+    "fallida": "Fallida",
+    "desconocida": "Desconocida",
+}
+
+
+def _etiqueta_estado(estado: str) -> str:
+    """Un estado sin traducción no se descarta: se muestra crudo (escapado)
+    como último recurso -- perder el dato es peor que mostrarlo feo."""
+    return _ETIQUETA_ESTADO.get(estado, estado)
+
+
+def _etiqueta_codigo(codigo: str) -> str:
+    """Reusa `codigos_cuarentena.EXPLICACION_POR_CODIGO` -- no la copia (ver
+    el docstring del módulo). Un código sin traducción se muestra crudo."""
+    return EXPLICACION_POR_CODIGO.get(codigo, codigo)
+
+
+def _texto_motivos(codigos: Mapping[str, int]) -> str:
+    """"{cantidad} — {texto llano}" por código, nunca el código crudo salvo
+    que no haya traducción (ver `_etiqueta_codigo`). El texto humano final
+    se escapa en el llamador junto con el resto de la celda -- acá se arma
+    sin marcado propio para que el mismo string sirva tanto para el primer
+    pintado (celda de tabla) como para el refresco (`element.textContent`,
+    sin `innerHTML`)."""
+    if not codigos:
+        return "—"
+    return "; ".join(f"{cantidad} — {_etiqueta_codigo(str(codigo))}" for codigo, cantidad in codigos.items())
+
 
 _EXPLICACION_DESCUADRE = (
     "hay documentos con más de un desenlace registrado: un reprocesamiento "
@@ -144,6 +198,7 @@ table { border-collapse: collapse; width: 100%; min-width: 640px; background: va
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--linea); vertical-align: middle; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tinta-tenue); font-weight: 600; }
 td.numero { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.motivos { font-size: 13px; color: var(--tinta-secundaria); }
 .barra-envoltorio { background: var(--barra-fondo); border-radius: 4px; height: 8px; width: 160px; overflow: hidden; }
 .barra { background: var(--tinta-tenue); height: 100%; }
 .estimacion { color: var(--tinta-secundaria); }
@@ -260,13 +315,13 @@ def _fila_etapa(etapa: Mapping[str, Any], max_apartados: int) -> str:
     apartados = int(etapa["apartados"])
     porcentaje = 0.0 if max_apartados <= 0 else min(100.0, (apartados / max_apartados) * 100)
     codigos = etapa.get("codigos") or {}
-    detalle_codigos = ", ".join(f"{escape(str(codigo))}: {cantidad}" for codigo, cantidad in codigos.items())
+    detalle_codigos = escape(_texto_motivos(codigos))
     return f"""
         <tr>
           <td>{escape(etiqueta)}</td>
           <td class="numero" id="etapa-{escape(nombre)}-llegaron">{llegaron}</td>
           <td class="numero" id="etapa-{escape(nombre)}-apartados">{apartados}</td>
-          <td>{detalle_codigos or "—"}</td>
+          <td class="motivos" id="etapa-{escape(nombre)}-motivos">{detalle_codigos}</td>
           <td>
             <div class="barra-envoltorio">
               <div class="barra" id="etapa-{escape(nombre)}-barra" style="width: {porcentaje:.1f}%"></div>
@@ -276,23 +331,41 @@ def _fila_etapa(etapa: Mapping[str, Any], max_apartados: int) -> str:
 
 
 def _json_para_script(valor: object) -> str:
-    """`json.dumps` + escapar `</` como `<\\/`.
+    """`json.dumps` + escapar las secuencias que rompen el contexto HTML
+    `<script>...</script>` (NO el contexto de un literal de JavaScript, que
+    `json.dumps` ya cubre bien: comillas, barras invertidas, unicode).
 
-    `json.dumps` es correcto para el contexto de un LITERAL de JavaScript
-    (comillas, barras invertidas, unicode), pero el contexto real acá es un
-    elemento HTML `<script>...</script>`, y `json.dumps` no sabe nada de
-    ese contexto: no escapa la secuencia `</`. Un valor que contuviera
-    `</script>` cerraría la etiqueta real en medio del literal, y el resto
-    del `<script>` legítimo quedaría afuera, interpretado como HTML plano.
+    Lo que SÍ cubre este escape, y por qué hace falta cada uno:
+
+    - `</` -> `<\\/`: un valor con `</script>` cerraría la etiqueta real en
+      medio del literal, y el resto del `<script>` legítimo quedaría
+      interpretado como HTML plano.
+    - `<!--` -> lo mismo escapado: dentro de un elemento `<script>`, el
+      tokenizador de HTML5 entra en el estado "script data escaped" al ver
+      `<!--`. Si no aparece un `-->` de cierre, el `</script>` REAL de esta
+      plantilla deja de interpretarse como cierre de etiqueta -- el resto
+      del documento se trata como texto de script. Se escapa también `-->`
+      por simetría, aunque sin el `<!--` de apertura no alcanza sola para
+      producir el problema.
+
+    Lo que este escape NO pretende cubrir, porque no rompe el contexto
+    `<script>` (aunque suene parecido): `<script` sin cierre, o `]]>`
+    (relevante para XML/CDATA, no para HTML). Ninguno de los dos altera
+    cómo el tokenizador de HTML5 interpreta el resto del documento.
 
     Hoy `corrida_id` siempre es un `uuid4()` (`LanzadorCorrida.lanzar`) y la
     ruta rechaza cualquier identificador con `/` antes de llegar al render
-    (`rutas_corridas._panel_corrida`), así que esta secuencia nunca aparece
-    en la práctica -- pero esa es una protección INCIDENTAL de otro módulo,
-    no defensa propia de esta plantilla. Si el día de mañana se reusa esta
-    función desde una ruta sin ese filtro, la plantilla se defiende sola.
+    (`rutas_corridas._panel_corrida`), así que ninguna de estas secuencias
+    aparece en la práctica -- pero esa es una protección INCIDENTAL de otro
+    módulo, no defensa propia de esta plantilla. Si el día de mañana se
+    reusa esta función desde una ruta sin ese filtro, la plantilla se
+    defiende sola.
     """
-    return json.dumps(valor).replace("</", "<\\/")
+    texto = json.dumps(valor)
+    texto = texto.replace("</", "<\\/")
+    texto = texto.replace("<!--", "<\\!--")
+    texto = texto.replace("-->", "--\\>")
+    return texto
 
 
 def _script_polling(corrida_id: str) -> str:
@@ -312,11 +385,15 @@ def _script_polling(corrida_id: str) -> str:
     """
     corrida_id_js = _json_para_script(corrida_id)
     explicacion_js = _json_para_script(_EXPLICACION_DESCUADRE)
+    etiquetas_estado_js = _json_para_script(_ETIQUETA_ESTADO)
+    etiquetas_codigo_js = _json_para_script(EXPLICACION_POR_CODIGO)
     return f"""
 <script>
 (function () {{
   var corridaId = {corrida_id_js};
   var explicacionDescuadre = {explicacion_js};
+  var etiquetasEstado = {etiquetas_estado_js};
+  var etiquetasCodigo = {etiquetas_codigo_js};
   var ultimaActualizacionMs = Date.now();
 
   function establecer(id, valor) {{
@@ -324,6 +401,12 @@ def _script_polling(corrida_id: str) -> str:
     if (elemento) {{
       elemento.textContent = valor;
     }}
+  }}
+
+  // Mismo criterio que el primer pintado (Python): un estado o un código
+  // sin traducción se muestra crudo, nunca se descarta.
+  function traducir(diccionario, clave) {{
+    return Object.prototype.hasOwnProperty.call(diccionario, clave) ? diccionario[clave] : clave;
   }}
 
   function actualizarLeyenda() {{
@@ -335,7 +418,7 @@ def _script_polling(corrida_id: str) -> str:
     establecer("valor-entraron", datos.entraron);
     establecer("valor-publicados", datos.publicados);
     establecer("valor-apartados", datos.apartados);
-    establecer("valor-estado", datos.estado);
+    establecer("valor-estado", traducir(etiquetasEstado, datos.estado));
     establecer("valor-marcha", datos.marcha);
 
     // "En proceso" y "Descuadre" son mutuamente excluyentes según `cierra`
@@ -370,6 +453,15 @@ def _script_polling(corrida_id: str) -> str:
     (datos.etapas || []).forEach(function (etapa) {{
       establecer("etapa-" + etapa.etapa + "-llegaron", etapa.llegaron);
       establecer("etapa-" + etapa.etapa + "-apartados", etapa.apartados);
+
+      // Mismo criterio que el primer pintado (Python, `_texto_motivos`):
+      // texto llano por código, código crudo sólo si no hay traducción.
+      var codigos = etapa.codigos || {{}};
+      var partes = Object.keys(codigos).map(function (codigo) {{
+        return codigos[codigo] + " — " + traducir(etiquetasCodigo, codigo);
+      }});
+      establecer("etapa-" + etapa.etapa + "-motivos", partes.length ? partes.join("; ") : "—");
+
       var barra = document.getElementById("etapa-" + etapa.etapa + "-barra");
       if (barra) {{
         var porcentaje = maxApartados > 0 ? Math.min(100, (etapa.apartados / maxApartados) * 100) : 0;
@@ -507,7 +599,7 @@ def renderizar_panel(payload: Mapping[str, Any]) -> str:
   <h1>Panel de operación</h1>
   <p class="subtitulo">
     Corrida <span id="valor-corrida-id">{escape(corrida_id)}</span> --
-    estado <span id="valor-estado">{escape(str(payload["estado"]))}</span>
+    estado <span id="valor-estado">{escape(_etiqueta_estado(str(payload["estado"])))}</span>
   </p>
   {cuerpo}
 </main>
