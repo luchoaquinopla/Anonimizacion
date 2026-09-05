@@ -711,3 +711,36 @@ def test_item_lote_no_gano_ningun_campo_nuevo() -> None:
     exactamente `{id_documento, artefacto}`, sin campo nuevo."""
     campos = {campo.name for campo in ItemLote.__dataclass_fields__.values()}
     assert campos == {"id_documento", "artefacto"}
+
+
+# --- motivos de episodio distinguibles de los de campo ----------------------
+
+
+def test_los_motivos_de_episodio_tienen_codigo_propio() -> None:
+    """"Falta el eco de este paciente" y "no pude verificar el potasio" son
+    problemas operativos distintos y hasta ahora compartian codigo.
+
+    La distincion no debe depender de una convencion implicita (que `campo`
+    quede vacio): cualquier productor futuro que la rompa la arruinaria en
+    silencio.
+    """
+    from anonimizacion.dominio.errores import CodigoErrorDocumento
+    from anonimizacion.pipeline.ejecutor import _CODIGO_CUARENTENA_POR_MOTIVO
+    from anonimizacion.pipeline.coordinador_episodios import MotivoCuarentenaEpisodio
+
+    assert _CODIGO_CUARENTENA_POR_MOTIVO == {
+        MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.EPISODIO_AMBIGUO,
+        MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.EPISODIO_INCOMPLETO,
+    }
+    # Los codigos de cobertura quedan exclusivos del nivel campo.
+    assert CodigoErrorDocumento.EPISODIO_AMBIGUO is not CodigoErrorDocumento.COBERTURA_AMBIGUA
+    assert CodigoErrorDocumento.EPISODIO_INCOMPLETO is not CodigoErrorDocumento.COBERTURA_INCOMPLETA
+
+
+def test_la_coordinacion_es_una_etapa_propia() -> None:
+    """Antes usaba `reconciliacion`, el mismo string que el nivel campo."""
+    from anonimizacion.pipeline.etapas import Etapa
+
+    assert Etapa.COORDINACION.value == "coordinacion"
+    assert Etapa.COORDINACION.value != Etapa.RECONCILIACION.value
+

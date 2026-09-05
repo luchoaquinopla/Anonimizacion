@@ -24,13 +24,14 @@ dependencias por default silenciosamente.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria, RegistroDeHuellas
 from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import DestinoCuarentena, DestinoEscritura, EjecutorPipeline, ItemLote
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
 from anonimizacion.trabajadores.app import aplicar_configuracion_cola, app
@@ -100,20 +101,49 @@ def construir_fabrica_ejecutor(
             destino=destino,
             cuarentena=cuarentena,
             fuente=fuente,
+            # La validacion de completitud de episodio vive ACA, no en el default
+            # del ejecutor: "un lote no es necesariamente un episodio" es una verdad
+            # del nucleo, "en produccion el lote ES un grupo de paciente" es politica
+            # de despliegue. Sin esta inyeccion, un grupo al que le falta un estudio
+            # se publica sin aviso -- ver
+            # `tests/pipeline/test_modo_sin_validacion_de_episodio.py`.
+            coordinar_episodios=coordinar_episodios,
         )
 
     return _fabrica
 
 
-@app.task(name="anonimizacion.procesar_documento")
-def procesar_documento(id_documento: str, uri: str, sha256: str) -> dict[str, object]:
-    """Procesa un documento a partir de su referencia de cola (nunca su contenido)."""
-    artefacto = ArtefactoCrudo(uri=uri, sha256=sha256, formato=FormatoArtefacto.PDF)
-    item = ItemLote(id_documento=id_documento, artefacto=artefacto)
+@app.task(name="anonimizacion.procesar_grupo")
+def procesar_grupo(referencias: Sequence[Mapping[str, str]]) -> list[dict[str, object]]:
+    """Procesa como un solo lote los documentos de un grupo (un paciente, un episodio).
+
+    La unidad de trabajo es el grupo y no el documento porque la validacion de
+    episodio necesita ver juntos todos los estudios del paciente: un lote de un
+    solo documento nunca contiene los tres tipos requeridos y terminaria mandando
+    el 100 % a cuarentena.
+
+    El mensaje transporta SOLO referencias -- `{id_documento, uri, sha256}` por
+    documento, nunca contenido ni PII. Se transporta la lista y no la ruta del
+    directorio a proposito: si el trabajador enumerara la carpeta, el `sha256` se
+    calcularia ahi y la identidad del trabajo dejaria de estar en el mensaje, de
+    modo que un reintento sobre una carpeta que cambio procesaria otro grupo.
+    """
+    items = [
+        ItemLote(
+            id_documento=referencia["id_documento"],
+            artefacto=ArtefactoCrudo(
+                uri=referencia["uri"],
+                sha256=referencia["sha256"],
+                formato=FormatoArtefacto.PDF,
+            ),
+        )
+        for referencia in referencias
+    ]
+    if not items:
+        raise ValueError("un grupo requiere al menos un documento")
 
     ejecutor = _obtener_ejecutor()
-    (resultado,) = ejecutor.procesar_lote([item])
-    return resultado.resumen_trazable()
+    return [resultado.resumen_trazable() for resultado in ejecutor.procesar_lote(items)]
 
 FabricaExtractor = Callable[[], object]
 

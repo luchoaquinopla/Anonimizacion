@@ -34,7 +34,7 @@ def test_plan_carga_tiene_exactamente_mil_pdfs_con_mezcla_controlada() -> None:
 
 
 def test_runner_mide_pipeline_real_y_deduplicacion(tmp_path) -> None:
-    oraculo = OraculoCarga(6, 6, 5, 1, 1, 3, {"cobertura_incompleta": 2}, 0, 0)
+    oraculo = OraculoCarga(6, 6, 5, 1, 1, 3, {"episodio_incompleto": 2}, 0, 0)
     resultado = ejecutar_carga(
         tmp_path,
         semilla=20260823,
@@ -105,8 +105,8 @@ def test_cli_es_reejecutable_y_agrega_reportes_sin_contaminar_corridas(tmp_path)
 def test_oraculo_1k_declara_estados_y_codigos_completos() -> None:
     assert ORACULO_CARGA_1000.documentos_aprobados == 972
     assert ORACULO_CARGA_1000.cuarentena_por_codigo == {
-        "cobertura_ambigua": 8,
-        "cobertura_incompleta": 17,
+        "episodio_ambiguo": 8,
+        "episodio_incompleto": 17,
         "parseo_incompleto": 1,
     }
 
@@ -141,7 +141,7 @@ def test_perfil_10k_escala_la_mezcla_y_el_oraculo_sin_duplicar_logica() -> None:
         20,
         3_240,
         9_720,
-        {"cobertura_ambigua": 80, "cobertura_incompleta": 170, "parseo_incompleto": 10},
+        {"episodio_ambiguo": 80, "episodio_incompleto": 170, "parseo_incompleto": 10},
         0,
         0,
     )

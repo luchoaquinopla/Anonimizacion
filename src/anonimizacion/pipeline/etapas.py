@@ -28,6 +28,10 @@ class Etapa(str, Enum):
     DETECCION = "deteccion"
     PARSEO = "parseo"
     RECONCILIACION = "reconciliacion"
+    # Nivel episodio, no documento: valida que el grupo recibido forme un
+    # episodio completo y no ambiguo. Etapa propia para que un fallo de grupo no
+    # se confunda con uno de campo, que usaba el mismo string.
+    COORDINACION = "coordinacion"
     DETECCION_PII = "deteccion_pii"
     PSEUDONIMIZACION = "pseudonimizacion"
     SALIDA = "salida"

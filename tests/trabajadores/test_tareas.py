@@ -1,10 +1,11 @@
 """Tests de `trabajadores/tareas.py` (tasks.md 9.2).
 
 Requisito crítico (spec `batch-processing` + design.md "Sin PII en cola"):
-el mensaje de cola transporta SOLO `{id_documento, uri, sha256}`. La firma de
-`procesar_documento(id_documento, uri, sha256)` es la prueba por
-construcción -- no hay ningún parámetro por el que pueda colarse contenido o
-PII. `CELERY_TASK_ALWAYS_EAGER=1` evita necesitar un broker Redis real (ver
+el mensaje de cola transporta SOLO referencias `{id_documento, uri, sha256}`,
+una por documento del grupo. La unidad de trabajo es el GRUPO y no el documento
+(spec `procesamiento-por-grupo`): la validación de episodio necesita ver juntos
+todos los estudios del paciente, y un lote de uno nunca contiene los tres tipos
+requeridos. `CELERY_TASK_ALWAYS_EAGER=1` evita necesitar un broker Redis real (ver
 `trabajadores/app.py`).
 """
 
@@ -28,18 +29,21 @@ class _EjecutorFake:
         self.lotes_procesados: list[list[ItemLote]] = []
 
     def procesar_lote(self, items):
+        # Un resultado por documento: el lote ya no es de tamano uno.
         self.lotes_procesados.append(list(items))
-        (item,) = items
-        return (
+        from datetime import datetime, timezone
+
+        from anonimizacion.dominio.tipos_documento import TipoDocumento
+
+        return tuple(
             ExitoDocumento(
                 id_documento=item.id_documento,
-                tipo_documento=__import__(
-                    "anonimizacion.dominio.tipos_documento", fromlist=["TipoDocumento"]
-                ).TipoDocumento.LABORATORIO,
+                tipo_documento=TipoDocumento.LABORATORIO,
                 id_paciente="pac-fake",
                 id_episodio="ep-fake",
-                timestamp=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-            ),
+                timestamp=datetime.now(timezone.utc),
+            )
+            for item in items
         )
 
 
@@ -50,48 +54,75 @@ def _resetear_ejecutor():
     tareas._fabrica_ejecutor = None
 
 
-def test_procesar_documento_sin_configurar_ejecutor_falla_explicito() -> None:
+def _referencia(id_documento: str, sha256: str) -> dict[str, str]:
+    return {
+        "id_documento": id_documento,
+        "uri": f"s3://bucket/{id_documento}.pdf",
+        "sha256": sha256,
+    }
+
+
+def test_procesar_grupo_sin_configurar_ejecutor_falla_explicito() -> None:
     with pytest.raises(RuntimeError):
-        tareas.procesar_documento("doc-1", "s3://bucket/doc-1.pdf", "a" * 64)
+        tareas.procesar_grupo([_referencia("doc-1", "a" * 64)])
 
 
-def test_procesar_documento_solo_recibe_id_uri_sha256() -> None:
-    # Firma de la tarea: exactamente 3 parámetros. Pasar contenido o PII no
-    # tiene por dónde colarse -- si algún día alguien agrega un parámetro
-    # nuevo, este assert de firma explota primero.
+def test_procesar_grupo_solo_recibe_referencias() -> None:
+    """Prueba por construcción de que no hay por dónde colar contenido ni PII."""
     import inspect
 
-    parametros = list(inspect.signature(tareas.procesar_documento.run).parameters)
-    assert parametros == ["id_documento", "uri", "sha256"]
+    parametros = list(inspect.signature(tareas.procesar_grupo.run).parameters)
+    assert parametros == ["referencias"]
 
 
-def test_procesar_documento_delega_al_ejecutor_configurado() -> None:
+def test_las_referencias_solo_llevan_id_uri_y_sha256() -> None:
     fake = _EjecutorFake()
     tareas.configurar_ejecutor(lambda: fake)
 
-    resultado = tareas.procesar_documento("doc-1", "s3://bucket/doc-1.pdf", "a" * 64)
+    tareas.procesar_grupo([_referencia("doc-1", "a" * 64)])
 
-    assert len(fake.lotes_procesados) == 1
     (item,) = fake.lotes_procesados[0]
     assert item.id_documento == "doc-1"
     assert item.artefacto.uri == "s3://bucket/doc-1.pdf"
     assert item.artefacto.sha256 == "a" * 64
 
-    assert resultado == {
-        "id_documento": "doc-1",
-        "tipo_documento": "laboratorio",
-        "estado": "exito",
-        "timestamp": resultado["timestamp"],
-    }
 
+def test_procesar_grupo_manda_todos_los_documentos_en_un_solo_lote() -> None:
+    """Lo esencial del cambio: un lote, no N lotes de uno.
 
-def test_procesar_documento_via_delay_no_requiere_broker_real() -> None:
+    Si el grupo se despachara documento por documento, la coordinación no
+    tendría con qué comparar y todo terminaría en cuarentena.
+    """
     fake = _EjecutorFake()
     tareas.configurar_ejecutor(lambda: fake)
 
-    async_result = tareas.procesar_documento.delay("doc-2", "s3://bucket/doc-2.pdf", "b" * 64)
+    tareas.procesar_grupo(
+        [
+            _referencia("doc-ecg", "a" * 64),
+            _referencia("doc-lab", "b" * 64),
+            _referencia("doc-eco", "c" * 64),
+        ]
+    )
 
-    assert async_result.get()["id_documento"] == "doc-2"
+    assert len(fake.lotes_procesados) == 1, "el grupo debe viajar como un unico lote"
+    assert len(fake.lotes_procesados[0]) == 3
+
+
+def test_procesar_grupo_vacio_falla_explicito() -> None:
+    fake = _EjecutorFake()
+    tareas.configurar_ejecutor(lambda: fake)
+
+    with pytest.raises(ValueError):
+        tareas.procesar_grupo([])
+
+
+def test_procesar_grupo_via_delay_no_requiere_broker_real() -> None:
+    fake = _EjecutorFake()
+    tareas.configurar_ejecutor(lambda: fake)
+
+    async_result = tareas.procesar_grupo.delay([_referencia("doc-2", "b" * 64)])
+
+    assert async_result.get()[0]["id_documento"] == "doc-2"
 
 class _ExtractorFake:
     def __init__(self) -> None:

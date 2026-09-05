@@ -56,7 +56,11 @@ ORACULO_CARGA_1000 = OraculoCarga(
     2,
     324,
     972,
-    {"cobertura_ambigua": 8, "cobertura_incompleta": 17, "parseo_incompleto": 1},
+    # Renombre puro tras separar los motivos de episodio de los de campo
+    # (spec `procesamiento-por-grupo`): las 25 cuarentenas de cobertura del corpus
+    # sintetico eran TODAS de nivel episodio, ninguna de nivel campo. El total
+    # sigue siendo 26; si cambiara, seria un defecto y no un efecto del cambio.
+    {"episodio_ambiguo": 8, "episodio_incompleto": 17, "parseo_incompleto": 1},
     0,
     0,
 )

@@ -76,8 +76,8 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
 _CODIGO_CUARENTENA_POR_MOTIVO = {
-    MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.COBERTURA_AMBIGUA,
-    MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.COBERTURA_INCOMPLETA,
+    MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.EPISODIO_AMBIGUO,
+    MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES: CodigoErrorDocumento.EPISODIO_INCOMPLETO,
 }
 
 
@@ -373,7 +373,7 @@ class EjecutorPipeline:
                 resuelto.id_documento,
                 ErrorParseo(
                     self._codigo_por_motivo(motivo),
-                    etapa=Etapa.RECONCILIACION.value,
+                    etapa=Etapa.COORDINACION.value,
                 ),
                 resuelto.documento.tipo_documento,
             )

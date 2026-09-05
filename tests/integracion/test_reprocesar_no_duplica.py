@@ -37,20 +37,48 @@ from ..fixtures.v1 import documentos  # noqa: E402
 PEPPER = b"pepper-idempotencia-nunca-real"
 
 
-def test_procesar_el_mismo_documento_tres_veces_por_la_fabrica_real_no_duplica(
+def test_procesar_el_mismo_grupo_tres_veces_por_la_fabrica_real_no_duplica(
     tmp_path, motor: MotorPii
 ) -> None:
-    artefacto = documentos.escribir_pdf(
-        tmp_path,
-        "lab-idempotente",
-        documentos.texto_laboratorio(
-            nombre="Ana Sintetica Idem",
-            dni="20555777",
-            fecha_nac="04/04/1991",
-            numero_peticion="PET-IDEM-1",
-            fecha="10/01/2024",
+    artefactos = [
+        documentos.escribir_pdf(
+            tmp_path,
+            "lab-idem",
+            documentos.texto_laboratorio(
+                nombre="Ana Sintetica Idem",
+                dni="20555777",
+                fecha_nac="04/04/1991",
+                numero_peticion="PET-IDEM-1",
+                fecha="10/01/2024",
+            ),
         ),
-    )
+        documentos.escribir_pdf(
+            tmp_path,
+            "ecg-idem",
+            documentos.texto_ecg(
+                nombre="Ana Sintetica Idem",
+                id_estudio="ECG-IDEM",
+                fecha="11-JAN-2024",
+                fecha_nac="04-APR-1991",
+                edad_anios=32,
+                sexo="Female",
+            ),
+        ),
+        documentos.escribir_pdf(
+            tmp_path,
+            "eco-idem",
+            documentos.texto_eco(
+                nombre="Ana Sintetica Idem",
+                dni="20555777",
+                numero_estudio="ECO-IDEM",
+                fecha="12/01/2024",
+            ),
+        ),
+    ]
+    referencias = [
+        {"id_documento": f"doc-idem-{indice}", "uri": a.uri, "sha256": a.sha256}
+        for indice, a in enumerate(artefactos)
+    ]
 
     engine = sa.create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -66,21 +94,19 @@ def test_procesar_el_mismo_documento_tres_veces_por_la_fabrica_real_no_duplica(
     )
     tareas.configurar_ejecutor(fabrica)
     try:
-        # El mismo mensaje de cola, tres veces: es lo que ocurre cuando una
+        # El mismo mensaje de grupo, tres veces: es lo que ocurre cuando una
         # corrida se corta y se relanza sobre el mismo corpus.
         for _ in range(3):
-            resultado = tareas.procesar_documento(
-                "doc-idempotente", artefacto.uri, artefacto.sha256
-            )
-            assert resultado["estado"] == "exito"
+            resultados = tareas.procesar_grupo(referencias)
+            assert {resultado["estado"] for resultado in resultados} == {"exito"}
     finally:
         tareas._fabrica_ejecutor = None
 
     with Session(engine) as sesion:
         estudios = sesion.scalars(sa.select(Estudio)).all()
 
-    assert len(estudios) == 1, "reprocesar el mismo documento no debe crear filas nuevas"
-    assert estudios[0].clave_documento is not None, (
+    assert len(estudios) == 3, "reprocesar el mismo grupo no debe crear filas nuevas"
+    assert all(estudio.clave_documento is not None for estudio in estudios), (
         "sin clave de documento no hay garantia de idempotencia: la fabrica de "
         "produccion tiene que estar propagandola"
     )

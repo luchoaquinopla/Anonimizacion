@@ -63,18 +63,36 @@ def test_el_mismo_lote_con_los_tres_tipos_si_aprueba() -> None:
     assert resultado.documentos_en_cuarentena == {}
 
 
-def test_el_ejecutor_sin_coordinador_no_aparta_ningun_documento() -> None:
-    """El default `coordinar_episodios=None` desactiva la validación de episodio.
+def test_el_nucleo_conserva_el_default_sin_coordinador() -> None:
+    """El default sigue siendo `None`, y eso es correcto.
 
-    Si algún día se le pone un default distinto de `None`, este test falla y
-    obliga a revisar el modo por documento antes de cambiarlo.
+    "Un lote no es necesariamente un episodio" es una verdad del núcleo. "En
+    producción el lote ES un grupo" es política de despliegue y vive en la raíz
+    de composición, no acá. Por eso el default no cambia: lo que cambió es que
+    la fábrica de producción ahora sí inyecta el coordinador (ver el centinela
+    inverso, abajo).
     """
     import inspect
 
     from anonimizacion.pipeline.ejecutor import EjecutorPipeline
 
     firma = inspect.signature(EjecutorPipeline.__init__)
-    assert firma.parameters["coordinar_episodios"].default is None, (
-        "el default cambió: revisar que el worker por documento no quede "
-        "mandando el 100 % de los documentos a cuarentena"
+    assert firma.parameters["coordinar_episodios"].default is None
+
+
+def test_la_fabrica_de_produccion_si_inyecta_el_coordinador() -> None:
+    """Centinela inverso: ningún camino de producción debe quedar sin validar.
+
+    Si alguien quita esta inyección, la validación de episodio desaparece en
+    silencio de producción -- que es exactamente el estado que este cambio vino
+    a corregir.
+    """
+    import inspect
+
+    from anonimizacion.trabajadores import tareas
+
+    fuente = inspect.getsource(tareas.construir_fabrica_ejecutor)
+    assert "coordinar_episodios" in fuente, (
+        "la raiz de composicion de produccion dejo de inyectar el coordinador: "
+        "sin el, un grupo incompleto se publica sin aviso"
     )
