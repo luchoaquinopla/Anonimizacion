@@ -111,29 +111,29 @@ seguir con el Tramo 3.
 
 ## Fase 1 (Tramo 1): `corrida_id` en los dataclasses de dominio
 
-- [ ] 1.1 RED: en `tests/dominio/test_modelos.py`, test que instancia `RegistroAnonimizado` con
+- [x] 1.1 RED: en `tests/dominio/test_modelos.py`, test que instancia `RegistroAnonimizado` con
       `corrida_id: str | None` y falla porque el campo no existe.
-- [ ] 1.2 RED: test que confirma que `RegistroAnonimizado()` sin `corrida_id` sigue construyéndose
+- [x] 1.2 RED: test que confirma que `RegistroAnonimizado()` sin `corrida_id` sigue construyéndose
       (default `None`) — no rompe fixtures de otras fases.
-- [ ] 1.3 GREEN: agregar `corrida_id: str | None = None` al final de `RegistroAnonimizado`
+- [x] 1.3 GREEN: agregar `corrida_id: str | None = None` al final de `RegistroAnonimizado`
       (`dominio/modelos.py`).
-- [ ] 1.4 RED: en `tests/dominio/test_errores.py`, test que instancia `ErrorDocumento` con
+- [x] 1.4 RED: en `tests/dominio/test_errores.py`, test que instancia `ErrorDocumento` con
       `corrida_id: str | None` y falla porque el campo no existe.
-- [ ] 1.5 GREEN: agregar `corrida_id: str | None = None` al final de `ErrorDocumento`
+- [x] 1.5 GREEN: agregar `corrida_id: str | None = None` al final de `ErrorDocumento`
       (`dominio/errores.py`).
-- [ ] 1.6 REFACTOR: `pytest tests/dominio/ tests/salida/ tests/pipeline/` en verde — confirmar que
+- [x] 1.6 REFACTOR: `pytest tests/dominio/ tests/salida/ tests/pipeline/` en verde — confirmar que
       ningún llamador existente usa argumentos posicionales que el campo nuevo (al final, con
       default) pudiera romper.
 
 ## Fase 2 (Tramo 1): migración `0008_corrida_en_salida`
 
-- [ ] 2.1 RED: en `tests/salida/test_migraciones.py`, test que corre `upgrade()` hasta `head` sobre
+- [x] 2.1 RED: en `tests/salida/test_migraciones.py`, test que corre `upgrade()` hasta `head` sobre
       SQLite en memoria y falla porque `0008` no existe (o las columnas/índices esperados no
       calzan).
-- [ ] 2.2 RED: test que prepara `cuarentena` con dos filas duplicadas de `id_documento`
+- [x] 2.2 RED: test que prepara `cuarentena` con dos filas duplicadas de `id_documento`
       preexistentes (`corrida_id` ausente) **antes** de `upgrade()` — fija el punto de partida: hay
       duplicados previos sin corrida en el sistema real.
-- [ ] 2.3 GREEN: crear `migrations/versions/0008_corrida_en_salida.py`,
+- [x] 2.3 GREEN: crear `migrations/versions/0008_corrida_en_salida.py`,
       `down_revision = "0007_clave_documento"`. `upgrade()`: `op.batch_alter_table("estudio")` →
       `add_column("corrida_id", String(36), nullable=True)` +
       `add_column("creado_en", DateTime(timezone=True), nullable=True)` +
@@ -143,44 +143,44 @@ seguir con el Tramo 3.
       + `create_index("ix_cuarentena_corrida_creado", ["corrida_id", "creado_en"])`;
       `drop_index("ix_documento_corrida_corrida_id")`. `batch_alter_table` obligatorio: SQLite no
       soporta agregar `UNIQUE` con `ALTER TABLE` directo.
-- [ ] 2.4 GREEN: confirmar que las dos filas duplicadas de 2.2 **siguen existiendo** tras
+- [x] 2.4 GREEN: confirmar que las dos filas duplicadas de 2.2 **siguen existiendo** tras
       `upgrade()` — la restricción única se crea sobre duplicados preexistentes sin deduplicar ni
       rellenar nada (los `NULL` no colisionan entre sí).
-- [ ] 2.5 RED: test de `downgrade()` — `upgrade()` seguido de `downgrade()` sobre SQLite en memoria
+- [x] 2.5 RED: test de `downgrade()` — `upgrade()` seguido de `downgrade()` sobre SQLite en memoria
       confirma que el esquema vuelve al estado de `0007` (columnas e índices nuevos fuera).
-- [ ] 2.6 GREEN: `downgrade()` — inverso simétrico de 2.3 sobre `cuarentena` y `estudio`.
-- [ ] 2.7 REFACTOR: correr `upgrade`/`downgrade`/`upgrade` para confirmar idempotencia estructural,
+- [x] 2.6 GREEN: `downgrade()` — inverso simétrico de 2.3 sobre `cuarentena` y `estudio`.
+- [x] 2.7 REFACTOR: correr `upgrade`/`downgrade`/`upgrade` para confirmar idempotencia estructural,
       mismo patrón que `0007`.
 
 ## Fase 3 (Tramo 1): `EscritorCuarentena` — idempotencia y el bug de conteo doble YA MERGEADO
 
-- [ ] 3.1 RED — reproduce el defecto antes de arreglarlo (código ya mergeado): en
+- [x] 3.1 RED — reproduce el defecto antes de arreglarlo (código ya mergeado): en
       `tests/web/test_reporte_cuarentena.py`, dos llamadas a `EscritorCuarentena.registrar` con el
       **mismo** `ErrorDocumento(id_documento=...)` contra el esquema y el código **actuales** (sin
       guarda) dejan dos filas en `cuarentena`, y `construir_reporte` las cuenta dos veces. Este
       test debe estar en rojo (es decir, confirmar la duplicación) antes de aplicar 3.5.
-- [ ] 3.2 GREEN (esquema): en `salida/modelos_orm.py`, agregar `corrida_id: Mapped[str | None]` y
+- [x] 3.2 GREEN (esquema): en `salida/modelos_orm.py`, agregar `corrida_id: Mapped[str | None]` y
       `creado_en: Mapped[datetime | None]` a `Estudio`; `corrida_id: Mapped[str | None]` a
       `Cuarentena` con `UniqueConstraint("corrida_id", "id_documento", name="uq_cuarentena_corrida_documento")`
       en `__table_args__` — debe coincidir exactamente con la migración de 2.3.
-- [ ] 3.3 RED: test que inserta dos filas `Cuarentena` con el mismo `(corrida_id, id_documento)`
+- [x] 3.3 RED: test que inserta dos filas `Cuarentena` con el mismo `(corrida_id, id_documento)`
       directo contra SQLite en memoria y confirma `IntegrityError`.
-- [ ] 3.4 RED: test que confirma que dos filas `Cuarentena` con `corrida_id=None` **no** colisionan
+- [x] 3.4 RED: test que confirma que dos filas `Cuarentena` con `corrida_id=None` **no** colisionan
       entre sí aunque compartan `id_documento` — las filas legadas y los fixtures sin corrida
       siguen sin garantía.
-- [ ] 3.5 GREEN: en `EscritorCuarentena.registrar` (`salida/cuarentena.py`), guarda de dos capas
+- [x] 3.5 GREEN: en `EscritorCuarentena.registrar` (`salida/cuarentena.py`), guarda de dos capas
       calcada de `escribir_registro`: dentro de `sesion.begin()`, `SELECT` previo por
       `(corrida_id, id_documento)` si `error.corrida_id is not None` — si ya existe, retornar sin
       escribir; envolver el `add`/flush en `try/except IntegrityError: pass`. Propagar
       `corrida_id=error.corrida_id` al construir `Cuarentena(...)`.
-- [ ] 3.6 GREEN: confirmar que 3.1 pasa a verde — registrar dos veces el mismo error con
+- [x] 3.6 GREEN: confirmar que 3.1 pasa a verde — registrar dos veces el mismo error con
       `corrida_id` fija deja una sola fila y `construir_reporte` cuenta una vez.
-- [ ] 3.7 RED: test que registra el mismo `id_documento` bajo dos `corrida_id` distintas y confirma
+- [x] 3.7 RED: test que registra el mismo `id_documento` bajo dos `corrida_id` distintas y confirma
       que quedan **dos** filas — historial entre corridas, no duplicado.
-- [ ] 3.8 RED: test de concurrencia — dos registros del mismo `(corrida_id, id_documento)` sin que
+- [x] 3.8 RED: test de concurrencia — dos registros del mismo `(corrida_id, id_documento)` sin que
       el primero haya comiteado (dos sesiones contra el mismo engine SQLite, o mock de sesión)
       confirma que la segunda captura `IntegrityError` sin propagar.
-- [ ] 3.9 REFACTOR: `pytest tests/salida/ tests/web/test_reporte_cuarentena.py` en verde; actualizar
+- [x] 3.9 REFACTOR: `pytest tests/salida/ tests/web/test_reporte_cuarentena.py` en verde; actualizar
       el docstring de `EscritorCuarentena.registrar` para describir la guarda nueva.
 
 ## Fase 4 (Tramo 2): partición total del lote (Decisión 6)
