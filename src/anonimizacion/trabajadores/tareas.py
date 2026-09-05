@@ -69,6 +69,14 @@ def construir_fabrica_ejecutor(
     cuarentena: DestinoCuarentena,
     tope_bytes: int | None = None,
     huellas: RegistroDeHuellas | None = None,
+    # Puntos de inyeccion de la raiz de composicion, no parches de test:
+    # `None` significa "usar el valor de produccion". Existen para que el banco
+    # de carga pueda pasar por ESTA fabrica en vez de duplicarla -- si el banco
+    # arma el ejecutor a mano, cualquier cableado nuevo que se agregue aca deja
+    # de llegarle en silencio, que es exactamente lo que ya paso con la
+    # validacion de episodio (ver `tests/carga/test_cableado_del_banco.py`).
+    dormir: Callable[[float], None] | None = None,
+    resolver_claves: Callable[..., object] | None = None,
 ) -> FabricaEjecutor:
     """Arma la `FabricaEjecutor` real para registrar con `configurar_ejecutor`.
 
@@ -101,6 +109,8 @@ def construir_fabrica_ejecutor(
             destino=destino,
             cuarentena=cuarentena,
             fuente=fuente,
+            **({"dormir": dormir} if dormir is not None else {}),
+            **({"resolver_claves": resolver_claves} if resolver_claves is not None else {}),
             # La validacion de completitud de episodio vive ACA, no en el default
             # del ejecutor: "un lote no es necesariamente un episodio" es una verdad
             # del nucleo, "en produccion el lote ES un grupo de paciente" es politica

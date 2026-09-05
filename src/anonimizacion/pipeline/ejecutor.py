@@ -204,13 +204,15 @@ class EjecutorPipeline:
             _vincular_episodios_real
         ),
         # `None` DESACTIVA la validacion de completitud de episodio: sin
-        # coordinador, `_coordinar_resueltos` no aparta ningun documento. No es
-        # un olvido de cableado -- la tarea Celery `procesar_documento` arma un
-        # lote de UN documento, y un lote de uno nunca tiene los tres tipos
-        # requeridos, asi que activarlo ahi mandaria el 100% a cuarentena. La
-        # validacion necesita la corrida entera, y esa coordinacion al cierre
-        # todavia no existe en produccion (ver
-        # `tests/pipeline/test_modo_sin_validacion_de_episodio.py`).
+        # coordinador, `_coordinar_resueltos` no aparta ningun documento.
+        #
+        # El default se conserva en `None` a proposito: "un lote no es
+        # necesariamente un episodio" es una verdad del nucleo. Que en produccion
+        # el lote SEA el grupo de un paciente es politica de despliegue, y por eso
+        # el coordinador lo inyecta la raiz de composicion
+        # (`trabajadores/tareas.py::construir_fabrica_ejecutor`), no este default.
+        # Ver `tests/pipeline/test_modo_sin_validacion_de_episodio.py`, que fija
+        # las dos mitades de esa afirmacion.
         coordinar_episodios: Callable[..., ResultadoCoordinacion] | None = None,
         construir_registro: Callable[..., RegistroAnonimizado] = _construir_registro_real,
         clasificar_pii: Callable[[DocumentoParseado, MotorPii], object] = _clasificar_real,
