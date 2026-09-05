@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.modelos_orm import (
     Base,
+    Cuarentena,
     Episodio,
     Estudio,
     MedicionEcg,
@@ -167,4 +168,44 @@ def test_varias_claves_ausentes_no_colisionan_entre_si() -> None:
 
     with Session(motor) as sesion:
         assert sesion.scalar(sa.select(sa.func.count()).select_from(Estudio)) == 3
+
+
+# --- cuarentena: unicidad por (corrida_id, id_documento) ---------------------
+#
+# Clave de idempotencia (design.md, Decisión 4): un documento produce como
+# mucho un apartado por corrida. Dos corridas distintas registran cada una la
+# suya -- eso es historial, no duplicado.
+
+
+def _cuarentena(corrida_id: str | None, id_documento: str = "doc-001") -> Cuarentena:
+    return Cuarentena(
+        id_documento=id_documento,
+        etapa="parseo",
+        codigo="parseo_incompleto",
+        corrida_id=corrida_id,
+    )
+
+
+def test_dos_filas_de_cuarentena_con_la_misma_corrida_y_documento_colisionan() -> None:
+    motor = _motor_en_memoria()
+
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(_cuarentena("corrida-1"))
+
+    with pytest.raises(IntegrityError):
+        with Session(motor) as sesion, sesion.begin():
+            sesion.add(_cuarentena("corrida-1"))
+
+
+def test_cuarentena_sin_corrida_no_tiene_garantia_de_idempotencia() -> None:
+    """`NULL` no colisiona con `NULL`: las filas legadas y los fixtures sin
+    corrida siguen sin garantía (design.md, Decisión 4)."""
+    motor = _motor_en_memoria()
+
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(_cuarentena(None))
+        sesion.add(_cuarentena(None))
+
+    with Session(motor) as sesion:
+        assert sesion.scalar(sa.select(sa.func.count()).select_from(Cuarentena)) == 2
 
