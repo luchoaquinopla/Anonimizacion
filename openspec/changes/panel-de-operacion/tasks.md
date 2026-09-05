@@ -280,6 +280,42 @@ seguir con el Tramo 3.
 > `Estudio(..., corrida_id=registro.corrida_id)` en `_insertar`, y `default=_ahora_utc` agregado a
 > la columna. Ningún test existente de Fase 1-6.7 dependía del comportamiento anterior (nadie
 > verificaba `creado_en`/`corrida_id` contra `EscritorPostgres` real).
+
+> **Addendum post-revisión fresca (PR 2.5), tres puntos cerrados antes de aprobar:**
+>
+> 1. **Test unitario aislado del escritor.** `tests/salida/destinos/test_postgres.py` gana
+>    `test_escribir_registro_persiste_corrida_id_y_creado_en` (y su contraparte
+>    `test_escribir_registro_sin_corrida_id_deja_corrida_id_en_none`, que fija el caso sin corrida):
+>    apuntan directo a `EscritorPostgres.escribir_registro` contra el escritor real, sin bajar por
+>    `procesar_grupo` ni por el script. Antes de este addendum, la única protección del fix era el
+>    test end-to-end de 6.8 — si el bug reaparece, ahora se detecta acá, en el mismo lugar donde se
+>    escondió dos PRs.
+>
+> 2. **El banco de carga y `_DestinoMemoria` — decisión, no divergencia asumida en silencio.**
+>    `tests/fixtures/corpus_piloto.py` no pasa por `LanzadorCorrida` ni por `procesar_grupo` (correcto:
+>    eso es orquestación administrativa, no algo que el banco deba medir) **y además** escribe contra
+>    `_DestinoMemoria`, un doble, no contra `EscritorPostgres` real. Antes del punto 1, eso era un
+>    punto ciego: exactamente el tipo de superficie sin cubrir donde se escondió el bug de
+>    `corrida_id`/`creado_en` — un destino en memoria nunca iba a ejercitar `_insertar`. **Con el
+>    punto 1 cubierto, deja de serlo**: la corrección del escritor real ya tiene su propio test de
+>    integración (`test_postgres.py`, aislado), así que el banco puede seguir midiendo throughput
+>    puro contra un destino en memoria sin dejar ningún camino de escritura real sin verificar. La
+>    separación de responsabilidades queda: `test_postgres.py` prueba que `EscritorPostgres` escribe
+>    bien; `corpus_piloto.py` prueba cuánto tarda el pipeline en llegar a escribir, sin que el costo
+>    de una sesión SQL real contamine esa medición. No se modificó `corpus_piloto.py`.
+>
+> 3. **Cambio de comportamiento observable para el operador — documentado, no descubierto después.**
+>    Antes de 6.9, el script imprimía por consola `id_paciente`/`id_episodio` truncados de cada
+>    éxito (leídos directo de `ExitoDocumento`). Al pasar a `procesar_grupo`, el reporte pasa a
+>    construirse desde `resumen_trazable()` (`pipeline/resultado.py`), cuya whitelist fija **no**
+>    incluye esos dos campos — es deliberado en ese módulo, no un descuido de este cambio. Se gana:
+>    consistencia con la postura anti-PII del proyecto (el mismo dato que nunca se loguea en la cola
+>    ni en la bitácora, tampoco se imprime acá). Se pierde: una ayuda de depuración manual — antes,
+>    al correr el script a mano, se podía ver a qué paciente/episodio fue a parar cada documento sin
+>    ir a la base; ahora hay que consultar `estudio`/`episodio` directamente por `corrida_id` para
+>    esa correlación. Ninguna tarea de 6.8/6.9 mencionaba este cambio de salida; queda asentado acá
+>    para que no se descubra el día que alguien la extrañe.
+
 - [x] 6.10 RED: extender `tests/integracion/test_reprocesar_no_duplica.py` a cuarentena — reprocesar
       el mismo grupo no aumenta el conteo de filas en `cuarentena` de esa corrida (spec
       `escritura-idempotente` delta, "reprocesar la misma corrida no duplica el apartado").
