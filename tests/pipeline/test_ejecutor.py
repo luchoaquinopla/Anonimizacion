@@ -744,3 +744,53 @@ def test_la_coordinacion_es_una_etapa_propia() -> None:
     assert Etapa.COORDINACION.value == "coordinacion"
     assert Etapa.COORDINACION.value != Etapa.RECONCILIACION.value
 
+
+# --- corrida_id viaja como parámetro del lote (spec `trazabilidad-por-corrida`,
+# design.md Decisión 1 y 2) --------------------------------------------------
+
+
+def test_procesar_lote_propaga_corrida_id_al_registro_emitido() -> None:
+    """5.2: `corrida_id` llega a `RegistroAnonimizado.corrida_id` vía `_emitir`."""
+    ejecutor, escritor, _cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("paciente"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+    )
+
+    ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=_artefacto("doc"))], corrida_id="c1")
+
+    assert len(escritor.escritos) == 1
+    assert escritor.escritos[0].corrida_id == "c1"
+
+
+def test_procesar_lote_propaga_corrida_id_al_error_apartado() -> None:
+    """5.3: camino de fallo -- un ítem apartado produce `ErrorDocumento.corrida_id == "c1"`."""
+
+    def extraer(artefacto):
+        raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa="extraccion")
+
+    ejecutor, _escritor, cuarentena, _dormir = _construir_ejecutor(
+        extraer=extraer,
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+    )
+
+    resultados = ejecutor.procesar_lote(
+        [ItemLote(id_documento="doc-1", artefacto=_artefacto("doc"))], corrida_id="c1"
+    )
+
+    assert isinstance(resultados[0], FalloDocumento)
+    assert resultados[0].error.corrida_id == "c1"
+    assert cuarentena.registrados == [resultados[0].error]
+
+
+def test_procesar_lote_sin_corrida_id_conserva_none() -> None:
+    """Sin `corrida_id` explícito, el default sigue siendo `None` -- no romper
+    llamadores existentes que todavía no conocen su corrida."""
+    ejecutor, escritor, _cuarentena, _dormir = _construir_ejecutor(
+        extraer=lambda artefacto: _documento("paciente"),
+        resolver_claves=lambda *a, **k: ClavesPaciente("paciente", None, 1),
+    )
+
+    ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=_artefacto("doc"))])
+
+    assert escritor.escritos[0].corrida_id is None
+

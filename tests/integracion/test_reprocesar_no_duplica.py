@@ -97,7 +97,7 @@ def test_procesar_el_mismo_grupo_tres_veces_por_la_fabrica_real_no_duplica(
         # El mismo mensaje de grupo, tres veces: es lo que ocurre cuando una
         # corrida se corta y se relanza sobre el mismo corpus.
         for _ in range(3):
-            resultados = tareas.procesar_grupo(referencias)
+            resultados = tareas.procesar_grupo("corrida-idem", referencias)
             assert {resultado["estado"] for resultado in resultados} == {"exito"}
     finally:
         tareas._fabrica_ejecutor = None

@@ -124,7 +124,7 @@ def construir_fabrica_ejecutor(
 
 
 @app.task(name="anonimizacion.procesar_grupo")
-def procesar_grupo(referencias: Sequence[Mapping[str, str]]) -> list[dict[str, object]]:
+def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) -> list[dict[str, object]]:
     """Procesa como un solo lote los documentos de un grupo (un paciente, un episodio).
 
     La unidad de trabajo es el grupo y no el documento porque la validacion de
@@ -137,6 +137,12 @@ def procesar_grupo(referencias: Sequence[Mapping[str, str]]) -> list[dict[str, o
     directorio a proposito: si el trabajador enumerara la carpeta, el `sha256` se
     calcularia ahi y la identidad del trabajo dejaria de estar en el mensaje, de
     modo que un reintento sobre una carpeta que cambio procesaria otro grupo.
+
+    `corrida_id` (spec `trazabilidad-por-corrida`, design.md Decision 1) viaja
+    como parametro HERMANO del lote, nunca como una cuarta clave de la
+    referencia por documento -- eso relajaria el centinela de claves exactas
+    de mas abajo. Es un UUID administrativo asignado por `LanzadorCorrida`, no
+    PII: no se deriva de contenido ni de ruta de ningun documento.
     """
     items = [
         ItemLote(
@@ -153,7 +159,9 @@ def procesar_grupo(referencias: Sequence[Mapping[str, str]]) -> list[dict[str, o
         raise ValueError("un grupo requiere al menos un documento")
 
     ejecutor = _obtener_ejecutor()
-    return [resultado.resumen_trazable() for resultado in ejecutor.procesar_lote(items)]
+    return [
+        resultado.resumen_trazable() for resultado in ejecutor.procesar_lote(items, corrida_id=corrida_id)
+    ]
 
 FabricaExtractor = Callable[[], object]
 

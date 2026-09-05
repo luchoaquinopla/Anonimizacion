@@ -103,7 +103,7 @@ def test_construir_fabrica_ejecutor_procesa_un_grupo_real_de_punta_a_punta(
         # Las `uri` viajan como lo haria un mensaje real de cola -- si
         # `construir_fabrica_ejecutor` no hubiera armado la `FuenteLocal` con
         # `tmp_path` como raiz autorizada, esto fallaria con `PermissionError`.
-        resultados = tareas.procesar_grupo(_referencias(artefactos))
+        resultados = tareas.procesar_grupo("corrida-wiring", _referencias(artefactos))
     finally:
         tareas._fabrica_ejecutor = None
 
@@ -133,7 +133,7 @@ def test_un_documento_suelto_por_la_fabrica_real_va_a_cuarentena(
     )
     tareas.configurar_ejecutor(fabrica)
     try:
-        (resultado,) = tareas.procesar_grupo(_referencias(artefactos[:1]))
+        (resultado,) = tareas.procesar_grupo("corrida-suelto", _referencias(artefactos[:1]))
     finally:
         tareas._fabrica_ejecutor = None
 
