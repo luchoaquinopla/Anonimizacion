@@ -107,6 +107,28 @@ def test_error_documento_rechaza_campo_fuera_de_whitelist() -> None:
         )
 
 
+def test_error_documento_acepta_corrida_id() -> None:
+    """Requisito: `cuarentena` MUST llevar el identificador de la corrida que
+    lo produjo (spec `trazabilidad-por-corrida`, Requisito 1)."""
+    error = ErrorDocumento(
+        id_documento="doc-001",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        corrida_id="corrida-sintetica-1",
+    )
+    assert error.corrida_id == "corrida-sintetica-1"
+
+
+def test_error_documento_sin_corrida_id_usa_default_none() -> None:
+    # no debe romper fixtures existentes de otras fases que no la pasan
+    error = ErrorDocumento(
+        id_documento="doc-001",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+    )
+    assert error.corrida_id is None
+
+
 def test_error_parseo_transporta_solo_campo_y_pagina_seguros() -> None:
     error = ErrorParseo(
         codigo=CodigoErrorDocumento.EVIDENCIA_AUSENTE,
