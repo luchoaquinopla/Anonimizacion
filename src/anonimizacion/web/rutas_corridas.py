@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
+from sqlalchemy import Engine
+
 
 @dataclass(frozen=True)
 class EstadoCorridaPortal:
@@ -32,13 +34,15 @@ AplicacionWsgi = Callable[[dict[str, object], InicioRespuesta], Iterable[bytes]]
 def crear_aplicacion_corridas(
     raices_autorizadas: Sequence[Path],
     servicio: ServicioCorridas,
-    motor_lectura: object | None = None,
+    motor_lectura: Engine | None = None,
 ) -> AplicacionWsgi:
     """Crea el plano de control con una lista cerrada de raíces del servidor.
 
-    `motor_lectura` es opcional: sin él, el reporte de cuarentena responde 503
-    en vez de romper. El plano de control tiene que poder levantarse aunque la
-    base de lectura todavía no esté conectada.
+    `motor_lectura` es opcional: sin él, el reporte de cuarentena y el embudo
+    responden 503 en vez de romper (spec `portal-de-corridas` delta, "el plano
+    de control se levanta sin base de lectura conectada"). El plano de
+    control tiene que poder levantarse aunque la base de lectura todavía no
+    esté conectada.
     """
     raices = tuple(raiz.resolve() for raiz in raices_autorizadas)
 
@@ -49,11 +53,20 @@ def crear_aplicacion_corridas(
             return _crear_corrida(entorno, iniciar_respuesta, raices, servicio)
         if metodo == "GET" and ruta == "/cuarentena":
             return _reporte_cuarentena(iniciar_respuesta, motor_lectura)
+        # Tiene que evaluarse ANTES de la rama genérica de abajo: un GET acá
+        # es un `/corridas/...` cualquiera, y `_consultar_corrida` rechaza
+        # cualquier identificador con `/` -- sin esta comprobación primero,
+        # `/corridas/{id}/embudo` cae en esa rama y da 404 (design.md, "Orden
+        # de despacho, o el 404 asegurado"). NO afecta a `/reintentar`
+        # (abajo): esa rama exige POST, y ésta exige GET.
+        if metodo == "GET" and ruta.startswith("/corridas/") and ruta.endswith("/embudo"):
+            id_corrida = ruta.removeprefix("/corridas/").removesuffix("/embudo").rstrip("/")
+            return _embudo_corrida(iniciar_respuesta, motor_lectura, id_corrida)
         if metodo == "GET" and ruta.startswith("/corridas/"):
             return _consultar_corrida(iniciar_respuesta, servicio, ruta.removeprefix("/corridas/"))
         if metodo == "POST" and ruta.startswith("/corridas/") and ruta.endswith("/reintentar"):
             id_corrida = ruta.removeprefix("/corridas/").removesuffix("/reintentar").rstrip("/")
-            return _responder(iniciar_respuesta, "202 Accepted", servicio.reintentar_corrida(id_corrida))
+            return _reintentar_corrida(iniciar_respuesta, servicio, id_corrida)
         return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "ruta_no_encontrada"})
 
     return aplicacion
@@ -102,11 +115,45 @@ def _esta_dentro_de(ruta: Path, raiz: Path) -> bool:
     return True
 
 
-def _responder(iniciar_respuesta: InicioRespuesta, estado: str, contenido: EstadoCorridaPortal | dict[str, str]) -> Iterable[bytes]:
+def _responder(
+    iniciar_respuesta: InicioRespuesta, estado: str, contenido: EstadoCorridaPortal | dict[str, object]
+) -> Iterable[bytes]:
     datos = asdict(contenido) if isinstance(contenido, EstadoCorridaPortal) else contenido
     cuerpo = json.dumps(datos, separators=(",", ":")).encode()
     iniciar_respuesta(estado, [("Content-Type", "application/json"), ("Content-Length", str(len(cuerpo)))])
     return [cuerpo]
+
+
+def _reintentar_corrida(
+    iniciar_respuesta: InicioRespuesta, servicio: ServicioCorridas, id_corrida: str
+) -> Iterable[bytes]:
+    """501, no un 202 falso (design.md, 'ServicioCorridas real').
+
+    La reanudación por documento está fuera de alcance de este cambio; la
+    ruta funciona hoy, así que sin este `try` un `POST` real respondería 202
+    sobre algo que no reintenta nada -- el silencio que este cambio cierra.
+    """
+    try:
+        return _responder(iniciar_respuesta, "202 Accepted", servicio.reintentar_corrida(id_corrida))
+    except NotImplementedError:
+        return _responder(iniciar_respuesta, "501 Not Implemented", {"codigo": "reintento_no_implementado"})
+
+
+def _embudo_corrida(
+    iniciar_respuesta: InicioRespuesta, motor_lectura: Engine | None, id_corrida: str
+) -> Iterable[bytes]:
+    """Sirve el contrato JSON completo del embudo (design.md, "El contrato JSON")."""
+    if not id_corrida or "/" in id_corrida:
+        return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "ruta_no_encontrada"})
+    if motor_lectura is None:
+        return _responder(iniciar_respuesta, "503 Service Unavailable", {"codigo": "base_de_lectura_no_configurada"})
+
+    from .servicio_corridas import construir_payload_embudo
+
+    payload = construir_payload_embudo(motor_lectura, id_corrida)
+    if payload is None:
+        return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "corrida_no_encontrada"})
+    return _responder(iniciar_respuesta, "200 OK", payload)
 
 
 def _reporte_cuarentena(iniciar_respuesta: InicioRespuesta, motor_lectura: object | None) -> Iterable[bytes]:

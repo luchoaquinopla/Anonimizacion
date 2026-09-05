@@ -101,6 +101,23 @@ def test_artefacto_sobretamano_llega_a_cuarentena_con_el_corrida_id_de_la_corrid
     assert error.corrida_id == resultado.corrida_id
 
 
+def test_lanzar_persiste_las_transiciones_de_estado_de_la_corrida(tmp_path) -> None:
+    """`corrida.avanzar_a` no puede morir en memoria: `estado` es un campo del
+    contrato JSON del embudo, y si no se persiste queda mintiendo `creada`
+    durante toda la corrida (hallazgo post-Fase 9, cerrado acá)."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "procesando"
+
+
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:
     """Unidad, sin `LanzadorCorrida`: `CuarentenaDeCorrida.registrar` delega en
     el sumidero interno con el mismo `ErrorDocumento`, solo con `corrida_id` fijado."""

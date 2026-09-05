@@ -48,6 +48,34 @@ def test_repositorio_actualiza_estado_solo_con_version_esperada() -> None:
     assert repositorio.actualizar_documento(documento, version_esperada=0) is False
 
 
+def test_repositorio_actualiza_estado_de_corrida_solo_con_version_esperada() -> None:
+    """Mismo patrón de bloqueo optimista que `actualizar_documento`, para `Corrida`.
+
+    Sin esto, `CorridaOrm.estado` queda en `creada` para siempre: las
+    transiciones que `Corrida.avanzar_a` hace en memoria (`LanzadorCorrida`)
+    nunca se persisten -- y el campo `estado` del JSON del embudo termina
+    mintiendo durante toda la corrida.
+    """
+    from anonimizacion.dominio.estados_corrida import EstadoCorrida
+    from anonimizacion.salida.modelos_orm import CorridaOrm
+
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-1")
+    repositorio.crear_corrida(corrida)
+
+    corrida.avanzar_a(EstadoCorrida.INVENTARIANDO)
+
+    assert repositorio.actualizar_corrida(corrida, version_esperada=0) is True
+    assert repositorio.actualizar_corrida(corrida, version_esperada=0) is False
+
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, "corrida-1")
+    assert fila.estado == EstadoCorrida.INVENTARIANDO.value
+    assert fila.version == 1
+
+
 # --- registrar_documentos por lote (Decisión 5, design.md) -------------------
 #
 # Motivo medido: `registrar_documento` abre una `Session` y una transacción

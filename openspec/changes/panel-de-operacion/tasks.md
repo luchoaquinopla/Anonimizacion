@@ -427,34 +427,34 @@ seguir con el Tramo 3.
 
 ## Fase 8 (Tramo 4): `embudo_corrida.py` — modelo de lectura
 
-- [ ] 8.1 RED: en `tests/web/test_embudo_corrida.py` (nuevo), serie de timestamps sintética que
+- [x] 8.1 RED: en `tests/web/test_embudo_corrida.py` (nuevo), serie de timestamps sintética que
       confirma el orden de las siete etapas (`ingesta, extraccion, parseo, reconciliacion,
       coordinacion, pseudonimizacion, salida`) — el orden de ejecución, no el del enum `Etapa`.
-- [ ] 8.2 GREEN: crear `src/anonimizacion/web/embudo_corrida.py` con `Embudo`, `PerdidaEtapa`,
+- [x] 8.2 GREEN: crear `src/anonimizacion/web/embudo_corrida.py` con `Embudo`, `PerdidaEtapa`,
       `Estimacion` (dataclasses frozen) y la lista explícita de las siete etapas.
-- [ ] 8.3 RED — **el centinela de solapamiento, parte aritmética (no diluir)**: embudo sintético con
+- [x] 8.3 RED — **el centinela de solapamiento, parte aritmética (no diluir)**: embudo sintético con
       más apartados que inventariados produce `residuo < 0` y `cierra is False`, sin ningún
       `max(0, …)` en el camino. Un test que sólo verificara que la suma cierra sería vacío:
       `desconocido` está definido como resto y cerraría siempre.
-- [ ] 8.4 GREEN: `residuo = entraron - (publicados + apartados)`, expuesto **siempre con signo**;
+- [x] 8.4 GREEN: `residuo = entraron - (publicados + apartados)`, expuesto **siempre con signo**;
       `cierra = residuo >= 0`. Sin clamping en ningún punto del cálculo.
-- [ ] 8.5 RED: test que confirma que un documento apartado por `artefacto_sobretamano` cuenta en la
+- [x] 8.5 RED: test que confirma que un documento apartado por `artefacto_sobretamano` cuenta en la
       barra de ingesta pero NO en `throughput_por_hora`.
-- [ ] 8.6 GREEN: excluir `artefacto_sobretamano` del cálculo de throughput, conservándolo en el
+- [x] 8.6 GREEN: excluir `artefacto_sobretamano` del cálculo de throughput, conservándolo en el
       conteo de apartados por etapa.
-- [ ] 8.7 RED: serie sintética que cubre los seis bordes de "Rango de tiempo restante":
+- [x] 8.7 RED: serie sintética que cubre los seis bordes de "Rango de tiempo restante":
       `entraron == 0` → "midiendo"; `terminados < 200` → "midiendo"; ventana reciente vacía → "sin
       avance en los últimos 5 minutos"; `restante == 0` → "todos los documentos tienen desenlace";
       `restante < 0` → "descuadre"; caso disponible → rango con cota optimista y pesimista.
-- [ ] 8.8 GREEN: implementar las tres consultas agregadas del diseño, la memoización de un segundo
+- [x] 8.8 GREEN: implementar las tres consultas agregadas del diseño, la memoización de un segundo
       por `corrida_id`, y las reglas de borde de 8.7.
-- [ ] 8.9 RED: en `tests/integracion/`, inventariar documentos, publicar algunos, apartar otros, y
+- [x] 8.9 RED: en `tests/integracion/`, inventariar documentos, publicar algunos, apartar otros, y
       afirmar que el embudo da los números correctos **mientras todas las filas de
       `documento_corrida` siguen en `INVENTARIADO`** — el centinela contra la máquina de estados
       (Decisión 5). Si alguien acopla el embudo al estado, este test se pone rojo.
-- [ ] 8.10 GREEN: confirmar que `construir_embudo` nunca lee `documento_corrida.estado` (sólo
+- [x] 8.10 GREEN: confirmar que `construir_embudo` nunca lee `documento_corrida.estado` (sólo
       `count(*)`); ajustar si 8.9 revela una lectura indebida.
-- [ ] 8.11 RED — **el centinela de solapamiento, camino real completo (Punto 1, no diluir)**:
+- [x] 8.11 RED — **el centinela de solapamiento, camino real completo (Punto 1, no diluir)**:
       destino de escritura falso donde `escribir_registro` **commitea** el `estudio`, la conexión
       se cae antes de que el cliente vea el OK, `_ejecutar_con_reintentos` reintenta con `dormir`
       inyectado, los reintentos se **agotan**, y `ERROR_TRANSITORIO_AGOTADO` envía el mismo
@@ -462,47 +462,118 @@ seguir con el Tramo 3.
       (Fase 5), construir el embudo sobre el resultado (Fase 8), y afirmar `residuo < 0` y
       `cierra is False`. Sin fabricar el estado inconsistente a mano — el camino tiene que ser el
       real y alcanzable descrito en `design.md`, Decisión 9.
-- [ ] 8.12 GREEN: ajustes residuales si 8.11 revela algún punto donde el residuo se recortara o el
+- [x] 8.12 GREEN: ajustes residuales si 8.11 revela algún punto donde el residuo se recortara o el
       solapamiento no se reflejara (no debería requerir lógica nueva si 8.4 está completa).
-- [ ] 8.13 RED: test que confirma que el residuo es cero al terminar una corrida sintética completa
+- [x] 8.13 RED: test que confirma que el residuo es cero al terminar una corrida sintética completa
       **sin** fallos de infraestructura — cierra la invariante también en el lado positivo.
-- [ ] 8.14 REFACTOR: `pytest tests/web/test_embudo_corrida.py` y los de integración de esta fase en
+- [x] 8.14 REFACTOR: `pytest tests/web/test_embudo_corrida.py` y los de integración de esta fase en
       verde; confirmar por lectura que `embudo_corrida.py` nunca proyecta `ruta_autorizada` ni
       `huella_contenido`.
 
+> **Nota de apply (8.11/8.12)**: no hizo falta ningún ajuste en 8.12 — 8.4 (residuo con signo, sin
+> `max(0, …)`) ya cubría el caso real. El centinela corre `EjecutorPipeline.procesar_lote` real con
+> un destino que envuelve `EscritorPostgres` real: el primer intento de `escribir_registro`
+> commitea el `estudio` de verdad y LUEGO lanza `ConnectionError` (simulando la conexión caída
+> antes del OK); los reintentos siguientes encuentran la fila ya escrita (el `SELECT` previo de
+> `EscritorPostgres` la detecta) pero la excepción simulada persiste, así que los reintentos se
+> agotan igual y `ERROR_TRANSITORIO_AGOTADO` manda el documento a cuarentena. Sin ningún estado
+> fabricado a mano.
+>
+> **Decisión de diseño no explícita en `design.md`, tomada durante el apply**: la prioridad entre
+> "restante < 0" (descuadre) y "ventana reciente vacía" (sin avance) no está fijada en el diseño —
+> ambos bordes se listan como puntos independientes. Se resolvió a favor de reportar primero lo más
+> grave (`descuadre` antes que `sin_avance`), documentado en el docstring de `_estimar` en
+> `embudo_corrida.py`.
+
 ## Fase 9 (Tramo 4): `servicio_corridas.py`, rutas, orden de despacho (Punto 4, no diluir)
 
-- [ ] 9.1 RED — **el orden de las ramas de despacho**: en `tests/web/test_rutas_corridas.py`, un
+- [x] 9.1 RED — **el orden de las ramas de despacho**: en `tests/web/test_rutas_corridas.py`, un
       `GET /corridas/{id}/embudo` contra la aplicación WSGI **actual** falla con 404 porque cae en
       la rama genérica `GET /corridas/...` de `rutas_corridas.py:52`, donde `_consultar_corrida`
       rechaza cualquier identificador que contenga `/`. Este test se escribe y se confirma en rojo
       **antes** de tocar `rutas_corridas.py`.
-- [ ] 9.2 GREEN: insertar la comprobación de `GET /corridas/{id}/embudo` **antes** de la rama
+- [x] 9.2 GREEN: insertar la comprobación de `GET /corridas/{id}/embudo` **antes** de la rama
       genérica de la línea 52. **No tocar** la rama de `/reintentar` (línea 54): sigue guardada por
       `metodo == "POST"` y funciona correctamente hoy — reordenarla es riesgo sin beneficio y queda
       fuera de este cambio.
-- [ ] 9.3 RED: test de no regresión explícito — un `POST /corridas/{id}/reintentar` sigue llegando
+- [x] 9.3 RED: test de no regresión explícito — un `POST /corridas/{id}/reintentar` sigue llegando
       a su rama sin cambio de comportamiento tras 9.2.
-- [ ] 9.4 RED: test que confirma que `ServicioCorridas.crear_corrida(ruta)` delega en
+- [x] 9.4 RED: test que confirma que `ServicioCorridas.crear_corrida(ruta)` delega en
       `LanzadorCorrida` y devuelve un estado real — falla porque hoy es un doble.
-- [ ] 9.5 GREEN: crear `src/anonimizacion/web/servicio_corridas.py`: `crear_corrida` delega en
+- [x] 9.5 GREEN: crear `src/anonimizacion/web/servicio_corridas.py`: `crear_corrida` delega en
       `LanzadorCorrida`; `consultar_corrida` lee el embudo real vía `embudo_corrida.construir_embudo`
       y mapea `documentos_pendientes = sin_desenlace`, `cuarentenas = apartados`;
       `reintentar_corrida` lanza `NotImplementedError`.
-- [ ] 9.6 RED: test que confirma que `GET /corridas/{id}/embudo` responde el contrato JSON completo
+- [x] 9.6 RED: test que confirma que `GET /corridas/{id}/embudo` responde el contrato JSON completo
       (`corrida_id, estado, generado_en, entraron, publicados, apartados, residuo, cierra, marcha,
       etapas, throughput_por_hora, estimacion`) contra un motor real con datos sintéticos.
-- [ ] 9.7 GREEN: implementar la ruta, serializando `Embudo` al contrato exacto del diseño.
-- [ ] 9.8 RED: test que confirma que `POST /corridas/{id}/reintentar` responde 501 con
+- [x] 9.7 GREEN: implementar la ruta, serializando `Embudo` al contrato exacto del diseño.
+- [x] 9.8 RED: test que confirma que `POST /corridas/{id}/reintentar` responde 501 con
       `{"codigo": "reintento_no_implementado"}` — no un 202 falso.
-- [ ] 9.9 GREEN: capturar `NotImplementedError` en la ruta y responder 501 con ese cuerpo.
-- [ ] 9.10 RED — arranque sin base de lectura (spec `portal-de-corridas` delta): la aplicación WSGI
+- [x] 9.9 GREEN: capturar `NotImplementedError` en la ruta y responder 501 con ese cuerpo.
+- [x] 9.10 RED — arranque sin base de lectura (spec `portal-de-corridas` delta): la aplicación WSGI
       se construye con el motor de lectura en `None` y `GET /corridas/{id}/embudo` responde con no
       disponibilidad (503), sin que la construcción de la app falle.
-- [ ] 9.11 GREEN: aceptar `motor: Engine | None` en la raíz de composición web; las rutas que
+- [x] 9.11 GREEN: aceptar `motor: Engine | None` en la raíz de composición web; las rutas que
       dependen de él devuelven 503 con cuerpo explícito cuando es `None`.
-- [ ] 9.12 REFACTOR: `pytest tests/web/` en verde; confirmar que no se tocó ninguna línea de la rama
+- [x] 9.12 REFACTOR: `pytest tests/web/` en verde; confirmar que no se tocó ninguna línea de la rama
       `/reintentar` salvo el manejo del 501.
+
+> **Hallazgo de apply, cerrado tras revisión del coordinador**: `ServicioCorridasReal` lee
+> `corrida.estado` para el campo `"estado"` del contrato, pero `LanzadorCorrida.lanzar` (Fase 6, ya
+> mergeada) avanzaba `Corrida` a `INVENTARIANDO`/`PROCESANDO` **sólo en memoria** — nunca persistía
+> esa transición en `CorridaOrm.estado`. Con `ServicioCorridasReal` como primer consumidor real de
+> ese campo, la fila quedaba en `"creada"` para siempre y el JSON del embudo mentía durante las ocho
+> horas de la corrida.
+>
+> **Se cerró, acotado a exactamente las tres transiciones que `design.md` (líneas 164-168) reconoce
+> como reales**: `RepositorioCorridas` gana `actualizar_corrida(corrida, *, version_esperada)`,
+> mismo patrón de bloqueo optimista que `actualizar_documento` — nada nuevo inventado.
+> `LanzadorCorrida.lanzar` la llama inmediatamente después de cada uno de sus dos `avanzar_a`
+> (`CREADA → INVENTARIANDO` y `INVENTARIANDO → PROCESANDO`); un conflicto de versión ahí es
+> corrupción real (es la única escritora de esa corrida en todo su recorrido), así que se propaga
+> como `RuntimeError` en vez de tragarse. **No se agregó ningún cierre en estados terminales**: eso
+> sigue expresamente fuera de alcance (`design.md`, "Fuera de alcance" y Decisión 8 — "el panel
+> deriva la marcha de la evidencia, no del estado"). Esta persistencia es sólo trazabilidad
+> administrativa de las tres transiciones que sí ocurren; no sustituye ni toca esa decisión.
+>
+> Verificado con tests: `tests/ingesta/test_repositorio_corridas.py::test_repositorio_actualiza_estado_de_corrida_solo_con_version_esperada`,
+> `tests/ingesta/test_lanzador_corrida.py::test_lanzar_persiste_las_transiciones_de_estado_de_la_corrida`,
+> `tests/web/test_servicio_corridas.py::test_crear_corrida_delega_en_el_lanzador_real` (actualizado)
+> y `test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada` (nuevo).
+>
+> **Decisión de diseño no explícita, tomada durante el apply**: `documentos_pendientes` en
+> `EstadoCorridaPortal` (el resumen agregado legado de `/corridas/{id}`, no el JSON completo del
+> embudo) se mapea directo a `embudo.residuo` **con signo**, igual que el contrato nuevo — no se
+> agregó ningún `max(0, …)` para ese campo tampoco, aunque `design.md` sólo fija explícitamente "sin
+> clamping" para el contrato del embudo. Se resolvió a favor de la misma invariante en los dos
+> lugares: un descuadre real tiene que verse en el resumen agregado igual que en el JSON completo,
+> nunca disimulado en un campo que además queda expuesto en una ruta más vieja.
+
+> **Corrección del presupuesto de este tramo (post-revisión fresca)**: el reporte de apply había
+> caracterizado el exceso sobre el estimado (~380-390 líneas, `design.md`) como "casi todo cobertura
+> de tests, no lógica de producción". Los números reales lo desmienten:
+>
+> | | Líneas reales | Archivos |
+> |---|---|---|
+> | Producción (`src/`) | **555** | `embudo_corrida.py`, `servicio_corridas.py`, `rutas_corridas.py`, `repositorio_corridas.py`, `lanzador_corrida.py` |
+> | Tests | 880 | `test_embudo_corrida.py`, `test_servicio_corridas.py`, `test_rutas_corridas.py`, `test_embudo_corrida_integracion.py`, `test_repositorio_corridas.py`, `test_lanzador_corrida.py` |
+> | **Total** | **1.435** | (`git diff --stat main...HEAD` sobre este tramo) |
+>
+> La columna "Líneas est." de la tabla de tramos (arriba, ~380-390) se refiere a producción, igual
+> que en las demás filas — así que la producción sola de este tramo ya superó ese estimado en
+> **~46 %**, sin contar los tests. Caracterizarlo como "fueron los tests" era impreciso y dejaba una
+> base falsa para la próxima estimación.
+>
+> **Por qué salió más grande de lo previsto**: el estimado original no contempló (a) las tres
+> consultas agregadas con su lógica de combinación en Python (`_min_opcional`/`_max_opcional`,
+> ensamblado de `perdidas` por etapa/código) en vez de una sola consulta simple; (b) los seis bordes
+> de "Rango de tiempo restante" como una función propia (`_estimar`) con su propia complejidad
+> condicional; (c) `ServicioCorridasReal` completo (crear/consultar/reintentar + serialización del
+> contrato JSON) contado dentro de "modelo de lectura y JSON" sin una línea propia en la tabla de
+> tramos; y (d) el cierre del hallazgo de persistencia de `corrida.estado`
+> (`RepositorioCorridas.actualizar_corrida` + su cableado en `LanzadorCorrida`), que no estaba
+> previsto en ningún estimado de este tramo porque no era parte del enunciado original de la Fase 9.
 
 ## Fase 10 (Tramo 5): pantalla y punto de entrada
 
