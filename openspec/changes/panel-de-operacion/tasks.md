@@ -326,31 +326,35 @@ seguir con el Tramo 3.
 
 ## Fase 7 (Tramo 3): observabilidad cableada en la raíz de composición (Decisión 7)
 
-- [ ] 7.1 RED — `test_la_fabrica_cablea_la_observabilidad`: espía de `ColectorMetricas`/
+- [x] 7.1 RED — `test_la_fabrica_cablea_la_observabilidad`: espía de `ColectorMetricas`/
       `BitacoraSegura` inyectado vía `construir_fabrica_ejecutor(metricas=, bitacora=)`, procesar
       un grupo real de tres PDFs por `tareas.procesar_grupo` (mismo molde que
       `tests/integracion/test_wiring_produccion.py`) y confirmar que el espía recibió
       observaciones — falla porque los parámetros no existen todavía.
-- [ ] 7.2 GREEN: agregar `metricas: ColectorMetricas | None = None` y
+- [x] 7.2 GREEN: agregar `metricas: ColectorMetricas | None = None` y
       `bitacora: BitacoraSegura | None = None` a `construir_fabrica_ejecutor`, con la semántica de
       `dormir`/`resolver_claves` (`None` = producción); cablear dentro de `_fabrica()`.
-- [ ] 7.3 RED — `test_sin_inyeccion_explicita_igual_hay_colector`: construir el ejecutor SIN pasar
+- [x] 7.3 RED — `test_sin_inyeccion_explicita_igual_hay_colector`: construir el ejecutor SIN pasar
       nada e introspeccionar que trae un colector/bitácora reales, no `None`.
-- [ ] 7.4 GREEN: confirmar/ajustar el default de producción dentro de `_fabrica()` si 7.3 lo exige.
-- [ ] 7.5 RED — `test_un_colector_que_explota_no_tumba_el_grupo`: colector que lanza excepción en
+- [x] 7.4 GREEN: confirmar/ajustar el default de producción dentro de `_fabrica()` si 7.3 lo exige.
+- [x] 7.5 RED — `test_un_colector_que_explota_no_tumba_el_grupo`: colector que lanza excepción en
       todos sus métodos, procesar un grupo real de tres PDFs y confirmar que los tres se publican
       igual (invariante 3 de la propuesta).
-- [ ] 7.6 GREEN: crear `_observar_sin_romper` en `pipeline/ejecutor.py`; envolver con él
+- [x] 7.6 GREEN: crear `_observar_sin_romper` en `pipeline/ejecutor.py`; envolver con él
       `incrementar_documento_procesado` (`_emitir`), `incrementar_fallo` (`_a_fallo`), y
       `observar_duracion_ms` (parámetro nuevo `observar: Callable[[str, float], None] | None = None`
       en `_ejecutar_con_reintentos`).
-- [ ] 7.7 RED: test que confirma que `bitacora.registrar(resultado.resumen_trazable())` se llama
+- [x] 7.7 RED: test que confirma que `bitacora.registrar(resultado.resumen_trazable())` se llama
       exactamente una vez por resultado al cerrar `procesar_lote`.
-- [ ] 7.8 GREEN: agregar esa llamada al cierre de `procesar_lote`, envuelta también en
+- [x] 7.8 GREEN: agregar esa llamada al cierre de `procesar_lote`, envuelta también en
       `_observar_sin_romper`.
-- [ ] 7.9 REFACTOR: `pytest tests/pipeline/` en verde; correr los ensayos de carga de mil y diez mil
+- [x] 7.9 REFACTOR: `pytest tests/pipeline/` en verde; correr los ensayos de carga de mil y diez mil
       y confirmar que el tiempo por documento no se degrada frente a la última corrida validada
       (referencia: `openspec/changes/escritura-idempotente/tasks.md`, Fase 12).
+
+> **Nota de alcance (apply, 7.9)**: por instrucción explícita del maintainer para esta ronda, se
+> corrió SOLO el ensayo de mil documentos (dos veces), NO el de diez mil — se evalúa aparte. Ver
+> `apply-progress` para los cuatro números crudos y la decisión de no interpretarlos acá.
 
 ## Fase 8 (Tramo 4): `embudo_corrida.py` — modelo de lectura
 
