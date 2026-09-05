@@ -427,34 +427,34 @@ seguir con el Tramo 3.
 
 ## Fase 8 (Tramo 4): `embudo_corrida.py` — modelo de lectura
 
-- [ ] 8.1 RED: en `tests/web/test_embudo_corrida.py` (nuevo), serie de timestamps sintética que
+- [x] 8.1 RED: en `tests/web/test_embudo_corrida.py` (nuevo), serie de timestamps sintética que
       confirma el orden de las siete etapas (`ingesta, extraccion, parseo, reconciliacion,
       coordinacion, pseudonimizacion, salida`) — el orden de ejecución, no el del enum `Etapa`.
-- [ ] 8.2 GREEN: crear `src/anonimizacion/web/embudo_corrida.py` con `Embudo`, `PerdidaEtapa`,
+- [x] 8.2 GREEN: crear `src/anonimizacion/web/embudo_corrida.py` con `Embudo`, `PerdidaEtapa`,
       `Estimacion` (dataclasses frozen) y la lista explícita de las siete etapas.
-- [ ] 8.3 RED — **el centinela de solapamiento, parte aritmética (no diluir)**: embudo sintético con
+- [x] 8.3 RED — **el centinela de solapamiento, parte aritmética (no diluir)**: embudo sintético con
       más apartados que inventariados produce `residuo < 0` y `cierra is False`, sin ningún
       `max(0, …)` en el camino. Un test que sólo verificara que la suma cierra sería vacío:
       `desconocido` está definido como resto y cerraría siempre.
-- [ ] 8.4 GREEN: `residuo = entraron - (publicados + apartados)`, expuesto **siempre con signo**;
+- [x] 8.4 GREEN: `residuo = entraron - (publicados + apartados)`, expuesto **siempre con signo**;
       `cierra = residuo >= 0`. Sin clamping en ningún punto del cálculo.
-- [ ] 8.5 RED: test que confirma que un documento apartado por `artefacto_sobretamano` cuenta en la
+- [x] 8.5 RED: test que confirma que un documento apartado por `artefacto_sobretamano` cuenta en la
       barra de ingesta pero NO en `throughput_por_hora`.
-- [ ] 8.6 GREEN: excluir `artefacto_sobretamano` del cálculo de throughput, conservándolo en el
+- [x] 8.6 GREEN: excluir `artefacto_sobretamano` del cálculo de throughput, conservándolo en el
       conteo de apartados por etapa.
-- [ ] 8.7 RED: serie sintética que cubre los seis bordes de "Rango de tiempo restante":
+- [x] 8.7 RED: serie sintética que cubre los seis bordes de "Rango de tiempo restante":
       `entraron == 0` → "midiendo"; `terminados < 200` → "midiendo"; ventana reciente vacía → "sin
       avance en los últimos 5 minutos"; `restante == 0` → "todos los documentos tienen desenlace";
       `restante < 0` → "descuadre"; caso disponible → rango con cota optimista y pesimista.
-- [ ] 8.8 GREEN: implementar las tres consultas agregadas del diseño, la memoización de un segundo
+- [x] 8.8 GREEN: implementar las tres consultas agregadas del diseño, la memoización de un segundo
       por `corrida_id`, y las reglas de borde de 8.7.
-- [ ] 8.9 RED: en `tests/integracion/`, inventariar documentos, publicar algunos, apartar otros, y
+- [x] 8.9 RED: en `tests/integracion/`, inventariar documentos, publicar algunos, apartar otros, y
       afirmar que el embudo da los números correctos **mientras todas las filas de
       `documento_corrida` siguen en `INVENTARIADO`** — el centinela contra la máquina de estados
       (Decisión 5). Si alguien acopla el embudo al estado, este test se pone rojo.
-- [ ] 8.10 GREEN: confirmar que `construir_embudo` nunca lee `documento_corrida.estado` (sólo
+- [x] 8.10 GREEN: confirmar que `construir_embudo` nunca lee `documento_corrida.estado` (sólo
       `count(*)`); ajustar si 8.9 revela una lectura indebida.
-- [ ] 8.11 RED — **el centinela de solapamiento, camino real completo (Punto 1, no diluir)**:
+- [x] 8.11 RED — **el centinela de solapamiento, camino real completo (Punto 1, no diluir)**:
       destino de escritura falso donde `escribir_registro` **commitea** el `estudio`, la conexión
       se cae antes de que el cliente vea el OK, `_ejecutar_con_reintentos` reintenta con `dormir`
       inyectado, los reintentos se **agotan**, y `ERROR_TRANSITORIO_AGOTADO` envía el mismo
@@ -462,13 +462,28 @@ seguir con el Tramo 3.
       (Fase 5), construir el embudo sobre el resultado (Fase 8), y afirmar `residuo < 0` y
       `cierra is False`. Sin fabricar el estado inconsistente a mano — el camino tiene que ser el
       real y alcanzable descrito en `design.md`, Decisión 9.
-- [ ] 8.12 GREEN: ajustes residuales si 8.11 revela algún punto donde el residuo se recortara o el
+- [x] 8.12 GREEN: ajustes residuales si 8.11 revela algún punto donde el residuo se recortara o el
       solapamiento no se reflejara (no debería requerir lógica nueva si 8.4 está completa).
-- [ ] 8.13 RED: test que confirma que el residuo es cero al terminar una corrida sintética completa
+- [x] 8.13 RED: test que confirma que el residuo es cero al terminar una corrida sintética completa
       **sin** fallos de infraestructura — cierra la invariante también en el lado positivo.
-- [ ] 8.14 REFACTOR: `pytest tests/web/test_embudo_corrida.py` y los de integración de esta fase en
+- [x] 8.14 REFACTOR: `pytest tests/web/test_embudo_corrida.py` y los de integración de esta fase en
       verde; confirmar por lectura que `embudo_corrida.py` nunca proyecta `ruta_autorizada` ni
       `huella_contenido`.
+
+> **Nota de apply (8.11/8.12)**: no hizo falta ningún ajuste en 8.12 — 8.4 (residuo con signo, sin
+> `max(0, …)`) ya cubría el caso real. El centinela corre `EjecutorPipeline.procesar_lote` real con
+> un destino que envuelve `EscritorPostgres` real: el primer intento de `escribir_registro`
+> commitea el `estudio` de verdad y LUEGO lanza `ConnectionError` (simulando la conexión caída
+> antes del OK); los reintentos siguientes encuentran la fila ya escrita (el `SELECT` previo de
+> `EscritorPostgres` la detecta) pero la excepción simulada persiste, así que los reintentos se
+> agotan igual y `ERROR_TRANSITORIO_AGOTADO` manda el documento a cuarentena. Sin ningún estado
+> fabricado a mano.
+>
+> **Decisión de diseño no explícita en `design.md`, tomada durante el apply**: la prioridad entre
+> "restante < 0" (descuadre) y "ventana reciente vacía" (sin avance) no está fijada en el diseño —
+> ambos bordes se listan como puntos independientes. Se resolvió a favor de reportar primero lo más
+> grave (`descuadre` antes que `sin_avance`), documentado en el docstring de `_estimar` en
+> `embudo_corrida.py`.
 
 ## Fase 9 (Tramo 4): `servicio_corridas.py`, rutas, orden de despacho (Punto 4, no diluir)
 
