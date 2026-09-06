@@ -61,7 +61,7 @@ def _valor_cercano(lineas: list[str], indice: int) -> str | None:
     return None
 
 
-def _asociacion_ecg(referencia: object, esperado: str, pagina: str) -> bool:
+def _asociacion_ecg(referencia: object, esperado: str, pagina: str) -> bool:  # noqa: C901 -- deuda conocida, ver pyproject.toml
     """Comprueba que el selector ECG ancle el valor a su etiqueta real."""
     selector = getattr(referencia, "selector")
     if selector == "ecg.nombre":

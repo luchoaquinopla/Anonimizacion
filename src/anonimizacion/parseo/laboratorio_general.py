@@ -286,7 +286,7 @@ def _completar_nombre_partido(nombre_prueba: str, lineas: list[str], indice: int
     return nombre_completo, 1
 
 
-def _extraer_resultados(
+def _extraer_resultados(  # noqa: C901 -- deuda conocida, ver pyproject.toml
     pagina: str, seccion_inicial: str | None = None
 ) -> tuple[tuple[ResultadoLaboratorio, ...], str | None]:
     resultados: list[ResultadoLaboratorio] = []

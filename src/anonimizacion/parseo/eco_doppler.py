@@ -271,7 +271,7 @@ def _parsear_fila_medidas_dos_columnas(linea: str) -> list[MedidaEco]:
     return medidas
 
 
-def _parsear_cuerpo(
+def _parsear_cuerpo(  # noqa: C901 -- deuda conocida, ver pyproject.toml
     paginas: tuple[str, ...],
 ) -> _CuerpoEco:
     medidas: list[MedidaEco] = []

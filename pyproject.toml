@@ -45,21 +45,25 @@ select = ["E4", "E7", "E9", "F", "C901"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-[tool.ruff.lint.per-file-ignores]
-# Deuda de complejidad conocida: parsers y reconciliadores calibrados
-# contra muestras reales de PDFs clínicos (ECG Mortara, Eco Doppler,
-# laboratorio general). No se refactorizan en esta limpieza porque tocar
-# su lógica sin un corpus de muestras nuevas para validar contra ellas es
-# riesgo puro de romper una calibración fina y silenciosa. Para bajarles
-# la complejidad con seguridad hace falta: (a) un corpus de PDFs reales
-# representativo para regression-test antes/después del refactor, y (b)
-# descomponer cada función en sub-pasos con nombre propio validados
-# contra ese corpus, no solo contra los fixtures sintéticos actuales.
-"src/anonimizacion/reconciliacion/ecg_mortara.py" = ["C901"]
-"src/anonimizacion/reconciliacion/eco_doppler.py" = ["C901"]
-"src/anonimizacion/parseo/eco_doppler.py" = ["C901"]
-"src/anonimizacion/parseo/laboratorio_general.py" = ["C901"]
+# Deuda de complejidad conocida (C901): seis funciones puntuales en
+# reconciliacion/ecg_mortara.py, reconciliacion/eco_doppler.py,
+# parseo/eco_doppler.py y parseo/laboratorio_general.py superan el límite.
+# Son parsers y reconciliadores calibrados contra muestras reales de PDFs
+# clínicos; no se refactorizan en esta limpieza porque tocar su lógica sin
+# un corpus de muestras nuevas para validar contra ellas es riesgo puro de
+# romper una calibración fina y silenciosa. Para bajarles la complejidad
+# con seguridad hace falta: (a) un corpus de PDFs reales representativo
+# para regression-test antes/después del refactor, y (b) descomponer cada
+# función en sub-pasos con nombre propio validados contra ese corpus, no
+# solo contra los fixtures sintéticos actuales.
+#
+# La exención vive función por función, vía `# noqa: C901` en la línea de
+# cada `def` -- no por archivo -- para que cualquier función NUEVA que
+# aterrice en esos mismos archivos (p. ej. cinecoronariografía) siga
+# chocando contra el límite. Ver cada `noqa` en el código para la lista
+# completa.
 
+[tool.ruff.lint.per-file-ignores]
 # Import sin uso preexistente, fuera de alcance de esta limpieza: el
 # archivo es un test del panel (scripts/servir_panel.py), explícitamente
 # excluido de esta rama.
