@@ -25,8 +25,8 @@ def test_repositorio_reanuda_documento_desde_ultimo_estado_persistido() -> None:
     documento.avanzar_a(EstadoDocumentoCorrida.CLASIFICADO)
 
     repositorio.crear_corrida(corrida)
-    assert repositorio.registrar_documento(documento) is True
-    assert repositorio.registrar_documento(documento) is False
+    assert repositorio.registrar_documentos([documento]) == 1
+    assert repositorio.registrar_documentos([documento]) == 0
 
     reanudado = repositorio.documentos_para_reanudar(corrida.id_corrida)
 
@@ -41,7 +41,7 @@ def test_repositorio_actualiza_estado_solo_con_version_esperada() -> None:
     corrida = Corrida.crear("corrida-1")
     documento = _documento(corrida.id_corrida)
     repositorio.crear_corrida(corrida)
-    repositorio.registrar_documento(documento)
+    repositorio.registrar_documentos([documento])
     documento.avanzar_a(EstadoDocumentoCorrida.CLASIFICADO)
 
     assert repositorio.actualizar_documento(documento, version_esperada=0) is True
@@ -78,11 +78,10 @@ def test_repositorio_actualiza_estado_de_corrida_solo_con_version_esperada() -> 
 
 # --- registrar_documentos por lote (Decisión 5, design.md) -------------------
 #
-# Motivo medido: `registrar_documento` abre una `Session` y una transacción
-# POR DOCUMENTO -- 100.000 transacciones sueltas son minutos de arranque para
-# un trabajo que en una sesión por millar son segundos. `registrar_documento`
-# se conserva sin cambios (y sus tests también); esto es la versión por lote,
-# con la misma guarda de idempotencia por `(corrida_id, huella_contenido)`.
+# Motivo medido: abrir una `Session` y una transacción POR DOCUMENTO -- 100.000
+# transacciones sueltas son minutos de arranque para un trabajo que en una
+# sesión por millar son segundos. Esta es la versión por lote, con la misma
+# guarda de idempotencia por `(corrida_id, huella_contenido)`.
 
 
 def _documentos(corrida_id: str, cantidad: int) -> list[DocumentoCorrida]:
@@ -96,9 +95,7 @@ def _documentos(corrida_id: str, cantidad: int) -> list[DocumentoCorrida]:
     ]
 
 
-def test_registrar_documentos_no_existe_todavia() -> None:
-    """6.1: falla porque el método no existe -- confirmado RED contra el
-    repositorio actual, que solo tiene `registrar_documento` (singular)."""
+def test_registrar_documentos_inventaria_todos_los_documentos_del_lote() -> None:
     motor = sa.create_engine("sqlite:///:memory:")
     Base.metadata.create_all(motor)
     repositorio = RepositorioCorridas(motor)

@@ -17,7 +17,7 @@ def test_corrida_avanza_por_estados_esperados() -> None:
     assert corrida.version == 5
 
 
-def test_documento_rechaza_huella_duplicada_y_reanuda_desde_ultimo_estado_confirmado() -> None:
+def test_documento_reanuda_desde_ultimo_estado_confirmado() -> None:
     corrida = Corrida.crear("corrida-1")
     documento = DocumentoCorrida.inventariado(
         corrida_id=corrida.id_corrida,
@@ -27,6 +27,4 @@ def test_documento_rechaza_huella_duplicada_y_reanuda_desde_ultimo_estado_confir
     documento.avanzar_a(EstadoDocumentoCorrida.CLASIFICADO)
     documento.avanzar_a(EstadoDocumentoCorrida.EXTRAIDO_MINIMO)
 
-    assert corrida.registrar_documento(documento) is True
-    assert corrida.registrar_documento(documento) is False
     assert documento.reanudar_desde() is EstadoDocumentoCorrida.EXTRAIDO_MINIMO

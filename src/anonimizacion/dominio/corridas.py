@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .estados_corrida import EstadoCorrida, EstadoDocumentoCorrida
 
@@ -56,7 +56,6 @@ class Corrida:
     id_corrida: str
     estado: EstadoCorrida = EstadoCorrida.CREADA
     version: int = 0
-    _documentos_por_huella: dict[str, DocumentoCorrida] = field(default_factory=dict, repr=False)
 
     @classmethod
     def crear(cls, id_corrida: str) -> Corrida:
@@ -67,11 +66,3 @@ class Corrida:
             raise ValueError(f"transicion de corrida invalida: {self.estado.value} -> {destino.value}")
         self.estado = destino
         self.version += 1
-
-    def registrar_documento(self, documento: DocumentoCorrida) -> bool:
-        if documento.corrida_id != self.id_corrida:
-            raise ValueError("el documento pertenece a otra corrida")
-        if documento.huella_contenido in self._documentos_por_huella:
-            return False
-        self._documentos_por_huella[documento.huella_contenido] = documento
-        return True
