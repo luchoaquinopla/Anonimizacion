@@ -9,16 +9,27 @@ centinela de claves: `{id_documento, uri, sha256}`).
 Este módulo no importa `pipeline`: sigue la misma regla que `ingesta/fuente.py`
 (`SumideroCuarentena` propio, satisfecho por tipado estructural).
 
-Las transiciones `CREADA -> INVENTARIANDO -> PROCESANDO` SÍ se persisten
-(hallazgo post-Fase 9, `panel-de-operacion`): `Corrida.avanzar_a` las valida
-en memoria, pero sin escribirlas de vuelta con
-`RepositorioCorridas.actualizar_corrida` la fila de `corrida` queda en
-`creada` para siempre y el campo `estado` del JSON del embudo
-(`ServicioCorridasReal`) miente durante toda la corrida. No se persiste
-ningún cierre en estados terminales -- eso sigue fuera de alcance
-(design.md, "Fuera de alcance"): el panel deriva la marcha de la evidencia,
-no del estado (Decisión 8); esto es sólo trazabilidad administrativa de las
-tres transiciones que sí ocurren de verdad.
+La transición `CREADA -> INVENTARIANDO` SÍ se persiste (hallazgo post-Fase 9,
+`panel-de-operacion`): `Corrida.avanzar_a` la valida en memoria, pero sin
+escribirla de vuelta con `RepositorioCorridas.actualizar_corrida` la fila de
+`corrida` queda en `creada` para siempre y el campo `estado` del JSON del
+embudo (`ServicioCorridasReal`) miente durante toda la corrida.
+
+`INVENTARIANDO -> PROCESANDO` NO la hace `lanzar()` (cierre de silencio de
+auditoría, `fix/silencios-de-ingesta-y-panel`): inventariar y procesar son
+cosas distintas, y `lanzar()` sólo inventaría -- no encola ni ejecuta nada.
+Antes avanzaba igual el estado hasta `PROCESANDO`, así que una corrida creada
+vía `POST /corridas` quedaba diciendo "procesando" para siempre sin que nada
+la procesara. Esa transición vive en `marcar_procesando`, que debe llamar
+quien realmente vaya a procesar el inventario (hoy `scripts/procesar_carpeta.py`,
+el único llamador de `trabajadores.tareas.procesar_grupo` en todo el
+repositorio; a futuro, el despachador real) -- quien avanza el estado tiene
+que ser quien hace el trabajo.
+
+No se persiste ningún cierre en estados terminales -- eso sigue fuera de
+alcance (design.md, "Fuera de alcance"): el panel deriva la marcha de la
+evidencia, no del estado (Decisión 8); esto es sólo trazabilidad
+administrativa de las transiciones que sí ocurren de verdad.
 """
 
 from __future__ import annotations
@@ -65,18 +76,22 @@ class ResultadoLanzamiento:
 
 @dataclass(frozen=True)
 class LanzadorCorrida:
-    """Crea la corrida, inventaría por el puerto de ingesta y avanza el estado.
+    """Crea la corrida y la inventaría por el puerto de ingesta.
 
     `repositorio.crear_corrida` se llama ANTES de inventariar: `documento_corrida.corrida_id`
     es FK contra `corrida.id_corrida` (sin FK no hay dónde insertar el
-    inventario). Las transiciones `INVENTARIANDO`/`PROCESANDO` se validan en
-    el objeto `Corrida` en memoria y se persisten con
-    `RepositorioCorridas.actualizar_corrida` inmediatamente después de cada
-    una -- mismo bloqueo optimista que ya usa `actualizar_documento`. `lanzar`
-    es la única escritora de esta corrida en todo su recorrido (nadie más
-    llama `avanzar_a` sobre ella), así que un conflicto de versión acá sería
-    una corrupción real, no una carrera esperable: se deja propagar el
+    inventario). La transición `INVENTARIANDO` se valida en el objeto
+    `Corrida` en memoria y se persiste con `RepositorioCorridas.actualizar_corrida`
+    inmediatamente después -- mismo bloqueo optimista que ya usa
+    `actualizar_documento`. `lanzar` es la única escritora de esta transición
+    en todo el recorrido de la corrida (nadie más llama `avanzar_a` con
+    `INVENTARIANDO` sobre ella), así que un conflicto de versión acá sería una
+    corrupción real, no una carrera esperable: se deja propagar el
     `RuntimeError` en vez de tragarlo.
+
+    `lanzar` NO avanza a `PROCESANDO`: inventariar y procesar son cosas
+    distintas, y `lanzar` sólo inventaría -- no encola ni ejecuta nada. Quien
+    avanza el estado tiene que ser quien hace el trabajo; ver `marcar_procesando`.
     """
 
     repositorio: RepositorioCorridas
@@ -109,42 +124,56 @@ class LanzadorCorrida:
         ]
         self.repositorio.registrar_documentos(documentos, tamano_lote=self.tamano_lote_inventario)
 
-        self._avanzar_y_persistir(corrida, EstadoCorrida.PROCESANDO)
-
         referencias = tuple(
             {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
             for artefacto in artefactos
         )
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
 
+    def marcar_procesando(self, corrida_id: str) -> None:
+        """Avanza `corrida_id` a `PROCESANDO` y persiste -- o falla ruidoso.
+
+        Separado de `lanzar()` (cierre de silencio de auditoría,
+        `fix/silencios-de-ingesta-y-panel`): inventariar y procesar son cosas
+        distintas, y el que sólo inventaría no puede afirmar que está
+        procesando. Debe llamarlo quien REALMENTE va a procesar el inventario,
+        inmediatamente antes de encolar/ejecutar -- hoy
+        `scripts/procesar_carpeta.py` (el único llamador de
+        `trabajadores.tareas.procesar_grupo` en todo el repositorio), a futuro
+        el despachador real que la reemplace.
+
+        Lee la corrida desde el repositorio (no la recibe en memoria): a
+        diferencia de `lanzar()`, el llamador de este método puede ser un
+        proceso distinto del que la creó (p. ej. un worker que retoma
+        `corrida_id` desde una cola), así que no puede asumir que tiene el
+        objeto `Corrida` a mano.
+        """
+        corrida = self.repositorio.obtener_corrida(corrida_id)
+        if corrida is None:
+            raise ValueError(f"no existe una corrida con id {corrida_id}")
+        self._avanzar_y_persistir(corrida, EstadoCorrida.PROCESANDO)
+
     def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:
         """Avanza `corrida` en memoria y persiste, o falla ruidoso.
 
         Nota operativa (revisión fresca, panel-de-operacion): si este
-        `RuntimeError` se dispara en la SEGUNDA llamada (la transición a
-        `PROCESANDO`), el inventario ya se escribió y comiteó por completo
-        (`registrar_documentos` corrió antes, y es lo único que se ejecuta
-        entre las dos llamadas) -- sólo la fila de `corrida` quedó sin
-        avanzar, trabada en `inventariando`. Hoy esto sólo puede pasar por
-        corrupción externa a la fila de `corrida` (un `UPDATE` manual, una
+        `RuntimeError` se dispara, la fila de `corrida` quedó sin avanzar a
+        `destino`, trabada en el estado anterior. Hoy esto sólo puede pasar
+        por corrupción externa a la fila de `corrida` (un `UPDATE` manual, una
         migración que le tocó la columna `version`): cada `lanzar()` genera
-        su propio `corrida_id` con `uuid4()`, así que no hay dos llamadores
-        compitiendo por la misma fila -- no hay carrera real que lo dispare
-        en operación normal.
+        su propio `corrida_id` con `uuid4()`, y `marcar_procesando()` lee la
+        versión real justo antes de avanzar, así que no hay dos llamadores
+        compitiendo por la misma fila en operación normal.
 
-        Si aparece de todos modos: NO hay una segunda corrida a la que
-        migrar el inventario ya escrito (`documento_corrida` está atado a
-        este `corrida_id` por FK) y NO hay un método para forzar el avance
-        de `corrida.estado` sin pasar por `Corrida.avanzar_a` (a propósito:
+        Si aparece de todos modos: NO hay un método para forzar el avance de
+        `corrida.estado` sin pasar por `Corrida.avanzar_a` (a propósito:
         saltarse esa validación es la misma clase de puerta trasera que este
         cambio evita en otros lados). La recuperación manual correcta es leer
-        `corrida.version` real desde la base, confirmar que el inventario
-        de `documento_corrida` para este `corrida_id` está completo, y
-        corregir `corrida.estado`/`version` a mano contra esa versión real
-        -- no reintentar `lanzar()`, que generaría un `corrida_id` nuevo y
-        un inventario duplicado del mismo directorio. No hay automatismo
-        para este caso: es deliberado, para no enmascarar la corrupción que
-        lo causó.
+        `corrida.version` real desde la base y corregir `corrida.estado`/`version`
+        a mano contra esa versión real -- no reintentar la operación que
+        falló, que podría duplicar trabajo según el llamador. No hay
+        automatismo para este caso: es deliberado, para no enmascarar la
+        corrupción que lo causó.
         """
         version_antes = corrida.version
         corrida.avanzar_a(destino)

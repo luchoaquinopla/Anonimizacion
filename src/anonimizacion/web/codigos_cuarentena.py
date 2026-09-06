@@ -34,4 +34,5 @@ EXPLICACION_POR_CODIGO: dict[str, str] = {
     # bytes), así que necesita una entrada genérica acá para no mostrar el
     # código crudo.
     "artefacto_sobretamano": "El archivo excede el tamaño máximo permitido.",
+    "formato_no_soportado": "El archivo no es un formato que el sistema pueda procesar.",
 }

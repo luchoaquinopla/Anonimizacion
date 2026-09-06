@@ -25,6 +25,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento
+from anonimizacion.dominio.estados_corrida import EstadoCorrida
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Cuarentena, Estudio
 from anonimizacion.trabajadores import tareas
@@ -128,6 +129,25 @@ def test_el_script_usa_lanzador_corrida_y_propaga_corrida_id_hasta_el_procesamie
     assert all(
         estudio.corrida_id == corridas[0].id_corrida for estudio in estudios
     ), "corrida_id debe llegar hasta el procesamiento real, no quedar en None"
+
+
+def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_path, motor: MotorPii) -> None:
+    """`LanzadorCorrida.lanzar()` sólo inventaría (ver `test_lanzador_corrida.py`).
+    Este script es quien de verdad llama a `procesar_grupo`, así que es quien
+    debe afirmar `PROCESANDO` -- inventariar y procesar son cosas distintas, y
+    el que sólo inventaría no puede afirmar que está procesando."""
+    _grupo_completo(tmp_path, "s3")
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 0
+    with Session(engine) as sesion:
+        (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert corrida.estado == EstadoCorrida.PROCESANDO.value
 
 
 def test_el_apartado_por_sobretamano_antes_de_la_huella_queda_atribuido_a_la_corrida(

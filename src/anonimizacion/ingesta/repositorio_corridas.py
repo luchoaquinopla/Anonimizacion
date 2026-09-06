@@ -8,7 +8,7 @@ from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.corridas import Corrida, DocumentoCorrida
-from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
+from anonimizacion.dominio.estados_corrida import EstadoCorrida, EstadoDocumentoCorrida
 from anonimizacion.salida.modelos_orm import CorridaOrm, DocumentoCorridaOrm
 
 _ESTADOS_TERMINALES = {
@@ -34,6 +34,21 @@ class RepositorioCorridas:
                         version=corrida.version,
                     )
                 )
+
+    def obtener_corrida(self, id_corrida: str) -> Corrida | None:
+        """Recupera `Corrida` (estado + version) para volver a avanzarla.
+
+        Necesario para `LanzadorCorrida.marcar_procesando` (cierre de silencio
+        de auditoría, `fix/silencios-de-ingesta-y-panel`): quien marca
+        `PROCESANDO` no necesariamente es el mismo proceso/objeto que corrió
+        `lanzar()`, así que no puede asumir que tiene el `Corrida` en memoria
+        -- tiene que leerlo.
+        """
+        with Session(self._motor) as sesion:
+            fila = sesion.get(CorridaOrm, id_corrida)
+        if fila is None:
+            return None
+        return Corrida(id_corrida=fila.id_corrida, estado=EstadoCorrida(fila.estado), version=fila.version)
 
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
         """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.

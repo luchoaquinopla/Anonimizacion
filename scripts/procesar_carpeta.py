@@ -130,6 +130,13 @@ def ejecutar(
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
         return 1
 
+    # `lanzador.lanzar()` sólo inventaría -- no avanza a PROCESANDO (cierre de
+    # silencio de auditoría, `fix/silencios-de-ingesta-y-panel`): inventariar
+    # y procesar son cosas distintas, y quien sólo inventaría no puede
+    # afirmar que está procesando. Este script es quien REALMENTE va a llamar
+    # `procesar_grupo` a continuación, así que es quien debe marcarlo.
+    lanzador.marcar_procesando(lanzamiento.corrida_id)
+
     print(
         f"Corrida {lanzamiento.corrida_id}: procesando {len(lanzamiento.referencias)} documento(s)...",
         file=sys.stderr,
