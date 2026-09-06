@@ -140,6 +140,63 @@ def test_fuente_local_ignora_archivos_no_pdf(tmp_path: Path) -> None:
     assert artefactos[0].uri.endswith("doc002.pdf")
 
 
+def test_fuente_local_aparta_extension_no_soportada_en_vez_de_descartarla(tmp_path: Path) -> None:
+    """Un `.jpg`/`.doc`/`.pdf.tmp` no debe evaporarse sin dejar rastro: tiene que
+    aparecer en cuarentena con un motivo propio, igual que el sobretamaño."""
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    (entrada / "radiografia.jpg").write_bytes(b"contenido-no-pdf")
+    sha_valido = _crear_pdf_falso(entrada / "doc.pdf", b"%PDF-1.4 valido")
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, cuarentena=cuarentena)
+
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].sha256 == sha_valido
+    assert len(cuarentena.errores) == 1
+    (error,) = cuarentena.errores
+    assert error.codigo is CodigoErrorDocumento.FORMATO_NO_SOPORTADO
+    assert error.etapa is EtapaDocumento.INGESTA
+
+
+def test_fuente_local_no_aparta_directorios_con_extension_no_soportada(tmp_path: Path) -> None:
+    """Un directorio (incluso con nombre `algo.jpg`) no es un hallazgo de
+    ingesta: no se lee, no se aparta -- se sigue omitiendo en silencio."""
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    (entrada / "subcarpeta.jpg").mkdir()
+    sha_valido = _crear_pdf_falso(entrada / "doc.pdf", b"%PDF-1.4 valido")
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, cuarentena=cuarentena)
+
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].sha256 == sha_valido
+    assert cuarentena.errores == []
+
+
+def test_fuente_local_no_aparta_archivo_oculto_con_extension_no_soportada(tmp_path: Path) -> None:
+    """Un archivo oculto no soportado no es un hallazgo del corpus: se sigue
+    omitiendo en silencio, como hoy -- no se aparta a cuarentena."""
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    (entrada / ".oculto.jpg").write_bytes(b"contenido-oculto")
+    sha_valido = _crear_pdf_falso(entrada / "doc.pdf", b"%PDF-1.4 valido")
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, cuarentena=cuarentena)
+
+    artefactos = list(fuente.listar())
+
+    assert len(artefactos) == 1
+    assert artefactos[0].sha256 == sha_valido
+    assert cuarentena.errores == []
+
+
 # --- Fase 3: deduplicación delegada ------------------------------------------
 
 

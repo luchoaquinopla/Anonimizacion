@@ -73,6 +73,13 @@ class CodigoErrorDocumento(str, Enum):
     # RUTA, no del contenido -- el archivo nunca se lee (ver `tamano_bytes`/
     # `tope_bytes` abajo, y design.md "puerto de ingesta", Decisión 3).
     ARTEFACTO_SOBRETAMANO = "artefacto_sobretamano"
+    # Artefacto apartado en `FuenteLocal.listar()` (`ingesta/fuente.py`) por
+    # tener una extensión fuera de `_EXTENSIONES_SOPORTADAS`. Distinto de
+    # `TIPO_NO_RECONOCIDO` (ese es de parseo: el archivo SE ABRIÓ como PDF y
+    # no se pudo clasificar su contenido) -- acá el archivo ni se abre. Igual
+    # que `ARTEFACTO_SOBRETAMANO`, `id_documento` es el sha256 de la RUTA: no
+    # se lee el contenido de un formato que ni siquiera sabemos parsear.
+    FORMATO_NO_SOPORTADO = "formato_no_soportado"
 
 
 @dataclass(frozen=True)

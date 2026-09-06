@@ -154,10 +154,20 @@ class FuenteLocal:
 
     def _listar_generador(self, ruta_raiz: Path) -> Iterator[ArtefactoCrudo]:
         for ruta in sorted(ruta_raiz.rglob("*")):
-            formato = _EXTENSIONES_SOPORTADAS.get(ruta.suffix.lower())
-            if formato is None or not ruta.is_file():
+            if not ruta.is_file() or ruta.name.startswith("."):
+                # Directorios y archivos ocultos no son un hallazgo del
+                # corpus: no se leen ni se apartan, se omiten en silencio
+                # (mismo criterio de siempre, ver test correspondiente).
                 continue
             if not self._esta_dentro_de_raiz(ruta, ruta_raiz):
+                # Enlace simbólico (u otra ruta) que resuelve fuera de la
+                # raíz autorizada: defensa de seguridad, no un hallazgo del
+                # corpus -- se omite en silencio, distinto del caso de abajo.
+                continue
+
+            formato = _EXTENSIONES_SOPORTADAS.get(ruta.suffix.lower())
+            if formato is None:
+                self._apartar_por_formato_no_soportado(ruta)
                 continue
 
             tamano_bytes = ruta.stat().st_size
@@ -183,6 +193,21 @@ class FuenteLocal:
                 codigo=CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO,
                 tamano_bytes=tamano_bytes,
                 tope_bytes=self.tope_bytes,
+            )
+        )
+
+    def _apartar_por_formato_no_soportado(self, ruta: Path) -> None:
+        # Mismo criterio que `_apartar_por_sobretamano`: `id_documento` es el
+        # sha256 de la RUTA, no del contenido. El nombre de archivo puede
+        # llevar PII y no se propaga; el contenido tampoco se lee -- no hay
+        # ningún parser que sepa qué hacer con un formato no soportado, así
+        # que leerlo no aportaría nada y sería trabajo (y riesgo) de más.
+        id_documento = hashlib.sha256(str(ruta).encode("utf-8")).hexdigest()
+        self.cuarentena.registrar(
+            ErrorDocumento(
+                id_documento=id_documento,
+                etapa=EtapaDocumento.INGESTA,
+                codigo=CodigoErrorDocumento.FORMATO_NO_SOPORTADO,
             )
         )
 

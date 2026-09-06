@@ -72,6 +72,7 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "episodio_ambiguo",
         "cobertura_ambigua",
         "artefacto_sobretamano",
+        "formato_no_soportado",
     }
 
 
