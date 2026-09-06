@@ -29,7 +29,6 @@ from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.pipeline.coordinador_episodios import (
     DocumentoParaCoordinar,
     EpisodioCoordinado,
-    MotivoCuarentenaEpisodio,
     ResultadoCoordinacion,
 )
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
