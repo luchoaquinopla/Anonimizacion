@@ -577,37 +577,146 @@ seguir con el Tramo 3.
 
 ## Fase 10 (Tramo 5): pantalla y punto de entrada
 
-- [ ] 10.1 RED: en `tests/web/test_plantilla_panel.py` (nuevo), `"http://" not in pagina`,
+- [x] 10.1 RED: en `tests/web/test_plantilla_panel.py` (nuevo), `"http://" not in pagina`,
       `"https://" not in pagina`, `"<script src" not in pagina` **y** `"<script>" in pagina` — el
       polling en línea es un requisito, no un accidente.
-- [ ] 10.2 GREEN: crear `src/anonimizacion/web/plantilla_panel.py`: HTML por f-strings, CSS en
+- [x] 10.2 GREEN: crear `src/anonimizacion/web/plantilla_panel.py`: HTML por f-strings, CSS en
       línea, misma paleta que `plantilla_reporte.py`, con el `<script>` de polling
       (`fetch`/`setInterval` 1-2 s) en línea.
-- [ ] 10.3 RED: test que confirma que un código de cuarentena con marcado HTML llega escapado, y
+- [x] 10.3 RED: test que confirma que un código de cuarentena con marcado HTML llega escapado, y
       que el script de refresco usa `textContent` — literal ausencia de `innerHTML` en el JS
       embebido.
-- [ ] 10.4 GREEN: implementar el escape de contenido dinámico y `textContent` en el refresco.
-- [ ] 10.5 RED — **el centinela de solapamiento, parte de pantalla (cierra el Punto 1)**: un embudo
+- [x] 10.4 GREEN: implementar el escape de contenido dinámico y `textContent` en el refresco.
+- [x] 10.5 RED — **el centinela de solapamiento, parte de pantalla (cierra el Punto 1)**: un embudo
       con residuo negativo se dibuja con su propia ficha ("Descuadre: N documentos con más de un
       desenlace" + explicación) en vez de un cero.
-- [ ] 10.6 GREEN: implementar la ficha de descuadre en `plantilla_panel.py`, símbolo y etiqueta
+- [x] 10.6 GREEN: implementar la ficha de descuadre en `plantilla_panel.py`, símbolo y etiqueta
       propios en la paleta de estado.
-- [ ] 10.7 VERIFICACIÓN de regresión (Punto 6, no RED/GREEN — es un centinela ya existente): correr
+- [x] 10.7 VERIFICACIÓN de regresión (Punto 6, no RED/GREEN — es un centinela ya existente): correr
       `tests/web/test_plantilla_reporte.py:59-71` tal cual y confirmar que sigue en verde con el JS
       de polling del panel ya en línea. Esa aserción (`"<script" not in pagina`) pertenece al
       reporte de cuarentena y **no se copia** al panel, que sí lleva script. Confirmar además que
       `pyproject.toml` no ganó ninguna dependencia nueva.
-- [ ] 10.8 RED: test que confirma que `GET /panel/{id_corrida}` sirve HTML con el primer pintado ya
+- [x] 10.8 RED: test que confirma que `GET /panel/{id_corrida}` sirve HTML con el primer pintado ya
       con números, sin depender de que corra ningún `fetch`.
-- [ ] 10.9 GREEN: agregar la ruta `GET /panel/{id_corrida}` en `rutas_corridas.py`, sirviendo
+- [x] 10.9 GREEN: agregar la ruta `GET /panel/{id_corrida}` en `rutas_corridas.py`, sirviendo
       `plantilla_panel` con el embudo ya calculado en el primer response; hereda la guarda de 9.11
       para el caso sin motor configurado.
-- [ ] 10.10 RED: en `tests/scripts/test_servir_panel.py`, test que confirma que
+- [x] 10.10 RED: en `tests/scripts/test_servir_panel.py`, test que confirma que
       `scripts/servir_panel.py` levanta un `wsgiref.simple_server` con
       `socketserver.ThreadingMixIn` y responde a una petición real.
-- [ ] 10.11 GREEN: crear `scripts/servir_panel.py` con el punto de entrada WSGI del diseño.
-- [ ] 10.12 REFACTOR: `pytest tests/web/` completo en verde; `pytest` completo del repositorio en
+- [x] 10.11 GREEN: crear `scripts/servir_panel.py` con el punto de entrada WSGI del diseño.
+- [x] 10.12 REFACTOR: `pytest tests/web/` completo en verde; `pytest` completo del repositorio en
       verde; confirmar en `apply-progress.md` que `pyproject.toml` no cambió.
+
+> **Nota de apply (Fase 10)**: `tests/scripts/test_servir_panel.py` necesita una conexión de
+> loopback TCP real para probar el servidor real de punta a punta (`urllib.request.urlopen` contra
+> `127.0.0.1`). El guardia de red de `tests/conftest.py` (`_bloquear_llamadas_de_red_reales`,
+> tasks.md 11.5 de otro cambio) parchea `socket.socket.connect` para TODA la sesión de tests, sin
+> excepción de loopback. Se capturó la implementación real de `connect` al importar el módulo del
+> test (antes de que el fixture de sesión la parchee, porque la colección de pytest ocurre antes
+> del setup de fixtures) y se restauró sólo dentro del único test que necesita loopback real, vía
+> `monkeypatch`. El guardia protege que el PIPELINE sea offline (spec `pii-detection`); no aplica a
+> un servidor de desarrollo que se prueba contra sí mismo por loopback, y queda documentado en el
+> propio test. Separado: se detectó que `sqlite://` con el pool por defecto de SQLAlchemy le da a
+> cada hilo su propia base en memoria vacía (`_ServidorConHilos` atiende cada request en un hilo
+> nuevo) — el test usa `StaticPool` + `check_same_thread=False` para compartir una sola base entre
+> el hilo de setup y el hilo del servidor.
+>
+> Paleta de marcha del embudo (`en_vuelo`, `sin_avance`, `completa`, `descuadre`): reusa los cuatro
+> valores exactos de `reporte_cuarentena.PRESENTACION` (`#898781`, `#fab219`, `#d03b3b`; el cuarto,
+> `#ec835a`, queda sin usar en esta pantalla) — ningún color nuevo. `completa` y `en_vuelo` comparten
+> el neutro porque ninguno de los dos requiere acción del operador; símbolo y etiqueta los
+> distinguen igual (el color nunca viaja solo).
+>
+> `pyproject.toml`: sin cambios — verificado con `git diff --stat main...HEAD -- pyproject.toml`
+> (sin salida).
+>
+> **Corrección post-revisión (ronda de diseño): la afirmación original de este apply sobre la
+> ficha de descuadre era incorrecta.** Se había reportado "se omite del todo del HTML servido
+> cuando `cierra` es verdadero (no se emite oculta con `display:none`)". Eso NO es lo que hacía el
+> código: el nodo se emitía vacío pero SÍ presente, oculto con `style="display: none"` — oculto, no
+> omitido. El impacto real era nulo (nodo vacío, ningún dato filtrado), pero el reporte afirmaba
+> una cosa y el código hacía otra. Se resolvió a favor de la opción explícitamente correcta y
+> documentada: **ambas fichas ("En proceso" y "Descuadre") se emiten siempre, mutuamente
+> excluyentes según `cierra`, y la que no aplica queda oculta con `style="display: none"`** —
+> decisión deliberada (no hay PII ni dato sensible en juego, son conteos administrativos), que
+> además resuelve gratis el caso de un refresco posterior que cambia de estado: el `<script>` sólo
+> alterna `style` y `textContent` sobre nodos que ya existen, sin depender de `innerHTML` para
+> crear elementos nuevos.
+>
+> **Cuatro correcciones más de una ronda de revisión de diseño, misma ronda:**
+> 1. **"Residuo" es jerga interna.** La ficha se renombró a **"En proceso"**, con una nota que
+>    explica que son documentos que ya entraron y todavía no tienen desenlace registrado (ni
+>    publicados ni apartados) — mismo criterio que `reporte_cuarentena.py` aplicó a los códigos
+>    internos: se rotula por lo que la persona necesita entender, no por el nombre del campo (que
+>    sigue siendo `residuo` en el JSON, para los programas). La ficha "Apartados" ganó una nota:
+>    "Requieren revisión -- ver el reporte de cuarentena", con link a `/cuarentena`.
+> 2. **Las barras del embudo no mostraban pérdidas.** Medían `llegaron / entraron`: a mitad de
+>    corrida, las siete etapas dan casi el mismo porcentaje, así que el canal visual más fuerte de
+>    la tabla no variaba entre filas — siete barras casi idénticas sugieren que no hay pérdida en
+>    ningún punto, cuando sí la hay. Se cambió a **pérdida relativa a la etapa con más apartados**
+>    (`apartados_etapa / max(apartados)`): la fila peor es la barra más larga, visible de un
+>    vistazo. Columna renombrada de "Proporción" a "Pérdida relativa", con una nota debajo del
+>    título de la sección explicando el criterio.
+> 3. **Código muerto en el JS**: `etiquetasEtapa` se definía y no se usaba nunca. Se sacó.
+> 4. **Contradicción en el caso de descuadre**: la sección de tiempo restante decía "Descuadre: no
+>    se puede estimar" y mostraba los dos números de throughput justo debajo. Se ocultó la línea
+>    de throughput completa (`id="linea-throughput"`, `style="display: none"`) mientras
+>    `estimacion.situacion == "descuadre"`, tanto en el primer pintado como en cada refresco del
+>    `<script>` — el throughput es una tasa observada, no una promesa de tiempo restante, y no
+>    puede convivir con "no se puede estimar" sin confundir.
+>
+> **Tres hallazgos más, de una revisión de seguridad separada, misma ronda:**
+> 1. **`scripts/servir_panel.py` escuchaba en todas las interfaces por defecto**
+>    (`make_server("", ...)` equivale a `0.0.0.0`): el panel expone datos operativos de una
+>    corrida clínica sin autenticación ni TLS. `design.md` documenta que alcanza para la intranet,
+>    pero un default inseguro documentado sigue siendo un default inseguro — quien levanta el
+>    servidor escribe el comando, no lee el diseño. Se invirtió: por defecto bindea a `127.0.0.1`
+>    (`_resolver_host`), y exponerlo a la red exige el flag explícito `--escuchar-red`. También se
+>    agregó `servidor.server_close()` en el `finally` (higiene menor, el socket ya se liberaba al
+>    salir del proceso).
+> 2. **El escape del `corrida_id` dentro del `<script>` era incompleto, y el comentario afirmaba lo
+>    contrario.** El comentario decía que `json.dumps` "es la forma correcta de escapar" para el
+>    contexto; es cierto para un literal de JavaScript pero falso para el contexto HTML
+>    `<script>...</script>`: `json.dumps` no escapa `</`, así que un `corrida_id` que contuviera
+>    `</script>` cerraría la etiqueta real en medio del literal. No explotable hoy —`corrida_id`
+>    siempre es un `uuid4()` y la ruta rechaza `/` antes de llegar al render— pero esa es protección
+>    incidental de otro módulo, no defensa propia de la plantilla. Se agregó `_json_para_script`
+>    (`json.dumps` + reemplazo de `</` por `<\/`) y se corrigió el comentario para que diga lo que
+>    el código realmente hace, no lo que se asumió que hacía.
+> 3. **Fragilidad documentada, no corregida, del truco de captura de `_CONNECT_REAL`** en
+>    `tests/scripts/test_servir_panel.py`: depende de que este módulo se importe antes de que
+>    cualquier otro `conftest.py` parchee `socket.socket.connect` a nivel de módulo. Si eso
+>    cambiara, el test seguiría pasando pero creyendo que usa un socket real sin serlo (falso verde
+>    silencioso). Queda documentado en el propio test junto con la alternativa más robusta (un
+>    fixture con marcador explícito de pytest, en vez de depender del orden de import) para cuando
+>    haga falta — no se cambia ahora porque no hay ningún otro parche de `connect` en el árbol.
+>
+> **Ronda final de revisión — dos hallazgos más:**
+> 1. **Seguía habiendo jerga interna, en el lugar que más importa.** El estado de la corrida salía
+>    crudo en el subtítulo (`procesando`, `completada_con_cuarentena`, valores de enum en
+>    snake_case en la primera línea que lee el operador), y la columna "Motivos" del embudo
+>    mostraba los códigos de cuarentena sin traducir (`episodio_incompleto`,
+>    `error_transitorio_agotado`, etc.) pese a que `reporte_cuarentena.py` **ya tiene** esa
+>    traducción escrita en `_EXPLICACION_POR_CODIGO`, y el propio docstring de `plantilla_panel.py`
+>    afirmaba aplicar "el mismo criterio". Se cerró en dos partes: (a) `_ETIQUETA_ESTADO` traduce
+>    los ocho valores de `EstadoCorrida` más el `"desconocida"` de `ServicioCorridasReal`; (b) la
+>    tabla de códigos se **extrajo** a `src/anonimizacion/web/codigos_cuarentena.py`
+>    (`EXPLICACION_POR_CODIGO`), y tanto `reporte_cuarentena.py` como `plantilla_panel.py` la
+>    importan de ahí — no hay dos copias que puedan desincronizarse. Un código o estado sin
+>    traducción se muestra crudo como último recurso, tanto en el primer pintado (Python) como en
+>    cada refresco (JS, con las mismas tablas embebidas vía `_json_para_script`) — perder el dato
+>    es peor que mostrarlo feo, misma decisión que `AccionRequerida.SIN_CLASIFICAR`.
+> 2. **El escape de `_json_para_script` sólo cubría `</`, y había más secuencias que rompen el
+>    contexto `<script>`.** Verificado ejecutando: `<!--` sin su `-->` de cierre pone al
+>    tokenizador de HTML5 en el estado "script data escaped", y el `</script>` REAL de la plantilla
+>    deja de interpretarse como cierre — el resto del documento pasa a tratarse como texto de
+>    script. No explotable hoy (mismo motivo que el hallazgo de `</`: `corrida_id` es un `uuid4()`),
+>    pero dejar el arreglo cubriendo sólo un vector después de haber señalado el problema es peor que
+>    no haberlo tocado. Se extendió el reemplazo a `<!--`/`-->`, y el docstring de
+>    `_json_para_script` ahora enumera explícitamente qué cubre (`</`, `<!--`, `-->`) y qué NO
+>    (`<script` sin cierre, `]]>` — ninguno de los dos altera el tokenizador de HTML5).
 
 ---
 

@@ -173,6 +173,73 @@ def test_embudo_sin_base_de_lectura_responde_no_disponibilidad(tmp_path: Path) -
     assert estado == "503 Service Unavailable"
 
 
+def _solicitar_html(aplicacion, metodo: str, ruta: str):
+    estado: list[str] = []
+    encabezados: list[tuple[str, str]] = []
+    respuesta = aplicacion(
+        {
+            "REQUEST_METHOD": metodo,
+            "PATH_INFO": ruta,
+            "CONTENT_TYPE": "text/plain",
+            "CONTENT_LENGTH": "0",
+            "wsgi.input": io.BytesIO(b""),
+        },
+        lambda codigo, headers: (estado.append(codigo), encabezados.extend(headers)),
+    )
+    return estado[0], dict(encabezados), b"".join(respuesta).decode("utf-8")
+
+
+def test_get_panel_sirve_el_primer_pintado_ya_con_numeros(tmp_path: Path) -> None:
+    """10.8/10.9: la página trae el embudo ya calculado, sin depender de ningún `fetch`."""
+    corrida_id = "corrida-panel-1"
+    engine = _motor_con_corrida(corrida_id)
+    with Session(engine) as sesion, sesion.begin():
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-panel-1",
+                corrida_id=corrida_id,
+            )
+        )
+
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio, motor_lectura=engine)
+
+    estado, encabezados, pagina = _solicitar_html(aplicacion, "GET", f"/panel/{corrida_id}")
+
+    assert estado == "200 OK"
+    assert encabezados["Content-Type"] == "text/html; charset=utf-8"
+    assert corrida_id in pagina
+    assert 'id="valor-publicados">1' in pagina
+    assert "<script>" in pagina
+    # La ruta genérica de `/corridas/...` nunca se llamó con este id.
+    assert servicio.solicitudes == []
+
+
+def test_get_panel_sin_base_de_lectura_responde_no_disponibilidad(tmp_path: Path) -> None:
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio, motor_lectura=None)
+
+    estado, _encabezados, _pagina = _solicitar_html(aplicacion, "GET", "/panel/corrida-1")
+
+    assert estado == "503 Service Unavailable"
+
+
+def test_get_panel_de_una_corrida_inexistente_responde_404(tmp_path: Path) -> None:
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio, motor_lectura=engine)
+
+    estado, _encabezados, cuerpo = _solicitar(aplicacion, "GET", "/panel/corrida-que-no-existe")
+
+    assert estado == "404 Not Found"
+    assert cuerpo == {"codigo": "corrida_no_encontrada"}
+
+
 def test_reintentar_responde_501_cuando_el_servicio_no_lo_implementa(tmp_path: Path) -> None:
     """9.8/9.9: `reintentar_corrida` real lanza `NotImplementedError` -- la ruta responde 501."""
 

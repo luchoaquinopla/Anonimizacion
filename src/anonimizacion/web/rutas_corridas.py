@@ -62,6 +62,9 @@ def crear_aplicacion_corridas(
         if metodo == "GET" and ruta.startswith("/corridas/") and ruta.endswith("/embudo"):
             id_corrida = ruta.removeprefix("/corridas/").removesuffix("/embudo").rstrip("/")
             return _embudo_corrida(iniciar_respuesta, motor_lectura, id_corrida)
+        if metodo == "GET" and ruta.startswith("/panel/"):
+            id_corrida = ruta.removeprefix("/panel/").rstrip("/")
+            return _panel_corrida(iniciar_respuesta, motor_lectura, id_corrida)
         if metodo == "GET" and ruta.startswith("/corridas/"):
             return _consultar_corrida(iniciar_respuesta, servicio, ruta.removeprefix("/corridas/"))
         if metodo == "POST" and ruta.startswith("/corridas/") and ruta.endswith("/reintentar"):
@@ -154,6 +157,36 @@ def _embudo_corrida(
     if payload is None:
         return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "corrida_no_encontrada"})
     return _responder(iniciar_respuesta, "200 OK", payload)
+
+
+def _panel_corrida(
+    iniciar_respuesta: InicioRespuesta, motor_lectura: Engine | None, id_corrida: str
+) -> Iterable[bytes]:
+    """Sirve la página del panel con el embudo ya calculado (design.md, "Las rutas").
+
+    Hereda la guarda de 9.11 (503 sin base de lectura) y reusa el mismo
+    payload que sirve `GET /corridas/{id}/embudo`: el primer pintado y cada
+    refresco posterior parten de la misma forma exacta.
+    """
+    if not id_corrida or "/" in id_corrida:
+        return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "ruta_no_encontrada"})
+    if motor_lectura is None:
+        iniciar_respuesta("503 Service Unavailable", [("Content-Type", "text/plain; charset=utf-8")])
+        return [b"base de lectura no configurada"]
+
+    from .plantilla_panel import renderizar_panel
+    from .servicio_corridas import construir_payload_embudo
+
+    payload = construir_payload_embudo(motor_lectura, id_corrida)
+    if payload is None:
+        return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "corrida_no_encontrada"})
+
+    cuerpo = renderizar_panel(payload).encode("utf-8")
+    iniciar_respuesta(
+        "200 OK",
+        [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(cuerpo)))],
+    )
+    return [cuerpo]
 
 
 def _reporte_cuarentena(iniciar_respuesta: InicioRespuesta, motor_lectura: object | None) -> Iterable[bytes]:

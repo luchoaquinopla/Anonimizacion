@@ -30,6 +30,8 @@ from sqlalchemy.orm import Session
 
 from anonimizacion.salida.modelos_orm import Cuarentena
 
+from .codigos_cuarentena import EXPLICACION_POR_CODIGO
+
 _BYTES_POR_MIB = 1024 * 1024
 
 
@@ -105,20 +107,12 @@ _ACCION_POR_CODIGO: dict[str, AccionRequerida] = {
     "clave_pii_ambigua": AccionRequerida.REVISAR_A_MANO,
 }
 
-_EXPLICACION_POR_CODIGO: dict[str, str] = {
-    "episodio_incompleto": "Al grupo de este paciente le falta al menos un tipo de estudio.",
-    "episodio_ambiguo": "El grupo trae dos estudios del mismo tipo y no se puede saber cuál corresponde.",
-    "tipo_no_reconocido": "No se pudo identificar de qué tipo de estudio se trata.",
-    "parseo_incompleto": "El documento no se pudo leer completo.",
-    "evidencia_ausente": "Un dato esperado no aparece en el documento.",
-    "evidencia_ambigua": "Un dato aparece más de una vez y no se puede elegir cuál es.",
-    "valor_discrepante": "Un dato extraído no coincide con el documento original.",
-    "cobertura_incompleta": "Un dato no pudo verificarse contra el documento original.",
-    "cobertura_ambigua": "Un dato tiene más de una fuente posible en el documento.",
-    "error_transitorio_agotado": "Se reintentó varias veces y siguió fallando.",
-    "clave_pii_no_resuelta": "Todavía no hay forma de saber a qué paciente pertenece.",
-    "clave_pii_ambigua": "Hay más de un paciente posible con el mismo nombre y fecha de nacimiento.",
-}
+# La traducción de códigos a texto llano vive en `codigos_cuarentena.py` --
+# `plantilla_panel.py` (Tramo 5) la comparte para la columna "Motivos" del
+# embudo por etapa. No se copia acá: dos tablas iguales se desincronizan sin
+# falta, y ahí tendríamos dos pantallas diciendo cosas distintas del mismo
+# código de error.
+_EXPLICACION_POR_CODIGO = EXPLICACION_POR_CODIGO
 
 
 @dataclass(frozen=True)
