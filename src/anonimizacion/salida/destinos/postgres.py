@@ -2,10 +2,11 @@
 
 `EscritorPostgres` recibe un `sqlalchemy.Engine` ya armado (inyección de
 dependencia -- construir ese `Engine` con la URL real de Postgres es
-responsabilidad de la configuración del pipeline, Fase 8/9, todavía no
-implementada). En este repo, sin Postgres instalado, los tests lo instancian
-con `sqlite:///:memory:` (ver `tests/salida/destinos/test_postgres.py` para
-el porqué eso es válido acá).
+responsabilidad de la configuración del pipeline; `scripts/procesar_carpeta.py`
+y `scripts/servir_panel.py` ya lo hacen con `sa.create_engine(args.db_url)`).
+En este repo, sin Postgres instalado, los tests lo instancian con
+`sqlite:///:memory:` (ver `tests/salida/destinos/test_postgres.py` para el
+porqué eso es válido acá).
 
 `registrar_vinculo` respalda `ResolutorClaves` (Fase 6) contra la tabla real
 `vinculo_paciente`, preservando la MISMA semántica de ambigüedad de
