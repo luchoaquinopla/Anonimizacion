@@ -10,15 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .precision_hora import PrecisionHora
+from .referencias import ReferenciaCampo
 from .tipos_documento import TipoDocumento
-
-if TYPE_CHECKING:
-    from anonimizacion.reconciliacion.base import ReferenciaCampo
 
 
 class IdentidadCruda(BaseModel):
@@ -55,8 +53,6 @@ class DocumentoParseado:
     precision_hora: PrecisionHora = PrecisionHora.AUSENTE
 
     def __post_init__(self) -> None:
-        from anonimizacion.reconciliacion.base import ReferenciaCampo
-
         if not isinstance(self.fuentes, tuple) or not all(
             isinstance(fuente, ReferenciaCampo) for fuente in self.fuentes
         ):
