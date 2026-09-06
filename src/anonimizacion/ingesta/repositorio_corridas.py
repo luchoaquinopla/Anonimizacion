@@ -35,39 +35,18 @@ class RepositorioCorridas:
                     )
                 )
 
-    def registrar_documento(self, documento: DocumentoCorrida) -> bool:
-        with Session(self._motor) as sesion, sesion.begin():
-            existente = sesion.scalar(
-                select(DocumentoCorridaOrm.id).where(
-                    DocumentoCorridaOrm.corrida_id == documento.corrida_id,
-                    DocumentoCorridaOrm.huella_contenido == documento.huella_contenido,
-                )
-            )
-            if existente is not None:
-                return False
-            sesion.add(
-                DocumentoCorridaOrm(
-                    corrida_id=documento.corrida_id,
-                    huella_contenido=documento.huella_contenido,
-                    ruta_autorizada=documento.ruta_autorizada,
-                    estado=documento.estado.value,
-                    version=documento.version,
-                )
-            )
-            return True
-
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
         """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.
 
-        Motivo medido (design.md, Decisión 5): `registrar_documento` abre una
-        `Session` y una transacción por documento; 100.000 transacciones
-        sueltas son minutos de arranque para un trabajo que en una sesión por
-        millar son segundos. `registrar_documento` se conserva sin cambios --
-        esta es la versión por lote, con la misma guarda de idempotencia por
-        `(corrida_id, huella_contenido)` que `uq_documento_corrida_huella` ya
-        exige: consulta las huellas existentes del lote antes de insertar, así
-        que relanzar la misma corrida (mismo inventario, mismas huellas) no
-        duplica el denominador del embudo.
+        Motivo medido (design.md, Decisión 5): abrir una `Session` y una
+        transacción por documento sale caro -- 100.000 transacciones sueltas
+        son minutos de arranque para un trabajo que en una sesión por millar
+        son segundos. Esta es la versión por lote, con la misma guarda de
+        idempotencia por `(corrida_id, huella_contenido)` que
+        `uq_documento_corrida_huella` ya exige: consulta las huellas
+        existentes del lote antes de insertar, así que relanzar la misma
+        corrida (mismo inventario, mismas huellas) no duplica el denominador
+        del embudo.
 
         Devuelve la cantidad de filas efectivamente insertadas.
         """

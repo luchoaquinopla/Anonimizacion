@@ -40,12 +40,11 @@ propia copia del regex/las funciones.
 from __future__ import annotations
 
 import logging
-from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento
-from anonimizacion.pii.redaccion import DetectorEntidades, MARCADOR_REDACTADO, redactar_texto
+from anonimizacion.pii.redaccion import DetectorEntidades, redactar_texto
 
 #: Defensa primaria (capa 1). Ver design.md, decisión "Sin PII en cola, logs
 #: ni DLQ": "`bitacora_segura` serializa únicamente campos de una whitelist
@@ -78,17 +77,6 @@ def filtrar_y_redactar(
         for clave, valor in evento.items()
         if clave in CAMPOS_PERMITIDOS
     }
-
-
-def contar_codigos_seguros(eventos: Iterable[Mapping[str, Any]]) -> dict[str, int]:
-    """Cuenta sólo códigos de dominio, sin propagar texto libre a métricas."""
-    return dict(
-        Counter(
-            codigo
-            for evento in eventos
-            if isinstance((codigo := evento.get("codigo")), str) and codigo in CODIGOS_SEGUROS
-        )
-    )
 
 
 class BitacoraSegura:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 _IDENTIFICADOR_SEGURO = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
@@ -69,3 +70,50 @@ def validar_campo_reconciliacion(campo: str) -> None:
     """Acepta solo IDs declarados, nunca contenido de un documento."""
     if not _IDENTIFICADOR_SEGURO.fullmatch(campo) or campo not in REFERENCIAS_PERMITIDAS:
         raise ValueError("campo inválido")
+
+
+# `ReferenciaCampo` y `HallazgoCobertura` viven en el dominio, no en
+# `reconciliacion`, porque son value objects de localización: dónde cae un
+# campo dentro del texto extraído (página, selector, ordinal), sin retener
+# contenido ni PII. No son infraestructura de reconciliación, son datos del
+# dominio como cualquier otro modelo de `dominio/modelos.py`. Antes vivían en
+# `reconciliacion/base.py`, que a su vez depende de `DocumentoParseado`
+# (`dominio/modelos.py`) — un ciclo real, oculto porque `modelos.py` diferia
+# el import bajo `TYPE_CHECKING` y dentro de `__post_init__`. Moverlos acá
+# rompe el ciclo sin cambiar el contrato: `reconciliacion/base.py` los
+# reimporta desde este módulo.
+@dataclass(frozen=True)
+class ReferenciaCampo:
+    """Localización no sensible de un campo dentro del texto extraído."""
+
+    id_campo: str
+    pagina: int
+    selector: str
+    ordinal: int = 0
+
+    def __post_init__(self) -> None:
+        validar_campo_reconciliacion(self.id_campo)
+        validar_selector_reconciliacion(self.id_campo, self.selector)
+        if self.pagina < 1:
+            raise ValueError("pagina debe comenzar en 1")
+        if self.ordinal < 0:
+            raise ValueError("ordinal no puede ser negativo")
+
+
+@dataclass(frozen=True)
+class HallazgoCobertura:
+    """Dato clínico reconocido sin retener su contenido ni PII."""
+
+    id_campo: str
+    pagina: int
+    ordinal: int = 0
+    clase: str = "dato"
+
+    def __post_init__(self) -> None:
+        validar_campo_reconciliacion(self.id_campo)
+        if self.pagina < 1:
+            raise ValueError("pagina debe comenzar en 1")
+        if self.ordinal < 0:
+            raise ValueError("ordinal no puede ser negativo")
+        if self.clase not in {"dato", "header", "medida", "coleccion", "seccion"}:
+            raise ValueError("clase inválida")
