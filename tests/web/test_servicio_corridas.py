@@ -45,12 +45,15 @@ def test_crear_corrida_delega_en_el_lanzador_real(tmp_path) -> None:
     estado = servicio.crear_corrida(str(tmp_path))
 
     assert estado.id_corrida
-    # `LanzadorCorrida.lanzar` avanza `Corrida` hasta PROCESANDO y ahora SÍ
-    # persiste esa transición (`RepositorioCorridas.actualizar_corrida`,
-    # hallazgo cerrado post-Fase 9): sin esto, `estado` quedaría en "creada"
-    # para siempre y el campo del JSON del embudo mentiría durante toda la
-    # corrida.
-    assert estado.estado == "procesando"
+    # `LanzadorCorrida.lanzar` avanza `Corrida` hasta INVENTARIANDO y persiste
+    # esa transición (`RepositorioCorridas.actualizar_corrida`, hallazgo
+    # cerrado post-Fase 9): sin esto, `estado` quedaría en "creada" para
+    # siempre y el campo del JSON del embudo mentiría durante toda la corrida.
+    # NO llega a PROCESANDO (cierre de silencio de auditoría,
+    # `fix/silencios-de-ingesta-y-panel`): `lanzar()` sólo inventaría, no
+    # encola ni ejecuta nada -- afirmar "procesando" acá sería mentir de
+    # nuevo, sólo que con otro estado.
+    assert estado.estado == "inventariando"
     # Nada publicado ni apartado todavía: sólo se inventarió.
     assert estado.cuarentenas == 0
 
@@ -76,8 +79,9 @@ def test_consultar_corrida_refleja_el_estado_real_no_un_valor_fijo(tmp_path) -> 
 
 def test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada(tmp_path) -> None:
     """El campo `estado` del contrato JSON no puede mentir `creada` para
-    siempre: una corrida recién lanzada llegó a PROCESANDO, y eso tiene que
-    verse en `GET /corridas/{id}/embudo` (`construir_payload_embudo`)."""
+    siempre: una corrida recién lanzada llegó a INVENTARIANDO (no más -- ver
+    `fix/silencios-de-ingesta-y-panel`: `lanzar()` no procesa nada), y eso
+    tiene que verse en `GET /corridas/{id}/embudo` (`construir_payload_embudo`)."""
     (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
     motor = _motor_con_esquema()
     lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
@@ -86,7 +90,7 @@ def test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada(tmp_pa
     payload = construir_payload_embudo(motor, resultado.corrida_id)
 
     assert payload is not None
-    assert payload["estado"] == "procesando"
+    assert payload["estado"] == "inventariando"
 
 
 def test_reintentar_corrida_lanza_notimplementederror() -> None:
