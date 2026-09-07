@@ -68,10 +68,20 @@ class CuarentenaDeCorrida:
 
 @dataclass(frozen=True)
 class ResultadoLanzamiento:
-    """Lo mínimo que necesita el despachador para encolar el grupo."""
+    """Lo mínimo que necesita el despachador para encolar los grupos.
+
+    `referencias` es una tupla de GRUPOS -- no una tupla plana (openspec
+    `paralelismo-de-procesamiento` PR 2): cada grupo es a su vez una tupla de
+    referencias `{id_documento, uri, sha256}`, en la forma exacta que exige
+    `trabajadores.tareas.procesar_grupo`. Antes de este cambio la carpeta
+    entera viajaba como un solo lote (`tareas.py` documentaba "un paciente,
+    un episodio" de forma aspiracional, sin que ningún código lo garantizara
+    -- `procesar_lote` terminaba acumulando en RAM los resueltos de la
+    corrida completa). Ver `ingesta/fuente.py::FuenteLocal.listar_grupos`
+    para el criterio de agrupamiento real."""
 
     corrida_id: str
-    referencias: tuple[dict[str, str], ...]
+    referencias: tuple[tuple[dict[str, str], ...], ...]
 
 
 @dataclass(frozen=True)
@@ -112,7 +122,19 @@ class LanzadorCorrida:
             cuarentena=sumidero,
             **({"tope_bytes": self.tope_bytes} if self.tope_bytes is not None else {}),
         )
-        artefactos = list(fuente.listar())
+        # Agrupamiento real (openspec `paralelismo-de-procesamiento` PR 2):
+        # `listar_grupos()` particiona por subdirectorio inmediato -- una
+        # carpeta por paciente, según el criterio del instituto (ver su
+        # docstring para la incertidumbre honesta sobre el corpus real).
+        # Se materializa en una lista igual que antes se hacía con
+        # `list(fuente.listar())`: el inventario sigue siendo una sola
+        # pasada, en un solo proceso, y de acá sale `entraron`
+        # (`RepositorioCorridas.registrar_documentos`) -- ese contrato no
+        # cambia. Lo que cambia es que la estructura resultante conserva la
+        # partición por grupo en vez de aplanarla, para que el llamador
+        # (`scripts/procesar_carpeta.py`) pueda despachar un grupo a la vez
+        # en vez de pasarle la corrida entera a `procesar_grupo`.
+        grupos = list(fuente.listar_grupos())
 
         documentos = [
             DocumentoCorrida.inventariado(
@@ -120,13 +142,17 @@ class LanzadorCorrida:
                 huella_contenido=artefacto.sha256,
                 ruta_autorizada=artefacto.uri,
             )
-            for artefacto in artefactos
+            for grupo in grupos
+            for artefacto in grupo.artefactos
         ]
         self.repositorio.registrar_documentos(documentos, tamano_lote=self.tamano_lote_inventario)
 
         referencias = tuple(
-            {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
-            for artefacto in artefactos
+            tuple(
+                {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
+                for artefacto in grupo.artefactos
+            )
+            for grupo in grupos
         )
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
 

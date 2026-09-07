@@ -36,6 +36,13 @@ def _pdf(directorio, nombre: str, contenido: bytes) -> None:
     (directorio / nombre).write_bytes(contenido)
 
 
+def _aplanar(resultado) -> list[dict]:
+    """`resultado.referencias` es ahora una tupla de grupos (cada uno una
+    tupla de referencias) -- no una tupla plana. Ver docstring de
+    `ResultadoLanzamiento` y openspec `paralelismo-de-procesamiento`."""
+    return [referencia for grupo in resultado.referencias for referencia in grupo]
+
+
 def _motor_con_esquema():
     motor = sa.create_engine("sqlite:///:memory:")
     Base.metadata.create_all(motor)
@@ -52,10 +59,14 @@ def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) ->
     lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
 
     resultado = lanzador.lanzar(tmp_path)
+    referencias = _aplanar(resultado)
 
     assert resultado.corrida_id
-    assert len(resultado.referencias) == 2
-    assert all(set(referencia) == {"id_documento", "uri", "sha256"} for referencia in resultado.referencias)
+    # Ambos PDFs quedan sueltos directamente bajo `tmp_path` (sin subcarpeta
+    # propia): forman UN solo grupo, corpus plano (ver `listar_grupos`).
+    assert len(resultado.referencias) == 1
+    assert len(referencias) == 2
+    assert all(set(referencia) == {"id_documento", "uri", "sha256"} for referencia in referencias)
 
     with Session(motor) as sesion:
         assert sesion.get(CorridaOrm, resultado.corrida_id) is not None
@@ -93,8 +104,9 @@ def test_artefacto_sobretamano_llega_a_cuarentena_con_el_corrida_id_de_la_corrid
     lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=cuarentena, tope_bytes=50)
 
     resultado = lanzador.lanzar(tmp_path)
+    referencias = _aplanar(resultado)
 
-    assert len(resultado.referencias) == 1  # solo el chico se inventaria
+    assert len(referencias) == 1  # solo el chico se inventaria
     assert len(cuarentena.registrados) == 1
     (error,) = cuarentena.registrados
     assert error.codigo == CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO
@@ -120,6 +132,36 @@ def test_lanzar_persiste_la_transicion_a_inventariando_pero_no_a_procesando(tmp_
     with Session(motor) as sesion:
         fila = sesion.get(CorridaOrm, resultado.corrida_id)
     assert fila.estado == "inventariando"
+
+
+def test_lanzar_agrupa_por_subdirectorio_y_la_particion_es_disjunta(tmp_path) -> None:
+    """openspec `paralelismo-de-procesamiento` PR 2: `lanzar()` devuelve
+    grupos, no una tupla plana -- cada subcarpeta es un grupo (un paciente),
+    y ningún documento aparece en dos grupos a la vez."""
+    (tmp_path / "paciente-a").mkdir()
+    (tmp_path / "paciente-b").mkdir()
+    _pdf(tmp_path / "paciente-a", "lab.pdf", b"contenido-a-lab")
+    _pdf(tmp_path / "paciente-a", "ecg.pdf", b"contenido-a-ecg")
+    _pdf(tmp_path / "paciente-b", "eco.pdf", b"contenido-b-eco")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+
+    assert len(resultado.referencias) == 2
+    tamanos = sorted(len(grupo) for grupo in resultado.referencias)
+    assert tamanos == [1, 2]
+
+    ids_documento = [referencia["id_documento"] for grupo in resultado.referencias for referencia in grupo]
+    assert len(ids_documento) == len(set(ids_documento)), "particion disjunta: sin duplicados entre grupos"
+
+    with Session(motor) as sesion:
+        documentos = sesion.scalars(
+            sa.select(DocumentoCorridaOrm).where(DocumentoCorridaOrm.corrida_id == resultado.corrida_id)
+        ).all()
+    assert len(documentos) == 3, "particion exhaustiva: el inventario sigue viendo los 3 documentos"
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:
