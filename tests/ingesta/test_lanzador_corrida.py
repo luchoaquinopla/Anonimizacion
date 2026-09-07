@@ -14,6 +14,7 @@ inventario: es el inventario más el sobretamaño").
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
 from anonimizacion.ingesta.lanzador_corrida import CuarentenaDeCorrida, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
-from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm, Estudio
 
 
 @dataclass
@@ -312,16 +313,23 @@ def test_marcar_fallida_cierra_procesando_como_fallida(tmp_path) -> None:
     assert fila.estado == "fallida"
 
 
-def test_recuperar_corridas_abandonadas_cierra_toda_corrida_no_terminal(tmp_path) -> None:
-    """Feature `despachador-desde-el-panel`: al arrancar el servidor, toda
-    corrida en un estado no terminal es necesariamente una corrida abandonada
-    por un proceso anterior -- este servidor es de un solo proceso, sin
-    persistencia de "hay un hilo corriendo para este corrida_id". Dejarla en
-    su estado no terminal repetiría la misma mentira que
-    `fix/silencios-de-ingesta-y-panel` cerró en la punta de arranque, y
-    además bloquearía para siempre el gate de "una corrida a la vez"
-    (`listar_corridas_no_terminales`), sacando al operador de su propio
-    panel."""
+_MARGEN_PRUEBA = timedelta(minutes=15)
+
+
+def test_recuperar_corridas_abandonadas_cierra_toda_corrida_no_terminal_sin_evidencia_reciente(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: al arrancar el servidor, una
+    corrida en estado no terminal SIN evidencia reciente de trabajo (ver
+    `RepositorioCorridas.ultima_actividad`) es una corrida abandonada por un
+    proceso anterior. Dejarla en su estado no terminal repetiría la misma
+    mentira que `fix/silencios-de-ingesta-y-panel` cerró en la punta de
+    arranque, y además bloquearía para siempre el gate de "una corrida a la
+    vez" (`listar_corridas_no_terminales`), sacando al operador de su propio
+    panel.
+
+    `ahora` se inyecta bien en el futuro (revisión adversarial crítico 1):
+    sin esto, `corrida.actualizada_en` (recién escrita por este mismo test)
+    siempre estaría dentro de CUALQUIER margen razonable, y el test no
+    probaría nada sobre el paso del tiempo."""
     from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
 
     _pdf(tmp_path, "uno.pdf", b"contenido-uno")
@@ -331,7 +339,8 @@ def test_recuperar_corridas_abandonadas_cierra_toda_corrida_no_terminal(tmp_path
     resultado = lanzador.lanzar(tmp_path)
     _materializar(resultado)  # queda en INVENTARIANDO -- "abandonada" tras un crash simulado
 
-    recuperados = recuperar_corridas_abandonadas(repositorio)
+    mucho_despues = datetime.now(timezone.utc) + timedelta(days=1)
+    recuperados = recuperar_corridas_abandonadas(repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=mucho_despues)
 
     assert recuperados == [resultado.corrida_id]
     with Session(motor) as sesion:
@@ -351,12 +360,64 @@ def test_recuperar_corridas_abandonadas_no_toca_corridas_ya_cerradas(tmp_path) -
     lanzador.marcar_procesando(resultado.corrida_id)
     lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=False)
 
-    recuperados = recuperar_corridas_abandonadas(repositorio)
+    mucho_despues = datetime.now(timezone.utc) + timedelta(days=1)
+    recuperados = recuperar_corridas_abandonadas(repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=mucho_despues)
 
     assert recuperados == []
     with Session(motor) as sesion:
         fila = sesion.get(CorridaOrm, resultado.corrida_id)
     assert fila.estado == "completada"
+
+
+def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso(tmp_path) -> None:
+    """Revisión adversarial crítico 1 -- reproduce el escenario real:
+    `scripts/procesar_carpeta.py` (OTRO proceso, mismo `LanzadorCorrida`,
+    misma base) sigue escribiendo `Estudio` bajo un `corrida_id` que nunca va
+    a llamar `marcar_finalizada`/`marcar_fallida` -- ese es su comportamiento
+    NORMAL, no un bug. Si el panel arranca en ese momento, la recuperación de
+    arranque NO puede marcarla `FALLIDA`: sería la inversión exacta del
+    defecto que cerró el PR #33 (antes "procesando" sin que nada procese,
+    ahora "fallida" mientras algo sí procesa) -- y además reabriría el gate
+    de "una corrida a la vez" para una segunda corrida que duplicaría el
+    presupuesto de memoria de la que sigue viva."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)  # como haría procesar_carpeta.py
+
+    ahora = datetime.now(timezone.utc)
+    # "El script sigue escribiendo": un Estudio real, reciente, bajo esta
+    # corrida -- sin que NADA haya llamado marcar_finalizada/marcar_fallida,
+    # exactamente el estado en el que procesar_carpeta.py deja la corrida
+    # mientras sigue corriendo.
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(
+            Estudio(
+                id_episodio="ep-viva-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2024, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-corrida-viva-1",
+                corrida_id=resultado.corrida_id,
+                creado_en=ahora - timedelta(minutes=2),
+            )
+        )
+
+    # El panel arranca 5 minutos después, con un margen de 15 -- la evidencia
+    # de hace 2 minutos sigue dentro del margen.
+    recuperados = recuperar_corridas_abandonadas(
+        repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=ahora + timedelta(minutes=5)
+    )
+
+    assert recuperados == [], "una corrida con evidencia reciente de otro proceso NO se toca"
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "procesando", "el arranque del panel no puede pisar el trabajo real de otro proceso"
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:

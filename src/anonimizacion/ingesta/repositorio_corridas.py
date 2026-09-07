@@ -11,13 +11,14 @@ de qué existe, qué falta y qué decisión lo desbloquea.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.corridas import Corrida, DocumentoCorrida
 from anonimizacion.dominio.estados_corrida import EstadoCorrida, EstadoDocumentoCorrida
-from anonimizacion.salida.modelos_orm import CorridaOrm, DocumentoCorridaOrm
+from anonimizacion.salida.modelos_orm import CorridaOrm, Cuarentena, DocumentoCorridaOrm, Estudio
 
 _ESTADOS_TERMINALES = {
     EstadoDocumentoCorrida.APROBADO,
@@ -99,6 +100,57 @@ class RepositorioCorridas:
             Corrida(id_corrida=fila.id_corrida, estado=EstadoCorrida(fila.estado), version=fila.version)
             for fila in filas
         ]
+
+    def ultima_actividad(self, id_corrida: str) -> datetime | None:
+        """Última evidencia REAL de trabajo en curso sobre `id_corrida`, sin
+        importar QUÉ proceso la produjo -- revisión adversarial crítico 1
+        (feature `despachador-desde-el-panel`).
+
+        `recuperar_corridas_abandonadas` asumía "servidor de un solo proceso
+        ⇒ toda corrida no terminal está abandonada". Es falso:
+        `scripts/procesar_carpeta.py` usa el MISMO `LanzadorCorrida` contra
+        la MISMA base, en OTRO proceso, y nunca llama
+        `marcar_finalizada`/`marcar_fallida` -- dejar una corrida en
+        `PROCESANDO` mientras escribe documentos reales es su comportamiento
+        NORMAL, no un bug. Reproducido contra Postgres real: arrancar el
+        panel mientras el script seguía corriendo la marcaba `FALLIDA` a
+        mitad de la escritura -- la inversión exacta del defecto que cerró
+        el PR #33.
+
+        El máximo entre tres candidatos, cualquiera puede ganar:
+        - `corrida.actualizada_en`: se actualiza sola (`onupdate`, columna de
+          SQLAlchemy) en cada transición de estado -- cubre una corrida
+          recién creada, antes de que exista ningún documento publicado.
+        - El `creado_en` más reciente de `estudio` para esta corrida:
+          evidencia de que el pipeline sigue publicando.
+        - El `creado_en` más reciente de `cuarentena` para esta corrida:
+          evidencia de que el pipeline sigue procesando, aunque el último
+          documento haya terminado en cuarentena.
+
+        `None` sólo si la corrida no existe -- el llamador decide qué hacer
+        con eso (`recuperar_corridas_abandonadas` sólo llama esto sobre
+        corridas que `listar_corridas_no_terminales` ya confirmó que existen).
+
+        LIMITACIÓN CONOCIDA, ACEPTADA, NO RESUELTA ACÁ: `documento_corrida`
+        (el inventario) no tiene columna de tiempo -- una corrida que tarda
+        mucho SÓLO inventariando (antes de que `procesar_grupo` escriba el
+        primer `estudio`/`cuarentena`) no deja evidencia nueva más allá de la
+        transición a `INVENTARIANDO`. El margen de inactividad
+        (`recuperar_corridas_abandonadas`) tiene que ser generoso para no
+        confundir ese tramo con abandono.
+        """
+        with Session(self._motor) as sesion:
+            fila = sesion.get(CorridaOrm, id_corrida)
+            if fila is None:
+                return None
+            ultimo_estudio = sesion.scalar(
+                select(func.max(Estudio.creado_en)).where(Estudio.corrida_id == id_corrida)
+            )
+            ultima_cuarentena = sesion.scalar(
+                select(func.max(Cuarentena.creado_en)).where(Cuarentena.corrida_id == id_corrida)
+            )
+        candidatos = [fila.actualizada_en, ultimo_estudio, ultima_cuarentena]
+        return max(momento for momento in candidatos if momento is not None)
 
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
         """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.

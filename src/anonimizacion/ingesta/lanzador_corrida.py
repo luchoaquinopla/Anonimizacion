@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -344,27 +345,62 @@ class LanzadorCorrida:
             )
 
 
-def recuperar_corridas_abandonadas(repositorio: RepositorioCorridas) -> list[str]:
-    """Cierra como `FALLIDA` toda corrida no terminal al arrancar el servidor
-    (feature `despachador-desde-el-panel`, decisión "qué pasa si el servidor
-    se cae con una corrida en curso").
+# Margen de inactividad por defecto para `recuperar_corridas_abandonadas`
+# (revisión adversarial crítico 1): tiene que ser generoso porque
+# `documento_corrida` (el inventario) no tiene columna de tiempo -- una
+# corrida que tarda mucho SÓLO inventariando (antes del primer `estudio`/
+# `cuarentena`) no deja evidencia nueva más allá de su última transición
+# administrativa. 15 minutos es más que el tiempo típico de un grupo
+# (segundos a bajas decenas de segundos, ver `despacho_paralelo.py`) y dista
+# mucho de las horas que dura una corrida real -- conservador en la
+# dirección segura: preferir NO recuperar una corrida dudosa antes que
+# pisar trabajo real de otro proceso.
+MARGEN_INACTIVIDAD_DEFAULT = timedelta(minutes=15)
+
+
+def recuperar_corridas_abandonadas(
+    repositorio: RepositorioCorridas,
+    *,
+    margen_inactividad: timedelta = MARGEN_INACTIVIDAD_DEFAULT,
+    ahora: datetime | None = None,
+) -> list[str]:
+    """Cierra como `FALLIDA` toda corrida no terminal SIN evidencia reciente
+    de trabajo, al arrancar el servidor (feature `despachador-desde-el-panel`,
+    decisión "qué pasa si el servidor se cae con una corrida en curso").
 
     Llamador de producción: `scripts/servir_panel.py::construir_aplicacion`,
     UNA vez, antes de empezar a servir peticiones.
 
-    Por qué es seguro asumir "abandonada" y no "todavía en curso": este
-    servidor es `wsgiref.simple_server` de UN SOLO proceso (design.md, "El
-    punto de entrada") -- no hay ningún mecanismo que persista "hay un hilo
-    corriendo `despachar_en_paralelo` para este `corrida_id`" a través de un
-    reinicio del proceso. Si el proceso que arranca ahora encuentra una
-    corrida no terminal (`RepositorioCorridas.listar_corridas_no_terminales`),
-    el hilo que la estaba procesando murió con el proceso anterior -- no hay
-    ningún otro proceso que pueda estar procesándola ahora mismo. Dejarla en
-    su estado no terminal repetiría la misma mentira que
-    `LanzadorCorrida.marcar_procesando` cerró en la punta de arranque
-    (`PROCESANDO` sin que nada procese) y bloquearía para siempre el gate de
-    "una corrida a la vez" (`ServicioCorridasReal.crear_corrida`), sacando al
-    operador de su propio panel tras cualquier caída.
+    CORRECCIÓN (revisión adversarial crítico 1): la versión anterior asumía
+    "servidor de un solo proceso ⇒ toda corrida no terminal está abandonada".
+    Es falso -- reproducido contra Postgres real. `scripts/procesar_carpeta.py`
+    usa el MISMO `LanzadorCorrida` contra la MISMA base por defecto, en OTRO
+    proceso, y NUNCA llama `marcar_finalizada`/`marcar_fallida`: dejar una
+    corrida en `PROCESANDO` mientras sigue escribiendo `estudio`/`cuarentena`
+    es su comportamiento NORMAL, no un bug. Si el panel arranca mientras ese
+    script sigue corriendo, la versión anterior la marcaba `FALLIDA` a mitad
+    de la escritura -- la inversión exacta del defecto que cerró el PR #33
+    (antes "procesando" sin que nada procese; con ese bug, "fallida" mientras
+    algo sí procesa). Y en cadena: como `FALLIDA` es terminal,
+    `listar_corridas_no_terminales` dejaba de verla, reabriendo el gate de
+    "una corrida a la vez" para una segunda corrida que duplicaría el
+    presupuesto de memoria de la que seguía viva.
+
+    La corrección: un proceso no puede decidir que el trabajo de OTRO está
+    muerto sin evidencia. `RepositorioCorridas.ultima_actividad` da esa
+    evidencia -- el máximo entre la última transición administrativa de
+    `corrida` y el `estudio`/`cuarentena` más reciente escrito bajo su
+    `corrida_id`, sin importar qué proceso lo escribió. Sólo se recupera una
+    corrida no terminal si esa evidencia es más vieja que `margen_inactividad`
+    (o no existe ninguna). Esto SIGUE distinguiendo "abandonada" de "viva en
+    otro proceso" sin necesitar saber NADA sobre quién es ese otro proceso --
+    ni su PID, ni un latido dedicado, ni una marca de pertenencia: la
+    evidencia es el mismo dato que el panel ya usa para todo lo demás
+    (Decisión 8, "el panel deriva la marcha de la evidencia, no del estado").
+
+    `ahora`/`margen_inactividad` inyectables (mismo patrón que `reloj` en
+    `web/embudo_corrida.py::construir_embudo`): producción usa el default y
+    el reloj real; los tests fijan ambos para no depender de dormir de verdad.
 
     `FALLIDA`, no un intento de reanudación: la reanudación por documento
     está fuera de alcance (`reintentar_corrida` sigue devolviendo 501, ver
@@ -376,19 +412,42 @@ def recuperar_corridas_abandonadas(repositorio: RepositorioCorridas) -> list[str
     hace `LanzadorCorrida._inventariar_y_generar_referencias` entre
     trazabilidad administrativa y datos clínicos reales.
 
-    Asume un ÚNICO proceso servidor (sin réplicas ni balanceador delante):
-    con más de una instancia corriendo a la vez, una corrida recién creada
-    por la instancia A podría verse como "abandonada" desde el arranque de la
-    instancia B. El diseño actual (`servir_panel.py`, sin autenticación,
-    documentado para la intranet de un solo instituto) no contempla ese
-    despliegue -- si aparece, este supuesto necesita revisarse primero.
+    Asume un ÚNICO proceso SERVIDOR (sin réplicas ni balanceador delante del
+    panel): con más de una instancia de PANEL corriendo a la vez, una corrida
+    recién creada por la instancia A podría verse como "abandonada" desde el
+    arranque de la instancia B si no llegó a dejar evidencia todavía. El
+    diseño actual (`servir_panel.py`, sin autenticación, documentado para la
+    intranet de un solo instituto) no contempla ese despliegue -- si aparece,
+    este supuesto necesita revisarse primero. Este supuesto NO se extiende a
+    "único proceso que escribe en la base": `scripts/procesar_carpeta.py` (u
+    otro despachador futuro) puede seguir escribiendo en paralelo, y la
+    evidencia real es justamente lo que lo protege.
+
+    LIMITACIÓN CONOCIDA, ACEPTADA: una corrida genuinamente abandonada cuya
+    ÚLTIMA evidencia cae DENTRO del margen no se recupera en esta pasada --
+    queda para el próximo arranque del panel. Preferible al error opuesto
+    (marcar `FALLIDA` algo que sigue vivo): ver el docstring de
+    `ultima_actividad` para el caso sin cubrir (corrida que tarda mucho SÓLO
+    inventariando).
 
     Devuelve los `id_corrida` recuperados, para que el llamador pueda
     loguearlos (visibilidad operativa: el médico que reinicia el panel
     después de una caída debe poder ver qué corrida se perdió).
     """
+    momento = ahora if ahora is not None else datetime.now(timezone.utc)
+    # `.replace(tzinfo=None)`: Postgres devuelve `datetime` con tz real, pero
+    # SQLite (usado en tests) devuelve NAIVE incluso para columnas
+    # `DateTime(timezone=True)` -- el driver no persiste el offset. Todo el
+    # sistema ya asume UTC por convención (`_ahora_utc()`,
+    # `modelos_orm.py`), así que normalizar a naive-UTC antes de comparar es
+    # seguro y evita `TypeError: can't compare offset-naive and offset-aware
+    # datetimes` sin depender de qué motor está detrás.
+    umbral = (momento - margen_inactividad).replace(tzinfo=None)
     recuperados: list[str] = []
     for corrida in repositorio.listar_corridas_no_terminales():
+        ultima = repositorio.ultima_actividad(corrida.id_corrida)
+        if ultima is not None and ultima.replace(tzinfo=None) >= umbral:
+            continue  # evidencia reciente: sigue viva en OTRO proceso, no se toca
         version_antes = corrida.version
         corrida.avanzar_a(EstadoCorrida.FALLIDA)
         if repositorio.actualizar_corrida(corrida, version_esperada=version_antes):
