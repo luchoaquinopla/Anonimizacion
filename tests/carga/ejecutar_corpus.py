@@ -111,8 +111,16 @@ class ResumenCarga:
     tiempo_preparacion_segundos: float
     tiempo_procesamiento_segundos: float
     tiempo_verificacion_segundos: float
-    throughput_pdfs_entrada_segundo: float
-    throughput_documentos_unicos_segundo: float
+    # Nombradas "_procesamiento_" a proposito, no solo "_segundo": antes de
+    # `fases-separadas-v1` estas claves existian con el sufijo corto y
+    # denominador distinto (duracion total = preparacion + procesamiento +
+    # verificacion). Si una corrida nueva escribiera el throughput bajo esa
+    # clave vieja, convivirian en la misma serie comparable de un reporte
+    # numeros con semantica incompatible (ver reporte_seguro.json legado, que
+    # SIGUE usando el nombre corto). El rename hace la colision imposible sin
+    # depender de que nadie recuerde filtrar por `version_medicion`.
+    throughput_procesamiento_pdfs_entrada_segundo: float
+    throughput_procesamiento_documentos_unicos_segundo: float
     memoria_pico_lifetime_proceso_bytes: int
     pii_en_salida: int
     oraculo_validado: bool
@@ -194,6 +202,13 @@ def evaluar_preflight(salida: Path, oraculo: OraculoCarga) -> PreflightCarga:
     )
     factor = oraculo.pdfs_entrada / ORACULO_CARGA_1000.pdfs_entrada
     memoria_estimada = int(145_698_816 * factor)
+    # Presupuesto conservador heredado de la metodologia vieja: la constante
+    # incluye preparacion + procesamiento + verificacion (el reloj total de
+    # antes de `fases-separadas-v1`), no solo el pipeline. Sirve para decidir
+    # si abortar el banco por falta de tiempo/recursos, sobreestimando a
+    # proposito. NO es comparable con `tiempo_procesamiento_segundos`: este
+    # campo puede ser ~8x mayor que el tiempo real de procesamiento y eso es
+    # esperado, no un defecto.
     tiempo_estimado = round(218.644002 * factor, 6)
     return PreflightCarga(
         espacio,
@@ -251,8 +266,10 @@ def ejecutar_carga(
         tiempo_preparacion_segundos=round(resumen.tiempo_preparacion_segundos, 6),
         tiempo_procesamiento_segundos=round(duracion_procesamiento, 6),
         tiempo_verificacion_segundos=round(resumen.tiempo_verificacion_segundos, 6),
-        throughput_pdfs_entrada_segundo=round(resumen.pdfs_entrada / duracion_procesamiento, 3),
-        throughput_documentos_unicos_segundo=round(
+        throughput_procesamiento_pdfs_entrada_segundo=round(
+            resumen.pdfs_entrada / duracion_procesamiento, 3
+        ),
+        throughput_procesamiento_documentos_unicos_segundo=round(
             resumen.documentos_inventariados / duracion_procesamiento, 3
         ),
         memoria_pico_lifetime_proceso_bytes=_memoria_pico_proceso_bytes(),

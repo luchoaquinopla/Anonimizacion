@@ -10,6 +10,7 @@ from tests.carga.ejecutar_corpus import (
     ORACULO_CARGA_1000,
     PLAN_CARGA_10000,
     PLAN_CARGA_1000,
+    VERSION_MEDICION,
     OraculoCarga,
     ejecutar_carga,
     ejecutar_cli,
@@ -56,8 +57,8 @@ def test_runner_mide_pipeline_real_y_deduplicacion(tmp_path) -> None:
     assert resultado.tiempo_preparacion_segundos > 0
     assert resultado.tiempo_procesamiento_segundos > 0
     assert resultado.tiempo_verificacion_segundos >= 0
-    assert resultado.throughput_pdfs_entrada_segundo > 0
-    assert resultado.throughput_documentos_unicos_segundo > 0
+    assert resultado.throughput_procesamiento_pdfs_entrada_segundo > 0
+    assert resultado.throughput_procesamiento_documentos_unicos_segundo > 0
     assert resultado.memoria_pico_lifetime_proceso_bytes > 0
     assert resultado.pii_en_salida == 0
     assert resultado.oraculo_validado
@@ -72,6 +73,51 @@ def test_runner_mide_pipeline_real_y_deduplicacion(tmp_path) -> None:
     assert '"pdfs_staging_generados": 6' in reporte
     assert "pdfs_generados" not in reporte
     assert "throughput_archivos_fisicos" not in reporte
+
+
+def test_corrida_nueva_no_comparte_clave_de_throughput_con_metodologia_vieja(
+    tmp_path,
+) -> None:
+    """Centinela del hallazgo bloqueante: un reporte de la metodologia vieja
+    (reloj total, sin `version_medicion`) ya existe en disco. Si la corrida
+    nueva escribiera su throughput bajo la MISMA clave, alguien que grafique
+    esa serie leeria un salto de ~4.5 a ~36 pdfs/s como "mejoramos el
+    throughput 8x" cuando lo unico que cambio fue que se dejo de cronometrar.
+    Las claves de throughput de ambas corridas no deben solaparse: asi la
+    colision es imposible por construccion, no por que alguien recuerde
+    filtrar.
+    """
+    ruta = tmp_path / "reporte_seguro.json"
+    corrida_metodologia_vieja = {
+        "pdfs_entrada": 1_000,
+        "throughput_pdfs_entrada_segundo": 4.561,
+        "oraculo_validado": True,
+    }
+    ruta.write_text(
+        json.dumps({"corridas": [corrida_metodologia_vieja]}), encoding="utf-8"
+    )
+
+    oraculo = OraculoCarga(3, 3, 3, 0, 1, 3, {}, 0, 0)
+    resultado = ejecutar_carga(
+        tmp_path / "corrida-nueva",
+        semilla=7,
+        tipos_caso=("completo",),
+        duplicados=0,
+        oraculo=oraculo,
+    )
+    guardar_reporte(resultado, ruta)
+
+    reporte = json.loads(ruta.read_text(encoding="utf-8"))
+    claves_throughput_vieja = {
+        clave for clave in corrida_metodologia_vieja if clave.startswith("throughput_")
+    }
+    claves_throughput_nueva = {
+        clave for clave in resultado.como_dict() if clave.startswith("throughput_")
+    }
+
+    assert claves_throughput_vieja.isdisjoint(claves_throughput_nueva)
+    assert reporte["corridas"][0] == corrida_metodologia_vieja
+    assert reporte["corridas"][-1]["version_medicion"] == VERSION_MEDICION
 
 
 def test_cli_es_reejecutable_y_agrega_reportes_sin_contaminar_corridas(tmp_path) -> None:
