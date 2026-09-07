@@ -24,6 +24,16 @@ class EtapaDocumento(str, Enum):
     PSEUDONIMIZACION = "pseudonimizacion"
     SALIDA = "salida"
     INGESTA = "ingesta"
+    # Capa de gestión de procesos (openspec `paralelismo-de-procesamiento`
+    # PR 3, `trabajadores/despacho_paralelo.py`): un documento ya inventariado
+    # (paso por INGESTA) cuyo proceso hijo murió antes de que el pipeline
+    # llegara a EXTRACCION -- no es ninguna de las etapas de arriba, porque
+    # el documento nunca entró al pipeline en sí. Distinguirla de las demás
+    # es lo que permite que `web/embudo_corrida.py::calcular_embudo` cierre
+    # el desglose por etapa sin perder conteos (antes de esto, un `etapa`
+    # fuera del vocabulario fijo de `ETAPAS_EMBUDO` se sumaba al total global
+    # pero desaparecía del desglose por etapa -- ver ese módulo).
+    DESPACHO = "despacho"
 
 
 class CodigoErrorDocumento(str, Enum):
@@ -80,6 +90,17 @@ class CodigoErrorDocumento(str, Enum):
     # que `ARTEFACTO_SOBRETAMANO`, `id_documento` es el sha256 de la RUTA: no
     # se lee el contenido de un formato que ni siquiera sabemos parsear.
     FORMATO_NO_SOPORTADO = "formato_no_soportado"
+    # El proceso del sistema operativo que procesaba este grupo murió
+    # (openspec `paralelismo-de-procesamiento` PR 3, `despacho_paralelo.py`
+    # -- típicamente un OOM-kill) y se agotaron los reintentos de
+    # aislamiento SIN que el documento en sí mostrara ningún problema
+    # detectado. Deliberadamente DISTINTO de `ERROR_TRANSITORIO_AGOTADO`
+    # (ese es un fallo de IO/conexión DENTRO del pipeline, sobre un
+    # documento que sí llegó a ejecutarse) -- acá el documento puede no
+    # haber llegado a correr en absoluto. Confundir los dos códigos le
+    # ocultaría al operador que la causa no está en el contenido del
+    # documento sino en el proceso que lo procesaba (memoria, infra).
+    PROCESO_INTERRUMPIDO = "proceso_interrumpido"
 
 
 @dataclass(frozen=True)

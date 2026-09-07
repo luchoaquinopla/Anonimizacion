@@ -73,6 +73,10 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "cobertura_ambigua",
         "artefacto_sobretamano",
         "formato_no_soportado",
+        # openspec `paralelismo-de-procesamiento` PR 3, revisión adversarial
+        # ALTO 3: deliberadamente distinto de `error_transitorio_agotado`
+        # -- ver `trabajadores/despacho_paralelo.py`.
+        "proceso_interrumpido",
     }
 
 

@@ -47,6 +47,7 @@ import argparse
 import itertools
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 from sqlalchemy import Engine
@@ -59,40 +60,61 @@ from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostg
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import EscritorPostgres, construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
-from anonimizacion.trabajadores import tareas
+from anonimizacion.trabajadores import despacho_paralelo, tareas
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+
+
+def _tipo_procesos(valor: str) -> int:
+    """`type=` de argparse para `--procesos`: valida contra el tope duro acá
+    (no en `ejecutar()`) para que un valor inválido falle con un mensaje de
+    `argparse` claro antes de tocar Postgres/spaCy, no a mitad de una corrida."""
+    return despacho_paralelo.validar_grado_concurrencia(int(valor))
 
 
 def _parsear_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--entrada", required=True, type=Path, help="carpeta con los PDFs a procesar")
     parser.add_argument("--db-url", default=_DB_URL_DEFAULT, help=f"URL de Postgres (default: {_DB_URL_DEFAULT})")
+    parser.add_argument(
+        "--procesos",
+        type=_tipo_procesos,
+        default=despacho_paralelo.grado_de_concurrencia_por_defecto(),
+        help=(
+            "grado de concurrencia (ProcessPoolExecutor); default conservador segun "
+            "nucleos logicos y memoria medida (ver anonimizacion.trabajadores."
+            "despacho_paralelo.grado_de_concurrencia_por_defecto), tope duro 2x nucleos"
+        ),
+    )
     return parser.parse_args()
 
 
-def ejecutar(
+def _configurar_ejecutor_secuencial(
     *,
     entrada: Path,
-    engine: Engine,
-    motor: MotorPii,
+    motor: MotorPii | None,
     pepper: bytes,
-    tope_bytes: int | None = None,
-) -> int:
-    """Lanza una corrida sobre `entrada` y procesa su inventario de punta a punta.
+    destino: EscritorPostgres,
+    cuarentena: EscritorCuarentena,
+    tope_bytes: int | None,
+) -> None:
+    """Arma y registra la fábrica de `EjecutorPipeline` en ESTE proceso --
+    solo para el camino secuencial (`procesos<=1`). Extraído de `ejecutar()`
+    para mantener su complejidad ciclomática bajo el límite (`ruff`/`C901`),
+    no por otra razón de diseño.
 
-    Separado de `main()` para poder ejercitarlo con un motor/engine inyectados
-    en tests (`tests/scripts/test_procesar_carpeta.py`) sin tocar argparse,
-    variables de entorno, ni Postgres real. `tope_bytes=None` es "usar el
-    default de producción" -- mismo convenio que `LanzadorCorrida`/`FuenteLocal`.
+    Con `procesos>1` cada hijo arma su PROPIA fábrica
+    (`despacho_paralelo.inicializar_trabajador`) -- armar una acá también
+    sería cargar un `MotorPii()` entero (~875 MB medidos, ver
+    `despacho_paralelo`) en el padre para un ejecutor que nunca se usa, la
+    copia N+1 que este tramo existe para evitar.
     """
-    Base.metadata.create_all(engine, checkfirst=True)
-
-    destino = EscritorPostgres(engine)
-    cuarentena = EscritorCuarentena(engine)
-    # puente id_alt_paciente -> id_paciente persistente contra `vinculo_paciente`
-    # (ver docstring del módulo, fix post-merge): sobrevive entre corridas
-    # separadas del script, a diferencia de `ResolutorClaves()` en memoria.
+    if motor is None:
+        raise ValueError("motor es obligatorio cuando procesos <= 1 (camino secuencial, en este mismo proceso)")
+    # puente id_alt_paciente -> id_paciente persistente contra
+    # `vinculo_paciente` (ver docstring del módulo, fix post-merge): sobrevive
+    # entre corridas separadas del script, a diferencia de `ResolutorClaves()`
+    # en memoria.
     resolutor = ResolutorClavesPostgres(destino)
 
     # Se arma por la MISMA raíz de composición que el trabajador
@@ -110,6 +132,145 @@ def ejecutar(
         **({"tope_bytes": tope_bytes} if tope_bytes is not None else {}),
     )
     tareas.configurar_ejecutor(fabrica)
+
+
+def _despachar_grupos(
+    *,
+    corrida_id: str,
+    grupos_a_despachar: Iterator[tuple[dict[str, str], ...]],
+    procesos: int,
+    entrada: Path,
+    db_url: str | None,
+    tope_bytes: int | None,
+    cuarentena: EscritorCuarentena,
+    directorio_marcador_pid: Path | None,
+) -> tuple[list[dict[str, object]], int, int]:
+    """Secuencial (`procesos<=1`, en este proceso) o paralelo (`procesos>1`,
+    `ProcessPoolExecutor` vía `despacho_paralelo`). Extraído de `ejecutar()`
+    por la misma razón que `_configurar_ejecutor_secuencial`: mantener la
+    complejidad ciclomática de `ejecutar()` bajo el límite."""
+    if procesos <= 1:
+        print(f"Corrida {corrida_id}: procesando por grupo (secuencial)...", file=sys.stderr)
+        # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
+        # PR 2). `procesar_grupo` es la MISMA tarea Celery real que despachara
+        # producción (llamada en directo, no `.delay()`: este script corre
+        # sincrónico, sin broker). Antes se le pasaba `lanzamiento.referencias`
+        # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
+        # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
+        # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una
+        # vez POR GRUPO, iterando el generador en una sola pasada (nunca contando
+        # de antemano), acota ese pico al tamaño de un grupo (un paciente) sin
+        # cambiar el resultado: cada grupo sigue siendo un lote independiente con
+        # su propio aislamiento de fallo.
+        resultados: list[dict[str, object]] = []
+        total_documentos = 0
+        total_grupos = 0
+        for grupo in grupos_a_despachar:
+            total_documentos += len(grupo)
+            total_grupos += 1
+            resultados.extend(tareas.procesar_grupo(corrida_id, grupo))
+        return resultados, total_documentos, total_grupos
+
+    if db_url is None:
+        raise ValueError(
+            "db_url es obligatorio cuando procesos > 1: cada proceso hijo arma su propio Engine "
+            "(una conexion de socket no sobrevive un pickle a traves del limite de proceso)"
+        )
+    print(f"Corrida {corrida_id}: procesando por grupo ({procesos} procesos)...", file=sys.stderr)
+    # `metricas` (revisión adversarial, hallazgo no bloqueante): la
+    # recuperación ante un hijo muerto tiene un costo real en recargas
+    # completas de `MotorPii` (~875 MB medidas cada una) que sin esto era
+    # invisible para quien opera la corrida -- ver "Costo real de la
+    # recuperación" en el docstring de `despacho_paralelo.despachar_en_paralelo`.
+    metricas_despacho = despacho_paralelo.MetricasDespacho()
+    resultado = despacho_paralelo.despachar_en_paralelo(
+        corrida_id=corrida_id,
+        grupos=grupos_a_despachar,
+        # `crear_pool` recibe el grado de concurrencia deseado -- no siempre
+        # es `procesos`: la recuperación ante un pool roto pide un pool de
+        # UN solo worker para aislar causalmente un crash (ver
+        # `despacho_paralelo._EstadoDespacho._reprocesar_en_aislamiento`).
+        crear_pool=lambda n: despacho_paralelo.crear_pool_de_trabajadores(
+            entrada=entrada,
+            db_url=db_url,
+            tope_bytes=tope_bytes,
+            procesos=n,
+            directorio_marcador_pid=directorio_marcador_pid,
+        ),
+        procesos=procesos,
+        cuarentena=cuarentena,
+        metricas=metricas_despacho,
+    )
+    if metricas_despacho.recreaciones_de_pool_principal:
+        print(
+            f"Corrida {corrida_id}: recuperación ante procesos muertos -- "
+            f"{metricas_despacho.recreaciones_de_pool_principal} recreación(es) del pool principal, "
+            f"{metricas_despacho.reprocesos_en_aislamiento} reproceso(s) en aislamiento "
+            "(cada uno recarga el modelo de PII completo, ~875 MB medidos).",
+            file=sys.stderr,
+        )
+    return resultado
+
+
+def ejecutar(
+    *,
+    entrada: Path,
+    engine: Engine,
+    motor: MotorPii | None = None,
+    pepper: bytes,
+    tope_bytes: int | None = None,
+    procesos: int = 1,
+    db_url: str | None = None,
+    directorio_marcador_pid: Path | None = None,
+) -> int:
+    """Lanza una corrida sobre `entrada` y procesa su inventario de punta a punta.
+
+    Separado de `main()` para poder ejercitarlo con un motor/engine inyectados
+    en tests (`tests/scripts/test_procesar_carpeta.py`) sin tocar argparse,
+    variables de entorno, ni Postgres real. `tope_bytes=None` es "usar el
+    default de producción" -- mismo convenio que `LanzadorCorrida`/`FuenteLocal`.
+
+    `procesos=1` (default) mantiene el camino SECUENCIAL sin cambios --
+    llama `tareas.procesar_grupo` en directo, en el mismo proceso, igual que
+    antes del tramo 3. `procesos>1` despacha por
+    `anonimizacion.trabajadores.despacho_paralelo.despachar_en_paralelo`
+    (openspec `paralelismo-de-procesamiento` PR 3): cada grupo se procesa en
+    un `ProcessPoolExecutor`, con recuperación automática si un hijo muere.
+    En ese caso `db_url` es OBLIGATORIO -- cada proceso hijo arma su PROPIO
+    `Engine` de Postgres (`construir_engine_postgres(db_url)`); el `engine`
+    que recibe esta función nunca cruza el límite de proceso (una conexión
+    de socket no sobrevive un pickle), solo se usa acá en el padre para
+    crear el esquema y para registrar en `cuarentena` los grupos que se dan
+    por perdidos tras agotar reintentos.
+
+    `pepper` (el parámetro) solo se usa con `procesos<=1` -- con `procesos>1`
+    cada hijo llama `obtener_pepper()` por su cuenta, leyendo
+    `ANONIMIZACION_PEPPER`/`ANONIMIZACION_PEPPER_ARCHIVO` de SU PROPIO
+    entorno heredado (ver `despacho_paralelo.inicializar_trabajador`), nunca
+    del valor pasado acá: hacerlo viajar como argumento sería pasarlo por el
+    mismo canal pickleado que cualquier otro dato, exactamente lo que la
+    decisión de diseño evita. Quien llame con `procesos>1` debe asegurarse
+    de que `ANONIMIZACION_PEPPER` esté seteada en el entorno del proceso que
+    invoca esta función (`os.environ[...] = ...` en runtime alcanza -- ver
+    `despacho_paralelo`, verificado con `spawn`).
+
+    `directorio_marcador_pid` (`None` = producción): instrumentación de test
+    -- ver el docstring de `despacho_paralelo.inicializar_trabajador`.
+    """
+    Base.metadata.create_all(engine, checkfirst=True)
+
+    destino = EscritorPostgres(engine)
+    cuarentena = EscritorCuarentena(engine)
+
+    if procesos <= 1:
+        _configurar_ejecutor_secuencial(
+            entrada=entrada,
+            motor=motor,
+            pepper=pepper,
+            destino=destino,
+            cuarentena=cuarentena,
+            tope_bytes=tope_bytes,
+        )
 
     # `LanzadorCorrida` es el único punto donde nace una corrida (design.md,
     # "Recorrido"): crea la fila `corrida`, inventaría vía `FuenteLocal` +
@@ -145,26 +306,18 @@ def ejecutar(
     # `procesar_grupo` a continuación, así que es quien debe marcarlo.
     lanzador.marcar_procesando(lanzamiento.corrida_id)
 
-    print(f"Corrida {lanzamiento.corrida_id}: procesando por grupo...", file=sys.stderr)
-    # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
-    # PR 2 -- el PR 3 paraleliza esto mismo con `ProcessPoolExecutor`, todavía
-    # no acá). `procesar_grupo` es la MISMA tarea Celery real que despachara
-    # producción (llamada en directo, no `.delay()`: este script corre
-    # sincrónico, sin broker). Antes se le pasaba `lanzamiento.referencias`
-    # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
-    # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
-    # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una
-    # vez POR GRUPO, iterando el generador en una sola pasada (nunca contando
-    # de antemano), acota ese pico al tamaño de un grupo (un paciente) sin
-    # cambiar el resultado: cada grupo sigue siendo un lote independiente con
-    # su propio aislamiento de fallo.
-    resultados: list[dict[str, object]] = []
-    total_documentos = 0
-    total_grupos = 0
-    for grupo in itertools.chain([primer_grupo], iterador_grupos):
-        total_documentos += len(grupo)
-        total_grupos += 1
-        resultados.extend(tareas.procesar_grupo(lanzamiento.corrida_id, grupo))
+    grupos_a_despachar = itertools.chain([primer_grupo], iterador_grupos)
+
+    resultados, total_documentos, total_grupos = _despachar_grupos(
+        corrida_id=lanzamiento.corrida_id,
+        grupos_a_despachar=grupos_a_despachar,
+        procesos=procesos,
+        entrada=entrada,
+        db_url=db_url,
+        tope_bytes=tope_bytes,
+        cuarentena=cuarentena,
+        directorio_marcador_pid=directorio_marcador_pid,
+    )
     print(f"Corrida {lanzamiento.corrida_id}: {total_documentos} documento(s) en {total_grupos} grupo(s).", file=sys.stderr)
 
     exitos = [r for r in resultados if r["estado"] == "exito"]
@@ -198,8 +351,21 @@ def main() -> int:
     print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
     pepper = obtener_pepper()
 
-    print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
-    motor = MotorPii()
+    # `motor` solo se carga en el padre para el camino SECUENCIAL
+    # (`procesos<=1`): con `procesos>1` cada hijo del `ProcessPoolExecutor`
+    # arma su PROPIO `MotorPii()` (`despacho_paralelo.inicializar_trabajador`)
+    # -- cargarlo también acá sería una copia de más (~875 MB medidos, ver
+    # docstring de `despacho_paralelo.grado_de_concurrencia_por_defecto`) que
+    # el padre nunca usaría para procesar nada.
+    motor: MotorPii | None = None
+    if args.procesos <= 1:
+        print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
+        motor = MotorPii()
+    else:
+        print(
+            f"Motor de PII: se carga en cada uno de los {args.procesos} procesos hijos, no en este proceso.",
+            file=sys.stderr,
+        )
 
     print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
     # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
@@ -208,7 +374,14 @@ def main() -> int:
     # manda documentos válidos a cuarentena por una conexión muerta del pool.
     engine = construir_engine_postgres(args.db_url)
 
-    return ejecutar(entrada=args.entrada, engine=engine, motor=motor, pepper=pepper)
+    return ejecutar(
+        entrada=args.entrada,
+        engine=engine,
+        motor=motor,
+        pepper=pepper,
+        procesos=args.procesos,
+        db_url=args.db_url,
+    )
 
 
 if __name__ == "__main__":

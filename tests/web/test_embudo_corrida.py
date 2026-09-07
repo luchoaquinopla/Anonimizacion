@@ -24,14 +24,19 @@ from anonimizacion.web.embudo_corrida import (
 _AHORA = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def test_las_siete_etapas_se_exponen_en_el_orden_de_ejecucion() -> None:
+def test_las_ocho_etapas_se_exponen_en_el_orden_de_ejecucion() -> None:
     # 8.1: el orden de ejecución real (design.md, Decisión 8) intercala
     # `coordinacion` DESPUÉS de `pseudonimizacion`, no entre `reconciliacion`
     # y `deteccion_pii` como lo declara el enum `Etapa` -- si `calcular_embudo`
     # se limitara a iterar ese enum, este test lo detectaría.
+    #
+    # `despacho` (openspec `paralelismo-de-procesamiento` PR 3, revisión
+    # adversarial): va justo después de `ingesta`, antes de `extraccion` --
+    # un documento apartado ahí nunca llegó a ejecutarse en el pipeline.
     perdidas = {
         "salida": {"error_transitorio_agotado": 1},
         "ingesta": {"artefacto_sobretamano": 1},
+        "despacho": {"proceso_interrumpido": 1},
         "coordinacion": {"episodio_incompleto": 1},
     }
 
@@ -49,6 +54,7 @@ def test_las_siete_etapas_se_exponen_en_el_orden_de_ejecucion() -> None:
     assert [e.etapa for e in embudo.etapas] == list(ETAPAS_EMBUDO)
     assert list(ETAPAS_EMBUDO) == [
         "ingesta",
+        "despacho",
         "extraccion",
         "parseo",
         "reconciliacion",
@@ -56,6 +62,26 @@ def test_las_siete_etapas_se_exponen_en_el_orden_de_ejecucion() -> None:
         "pseudonimizacion",
         "salida",
     ]
+    # Centinela del bug real (revisión adversarial): antes de agregar
+    # `despacho` a `ETAPAS_EMBUDO`, un apartado con esa etapa se sumaba al
+    # total global pero el `for etapa in ETAPAS_EMBUDO` lo saltaba sin
+    # restarlo de `llegaron` en ningún punto -- el desglose por etapa
+    # quedaba inflado desde ahí en adelante. Con la etapa ya en el
+    # vocabulario: `llegaron` arranca en `con_desenlace` (9, publicados +
+    # apartados), `ingesta` resta su propio apartado (9 -> 8 para la
+    # siguiente etapa), `despacho` ve `llegaron=8` y resta el suyo
+    # (8 -> 7 para `extraccion`) -- si `despacho` no estuviera en el
+    # vocabulario, ese apartado nunca se restaría y `extraccion` vería 8,
+    # no 7.
+    por_etapa = {e.etapa: e for e in embudo.etapas}
+    assert por_etapa["ingesta"].llegaron == 9
+    assert por_etapa["despacho"].llegaron == 8
+    assert por_etapa["despacho"].apartados == 1
+    assert por_etapa["extraccion"].llegaron == 7
+    # El ultimo `llegaron` restante (via `pseudonimizacion`/`salida`) tiene
+    # que converger exactamente a `publicados` -- es la propiedad que
+    # confirma que TODOS los apartados fueron restados en algun punto.
+    assert por_etapa["salida"].llegaron - por_etapa["salida"].apartados == 5
 
 
 def test_el_residuo_negativo_no_se_recorta_a_cero() -> None:
@@ -287,7 +313,7 @@ def test_etapas_no_declaradas_no_participan_del_embudo() -> None:
     )
 
     assert "deteccion" not in [e.etapa for e in embudo.etapas]
-    assert len(embudo.etapas) == 7
+    assert len(embudo.etapas) == len(ETAPAS_EMBUDO)
 
 
 def test_los_dataclasses_de_salida_no_tienen_campos_llamados_como_columnas_de_pii() -> None:
