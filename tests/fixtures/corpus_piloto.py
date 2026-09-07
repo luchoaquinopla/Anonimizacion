@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
+from time import perf_counter
 
 from anonimizacion.dominio.modelos import ClavesPaciente, RegistroAnonimizado
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria
@@ -30,6 +31,9 @@ class ResumenPiloto:
     valores_pii_verificados: int
     pii_en_salida: int
     reintentos: int
+    tiempo_preparacion_segundos: float
+    tiempo_procesamiento_segundos: float
+    tiempo_verificacion_segundos: float
 
     def como_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -137,9 +141,20 @@ def contar_coincidencias_pii(registros: list[object], valores_pii: list[str]) ->
 def ejecutar_corpus_sintetico(
     directorio: Path, *, semilla: int, tipos_caso: tuple[str, ...], duplicados: int
 ) -> ResumenPiloto:
+    # El reloj se abre y cierra por fase, no una sola vez para toda la funcion.
+    # `_crear_entrada` (generar los PDFs sinteticos) y `contar_coincidencias_pii`
+    # (verificacion de seguridad de la salida) son trabajo del banco, no del
+    # pipeline: produccion recibe PDFs que ya existen y no re-verifica PII por
+    # substring sobre cada registro. Solo lo que queda entre esas dos fases
+    # -- inventariar, procesar el lote -- es "tiempo_procesamiento_segundos",
+    # el unico numero que debe usarse para extrapolar rendimiento.
+    inicio_preparacion = perf_counter()
     entrada, pdfs_entrada, valores_pii = _crear_entrada(
         directorio, semilla, tipos_caso, duplicados
     )
+    tiempo_preparacion = perf_counter() - inicio_preparacion
+
+    inicio_procesamiento = perf_counter()
     inventario = tuple(
         FuenteLocal(
             raices=(directorio,),
@@ -183,7 +198,12 @@ def ejecutar_corpus_sintetico(
     )()
     resultados = ejecutor.procesar_lote(items)
     codigos = Counter(error.codigo.value for error in cuarentena.errores)
+    tiempo_procesamiento = perf_counter() - inicio_procesamiento
+
+    inicio_verificacion = perf_counter()
     pii_en_salida = contar_coincidencias_pii(destino.registros, valores_pii)
+    tiempo_verificacion = perf_counter() - inicio_verificacion
+
     return ResumenPiloto(
         casos=len(tipos_caso),
         pdfs_entrada=pdfs_entrada,
@@ -196,6 +216,9 @@ def ejecutar_corpus_sintetico(
         valores_pii_verificados=len(valores_pii),
         pii_en_salida=pii_en_salida,
         reintentos=reintentos,
+        tiempo_preparacion_segundos=tiempo_preparacion,
+        tiempo_procesamiento_segundos=tiempo_procesamiento,
+        tiempo_verificacion_segundos=tiempo_verificacion,
     )
 
 

@@ -9,7 +9,6 @@ import shutil
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from time import perf_counter
 from uuid import uuid4
 
 from tests.fixtures.corpus_piloto import ejecutar_corpus_sintetico
@@ -34,6 +33,14 @@ def crear_plan_carga(factor: int) -> tuple[str, ...]:
 
 PLAN_CARGA_1000 = crear_plan_carga(1)
 DUPLICADOS_CARGA_1000 = 2
+
+# Version del METODO de medicion (no del banco en si). Antes de esta version
+# el cronometro incluia la generacion de los PDFs sinteticos y la
+# verificacion de PII por substring -- ninguna de las dos es trabajo de
+# produccion -- por lo que los tiempos y throughputs de reportes anteriores
+# NO son comparables con los que produce esta version. Cualquier reporte sin
+# este campo, o con un valor distinto, se lee como incompatible.
+VERSION_MEDICION = "fases-separadas-v1"
 
 
 @dataclass(frozen=True)
@@ -101,12 +108,15 @@ class ResumenCarga:
     cuarentenas_esperadas: int
     fallos_inesperados: int
     reintentos: int
-    tiempo_total_segundos: float
+    tiempo_preparacion_segundos: float
+    tiempo_procesamiento_segundos: float
+    tiempo_verificacion_segundos: float
     throughput_pdfs_entrada_segundo: float
     throughput_documentos_unicos_segundo: float
     memoria_pico_lifetime_proceso_bytes: int
     pii_en_salida: int
     oraculo_validado: bool
+    version_medicion: str = VERSION_MEDICION
 
     def como_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -203,11 +213,16 @@ def ejecutar_carga(
     duplicados: int = DUPLICADOS_CARGA_1000,
     oraculo: OraculoCarga = ORACULO_CARGA_1000,
 ) -> ResumenCarga:
-    inicio = perf_counter()
     resumen = ejecutar_corpus_sintetico(
         directorio, semilla=semilla, tipos_caso=tipos_caso, duplicados=duplicados
     )
-    duracion = perf_counter() - inicio
+    # El unico tiempo que sirve para extrapolar rendimiento es el de
+    # procesamiento: abrir documentos, correr el pipeline, escribir la
+    # salida. La generacion del corpus (produccion recibe PDFs que ya
+    # existen) y la verificacion de PII (una comprobacion de seguridad del
+    # banco, no del pipeline) se miden y reportan aparte, nunca mezcladas
+    # en el throughput.
+    duracion_procesamiento = resumen.tiempo_procesamiento_segundos
     actual = OraculoCarga(
         resumen.pdfs_entrada,
         sum(1 for _ in (directorio / "generados").rglob("*.pdf")),
@@ -233,9 +248,13 @@ def ejecutar_carga(
         cuarentenas_esperadas=sum(oraculo.cuarentena_por_codigo.values()),
         fallos_inesperados=0,
         reintentos=resumen.reintentos,
-        tiempo_total_segundos=round(duracion, 6),
-        throughput_pdfs_entrada_segundo=round(resumen.pdfs_entrada / duracion, 3),
-        throughput_documentos_unicos_segundo=round(resumen.documentos_inventariados / duracion, 3),
+        tiempo_preparacion_segundos=round(resumen.tiempo_preparacion_segundos, 6),
+        tiempo_procesamiento_segundos=round(duracion_procesamiento, 6),
+        tiempo_verificacion_segundos=round(resumen.tiempo_verificacion_segundos, 6),
+        throughput_pdfs_entrada_segundo=round(resumen.pdfs_entrada / duracion_procesamiento, 3),
+        throughput_documentos_unicos_segundo=round(
+            resumen.documentos_inventariados / duracion_procesamiento, 3
+        ),
         memoria_pico_lifetime_proceso_bytes=_memoria_pico_proceso_bytes(),
         pii_en_salida=resumen.pii_en_salida,
         oraculo_validado=True,

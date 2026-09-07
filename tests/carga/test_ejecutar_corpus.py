@@ -53,12 +53,15 @@ def test_runner_mide_pipeline_real_y_deduplicacion(tmp_path) -> None:
     assert resultado.cuarentenas_esperadas == 2
     assert resultado.fallos_inesperados == 0
     assert resultado.reintentos == 0
-    assert resultado.tiempo_total_segundos > 0
+    assert resultado.tiempo_preparacion_segundos > 0
+    assert resultado.tiempo_procesamiento_segundos > 0
+    assert resultado.tiempo_verificacion_segundos >= 0
     assert resultado.throughput_pdfs_entrada_segundo > 0
     assert resultado.throughput_documentos_unicos_segundo > 0
     assert resultado.memoria_pico_lifetime_proceso_bytes > 0
     assert resultado.pii_en_salida == 0
     assert resultado.oraculo_validado
+    assert resultado.version_medicion == "fases-separadas-v1"
 
     ruta_reporte = tmp_path / "reporte_seguro.json"
     guardar_reporte(resultado, ruta_reporte)
