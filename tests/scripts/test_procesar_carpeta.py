@@ -436,3 +436,39 @@ def test_el_script_despacha_dos_pacientes_en_procesos_reales_distintos_contra_po
         cuarentenas = sesion.scalars(sa.select(Cuarentena)).all()
     assert len(estudios) == 6, "particion exhaustiva: ambos pacientes se publican, cada uno en su proceso"
     assert len(cuarentenas) == 0, "dos pacientes genuinamente distintos: ninguno va a cuarentena"
+
+
+def test_el_script_reporta_metricas_de_recuperacion_si_hubo_recreaciones(capsys, monkeypatch) -> None:
+    """ALTO 1 de revisión adversarial (ronda 2): la recuperación ante un
+    hijo muerto tiene un costo real en recargas completas del modelo de PII
+    (~875 MB medidas cada una) que antes no se veía en ningún lado. Si
+    `despachar_en_paralelo` reporta recreaciones/reprocesos vía `metricas`,
+    el script tiene que avisarlo por stderr -- rápido, sin Postgres ni
+    `ProcessPoolExecutor` real: se reemplaza `despachar_en_paralelo` por un
+    doble que solo simula haber mutado `metricas`, igual que haría el real
+    tras una recuperación."""
+    modulo = _cargar_script()
+
+    def _despachar_en_paralelo_fake(*, grupos, metricas=None, **_kwargs):
+        list(grupos)  # consumir, como haria el real
+        if metricas is not None:
+            metricas.recreaciones_de_pool_principal = 2
+            metricas.reprocesos_en_aislamiento = 3
+        return [], 0, 0
+
+    monkeypatch.setattr(modulo.despacho_paralelo, "despachar_en_paralelo", _despachar_en_paralelo_fake)
+
+    modulo._despachar_grupos(
+        corrida_id="corrida-metricas-script",
+        grupos_a_despachar=iter([]),
+        procesos=2,
+        entrada=Path("."),
+        db_url="postgresql+psycopg://usuario:clave@localhost:5433/db",
+        tope_bytes=None,
+        cuarentena=object(),
+        directorio_marcador_pid=None,
+    )
+
+    salida = capsys.readouterr().err
+    assert "2 recreación" in salida or "2 recreacion" in salida
+    assert "3 reproceso" in salida

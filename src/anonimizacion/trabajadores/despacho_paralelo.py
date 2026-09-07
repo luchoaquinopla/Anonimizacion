@@ -136,15 +136,33 @@ _MULTIPLICADOR_TOPE_DURO = 2
 # el default tiene que ser seguro sin que nadie mida nada, el tope duro sólo
 # tiene que evitar el caso claramente absurdo (`--procesos` a mano en una
 # máquina que el operador conoce, sin llegar a poder pedir 21 GB).
+#
+# LIMITACIÓN CONOCIDA, ACEPTADA, NO RESUELTA ACÁ (revisión adversarial,
+# hallazgo no bloqueante): `_PRESUPUESTO_MEMORIA_TOPE_DURO_MB` es fijo para
+# TODAS las máquinas -- una con 4 GB de RAM y 16 núcleos lógicos obtiene el
+# MISMO tope (9) que una con 64 GB, así que `--procesos 9` en la máquina
+# chica pide ~7,9 GB solo en modelos sin que este módulo lo detecte ni lo
+# impida. Leer la RAM real de la máquina es una decisión aparte (implica
+# `psutil` o código específico por sistema operativo, ver arriba) que este
+# cambio no toma. Quien pasa `--procesos` a mano por encima del default es
+# responsable de conocer la memoria real de SU máquina -- el tope duro
+# protege contra el caso absurdo (`--procesos 24`), no contra cualquier
+# combinación de hardware chico y `--procesos` grande dentro del tope.
 _MEMORIA_ESTIMADA_POR_PROCESO_MB = 875
 _PRESUPUESTO_MEMORIA_TOPE_DURO_MB = 8192
-# Reintentos por grupo ante `BrokenProcessPool` antes de darlo por perdido
-# (ver `despachar_en_paralelo`). 1 reintento, no infinito: un grupo cuyo
-# contenido causa la muerte del proceso de forma determinística (p. ej. un
-# PDF que dispara un bug real de memoria en PyMuPDF/spaCy) moriría por
-# siempre si se reintentara sin límite, colgando la corrida entera a pesar
-# de que el objetivo de este módulo es JUSTO que un hijo muerto no la
-# cuelgue.
+# Reintentos EN AISLAMIENTO por grupo ante `BrokenProcessPool` antes de
+# darlo por perdido (ver `_reprocesar_en_aislamiento`). El intento en el
+# pool PRINCIPAL nunca cuenta acá -- solo cuentan los reintentos que
+# `_reprocesar_en_aislamiento` hace por su cuenta, uno a la vez. Con el
+# default (1): 1 intento en el pool principal (gratis) + hasta 1 reintento
+# en aislamiento = 2 cargas completas de proceso+modelo antes de dar un
+# grupo tóxico por perdido, no 3 (revisión adversarial: medido con un
+# contador real en disco, la comparación `>` en vez de `>=` daba 3 -- ver
+# `_reprocesar_en_aislamiento`). No infinito: un grupo cuyo contenido causa
+# la muerte del proceso de forma determinística (p. ej. un PDF que dispara
+# un bug real de memoria en PyMuPDF/spaCy) moriría por siempre si se
+# reintentara sin límite, colgando la corrida entera a pesar de que el
+# objetivo de este módulo es JUSTO que un hijo muerto no la cuelgue.
 MAX_REINTENTOS_POR_GRUPO = 1
 
 
@@ -308,6 +326,42 @@ def _error_grupo_perdido(referencia: Referencia, corrida_id: str) -> ErrorDocume
 
 
 @dataclass
+class MetricasDespacho:
+    """Contadores de eventos de RECUPERACIÓN del despachador -- ni documentos
+    ni etapas del pipeline (eso ya lo cubre
+    `observabilidad/metricas.py::ColectorMetricas`, con su propio vocabulario
+    de `Etapa`/`CodigoErrorDocumento`, y vive por proceso HIJO, no en el
+    padre; los eventos de acá son de la capa de orquestación de procesos, en
+    el padre, y no tienen equivalente ahí).
+
+    ALTO 1 de revisión adversarial: la recuperación tiene un costo real en
+    recargas completas de `MotorPii` (~875 MB medidos cada una) que antes no
+    se veía en ningún lado -- medido por el auditor: con solo 3 crashes y
+    `procesos=4` sobre 48 grupos aparecieron 25 PIDs de hijos distintos,
+    contra los 4 del estado estable (~21 recargas extra). Sin un contador,
+    un operador con una corrida de horas no tenía forma de saber que estaba
+    pagando una tormenta de recargas -- ver el docstring de
+    `despachar_en_paralelo`, sección "Costo real de la recuperación", para
+    la explicación completa de por qué el costo es tan alto.
+
+    Mismo patrón que `MetricasEnMemoria`: contadores simples, expuestos vía
+    `snapshot()`, sin lock -- a diferencia de `MetricasEnMemoria` (que
+    corre en un worker de Celery con tareas concurrentes en el mismo
+    proceso), `_EstadoDespacho` es de un solo hilo en el proceso PADRE, así
+    que no hace falta sincronización.
+    """
+
+    recreaciones_de_pool_principal: int = 0
+    reprocesos_en_aislamiento: int = 0
+
+    def snapshot(self) -> dict[str, int]:
+        return {
+            "recreaciones_de_pool_principal": self.recreaciones_de_pool_principal,
+            "reprocesos_en_aislamiento": self.reprocesos_en_aislamiento,
+        }
+
+
+@dataclass
 class _EstadoDespacho:
     """Estado mutable de una corrida de `despachar_en_paralelo`, en su propia
     clase (no closures anidadas dentro de la función) para que cada método
@@ -322,6 +376,7 @@ class _EstadoDespacho:
     procesos: int
     cuarentena: DestinoCuarentena
     funcion_trabajo: FuncionTrabajo
+    metricas: MetricasDespacho = field(default_factory=MetricasDespacho)
 
     resultados: list[dict[str, object]] = field(default_factory=list)
     total_documentos: int = 0
@@ -396,6 +451,7 @@ class _EstadoDespacho:
         (`MAX_REINTENTOS_POR_GRUPO` sigue acotando cuánto puede alargarse
         esto por grupo).
         """
+        self.metricas.reprocesos_en_aislamiento += 1
         pool_aislado = self.crear_pool(1)
         futuro = pool_aislado.submit(self.funcion_trabajo, self.corrida_id, grupo)
         try:
@@ -403,7 +459,14 @@ class _EstadoDespacho:
         except BrokenProcessPool:
             pool_aislado.shutdown(wait=False, cancel_futures=True)
             self.intentos_por_grupo[indice] = self.intentos_por_grupo.get(indice, 0) + 1
-            if self.intentos_por_grupo[indice] > MAX_REINTENTOS_POR_GRUPO:
+            # `>=`, no `>` (revisión adversarial): con `>` el intento en el
+            # pool principal quedaba "gratis" y encima se permitían 2
+            # reintentos en aislamiento -- 3 cargas de proceso+modelo en
+            # total para un grupo tóxico, contradiciendo el comentario de
+            # `MAX_REINTENTOS_POR_GRUPO` ("1 reintento"). Con `>=`, 1
+            # reintento en aislamiento alcanza su cupo tras UN solo intento
+            # extra -- 2 cargas en total, lo que el nombre siempre dijo.
+            if self.intentos_por_grupo[indice] >= MAX_REINTENTOS_POR_GRUPO:
                 self._dar_por_perdido(indice, grupo)
             else:
                 self._reprocesar_en_aislamiento(indice, grupo)
@@ -430,6 +493,7 @@ class _EstadoDespacho:
         afectados = [(indice, grupo), *self.en_vuelo.values()]
         self.en_vuelo.clear()
         self.pool.shutdown(wait=False, cancel_futures=True)
+        self.metricas.recreaciones_de_pool_principal += 1
 
         for indice_afectado, grupo_afectado in afectados:
             self._reprocesar_en_aislamiento(indice_afectado, grupo_afectado)
@@ -486,9 +550,17 @@ def despachar_en_paralelo(
     procesos: int,
     cuarentena: DestinoCuarentena,
     funcion_trabajo: FuncionTrabajo = procesar_grupo_en_trabajador,
+    metricas: MetricasDespacho | None = None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Despacha `grupos` a un `ProcessPoolExecutor`, con recuperación ante un
     hijo muerto y sin materializar la partición completa en memoria.
+
+    `metricas` (`None` = se crea una instancia descartable, mismo convenio
+    que `dormir`/`resolver_claves` en `tareas.construir_fabrica_ejecutor`):
+    quien llama y quiere OBSERVAR el costo de la recuperación pasa su propia
+    `MetricasDespacho()` -- se muta en el lugar (nunca se reasigna), así que
+    el llamador puede inspeccionarla después de que esta función retorna.
+    Ver "Costo real de la recuperación" más abajo para por qué esto importa.
 
     `crear_pool` recibe el grado de concurrencia deseado (`int`), no un
     factory de aridad cero: la recuperación ante un pool roto necesita poder
@@ -534,8 +606,29 @@ def despachar_en_paralelo(
     pool, es indiscutiblemente su propia culpa y recién ahí carga su cupo de
     reintentos; si no muere en aislamiento, nunca fue culpable, se acepta su
     resultado y su contador de reintentos nunca se toca. Ver
-    `_reprocesar_en_aislamiento` para el detalle y el costo aceptado
-    (procesar los afectados de a uno, secuencial, durante la recuperación).
+    `_reprocesar_en_aislamiento` para el detalle.
+
+    **Costo real de la recuperación -- alto, y antes invisible** (revisión
+    adversarial, hallazgo no bloqueante): recuperarse de UN `BrokenProcessPool`
+    es mucho más caro que "reintentar la tarea". Dos causas se suman:
+
+    1. Recrear el pool principal apaga TODOS sus workers, incluidos los
+       sanos que seguían vivos -- no solo el que murió.
+    2. Cada `afectado` (el culpable Y cualquier colateral sano) se
+       reprocesa en su PROPIO pool de un worker, con su PROPIA carga
+       completa de `MotorPii` (~875 MB, ~2-3 s medidos) -- nunca reusa un
+       proceso ya inicializado.
+
+    Medido por el auditor: con solo 3 crashes y `procesos=4` sobre 48
+    grupos, aparecieron **25 PIDs de hijos distintos**, contra los 4 del
+    estado estable -- ~21 recargas completas del modelo de más por 3
+    crashes. Sobre un corpus de horas, un patrón de crashes repetido podría
+    comerse buena parte de la ganancia de este tramo sin que nadie lo note
+    si nadie mide esto. Por eso `MetricasDespacho` (`recreaciones_de_pool_principal`,
+    `reprocesos_en_aislamiento`) existe: sin un contador expuesto, un
+    operador con una corrida larga no tiene forma de saber que está pagando
+    una tormenta de recargas. `scripts/procesar_carpeta.py` reporta estos
+    contadores al terminar la corrida.
 
     **Reposición de la ventana tras una pérdida** (revisión adversarial,
     hallazgo crítico): `_recuperar_de_pool_roto` SIEMPRE termina recreando
@@ -574,4 +667,5 @@ def despachar_en_paralelo(
         procesos=procesos,
         cuarentena=cuarentena,
         funcion_trabajo=funcion_trabajo,
+        metricas=metricas if metricas is not None else MetricasDespacho(),
     ).ejecutar()

@@ -177,7 +177,13 @@ def _despachar_grupos(
             "(una conexion de socket no sobrevive un pickle a traves del limite de proceso)"
         )
     print(f"Corrida {corrida_id}: procesando por grupo ({procesos} procesos)...", file=sys.stderr)
-    return despacho_paralelo.despachar_en_paralelo(
+    # `metricas` (revisión adversarial, hallazgo no bloqueante): la
+    # recuperación ante un hijo muerto tiene un costo real en recargas
+    # completas de `MotorPii` (~875 MB medidas cada una) que sin esto era
+    # invisible para quien opera la corrida -- ver "Costo real de la
+    # recuperación" en el docstring de `despacho_paralelo.despachar_en_paralelo`.
+    metricas_despacho = despacho_paralelo.MetricasDespacho()
+    resultado = despacho_paralelo.despachar_en_paralelo(
         corrida_id=corrida_id,
         grupos=grupos_a_despachar,
         # `crear_pool` recibe el grado de concurrencia deseado -- no siempre
@@ -193,7 +199,17 @@ def _despachar_grupos(
         ),
         procesos=procesos,
         cuarentena=cuarentena,
+        metricas=metricas_despacho,
     )
+    if metricas_despacho.recreaciones_de_pool_principal:
+        print(
+            f"Corrida {corrida_id}: recuperación ante procesos muertos -- "
+            f"{metricas_despacho.recreaciones_de_pool_principal} recreación(es) del pool principal, "
+            f"{metricas_despacho.reprocesos_en_aislamiento} reproceso(s) en aislamiento "
+            "(cada uno recarga el modelo de PII completo, ~875 MB medidos).",
+            file=sys.stderr,
+        )
+    return resultado
 
 
 def ejecutar(

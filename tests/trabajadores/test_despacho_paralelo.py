@@ -22,11 +22,14 @@ from ._dobles_despacho_paralelo import (
     ID_DOCUMENTO_QUE_MUERE_SIEMPRE,
     VAR_ENV_MARCADOR,
     VAR_ENV_MARCADOR_COMPLETADOS,
+    VAR_ENV_MARCADOR_INTENTOS,
     CuarentenaEnMemoria,
     referencia,
+    trabajo_cuenta_intentos_y_muere_siempre,
     trabajo_devuelve_pid,
     trabajo_marca_completado_y_devuelve_pid,
     trabajo_muere_la_primera_vez_por_grupo,
+    trabajo_muere_siempre_o_tarda_un_poco,
     trabajo_muere_siempre_si_esta_marcado,
 )
 
@@ -278,7 +281,12 @@ def test_la_ventana_vuelve_a_su_ancho_completo_despues_de_dar_un_grupo_por_perdi
         crear_pool=_crear_pool,
         procesos=procesos,
         cuarentena=cuarentena,
-        funcion_trabajo=trabajo_muere_siempre_si_esta_marcado,
+        # `trabajo_muere_siempre_o_tarda_un_poco`, NO la versión instantánea:
+        # ver su docstring -- con trabajo sano instantáneo, los 15 sanos
+        # pueden agotar el iterador por el camino normal ANTES de que el SO
+        # notifique la muerte del tóxico, dejando la ventana en 0 (correcto:
+        # no queda nada que reponer) pero indistinguible de un colapso real.
+        funcion_trabajo=trabajo_muere_siempre_o_tarda_un_poco,
     )
     original_recuperar = estado._recuperar_de_pool_roto
 
@@ -345,3 +353,74 @@ def test_ningun_grupo_sano_termina_en_cuarentena_por_compartir_pool_con_uno_toxi
         assert {error.id_documento for error in cuarentena.errores} == {ID_DOCUMENTO_QUE_MUERE_SIEMPRE}, (
             f"ronda {ronda}: la cuarentena registro un grupo sano"
         )
+
+
+def test_un_grupo_toxico_se_ejecuta_exactamente_dos_veces_antes_de_darse_por_perdido(tmp_path, monkeypatch):
+    """Centinela del hallazgo 2 de la auditoría posterior (ronda 2): el
+    comentario de `MAX_REINTENTOS_POR_GRUPO` dice "1 reintento" -- con la
+    comparación `>` eso en realidad daba 3 ejecuciones (1 en el pool
+    principal + 2 en aislamiento), no 2. Cuenta las ejecuciones REALES vía
+    un archivo por intento (no infiere del resultado final)."""
+    directorio_intentos = tmp_path / "intentos"
+    directorio_intentos.mkdir()
+    monkeypatch.setenv(VAR_ENV_MARCADOR_INTENTOS, str(directorio_intentos))
+    cuarentena = CuarentenaEnMemoria()
+
+    resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
+        corrida_id="corrida-cuenta-intentos",
+        grupos=iter([(referencia("doc-toxico"),)]),
+        crear_pool=_crear_pool,
+        procesos=1,
+        cuarentena=cuarentena,
+        funcion_trabajo=trabajo_cuenta_intentos_y_muere_siempre,
+    )
+
+    assert total_grupos == 1
+    assert total_documentos == 1
+    assert resultados[0]["codigo"] == "proceso_interrumpido"
+    intentos_reales = len(list(directorio_intentos.iterdir()))
+    assert intentos_reales == 2, (
+        f"se esperaban exactamente 2 ejecuciones (1 en el pool principal + "
+        f"1 reintento en aislamiento, ver MAX_REINTENTOS_POR_GRUPO), se observaron {intentos_reales}"
+    )
+
+
+def test_las_metricas_de_despacho_cuentan_recreaciones_y_reprocesos():
+    """Centinela del hallazgo 1 de la auditoría posterior (ronda 2): la
+    recuperación tiene un costo real (recargas completas del modelo) que
+    antes no se veía en ningún lado. `MetricasDespacho` tiene que reflejar
+    exactamente cuántas veces se recreó el pool principal y cuántos
+    reprocesos en aislamiento hicieron falta."""
+    metricas = despacho_paralelo.MetricasDespacho()
+    cuarentena = CuarentenaEnMemoria()
+
+    grupos = iter(
+        [
+            (referencia("doc-ok-1"),),
+            (referencia(ID_DOCUMENTO_QUE_MUERE_SIEMPRE),),
+            (referencia("doc-ok-2"),),
+        ]
+    )
+
+    despacho_paralelo.despachar_en_paralelo(
+        corrida_id="corrida-metricas",
+        grupos=grupos,
+        crear_pool=_crear_pool,
+        procesos=2,
+        cuarentena=cuarentena,
+        funcion_trabajo=trabajo_muere_siempre_si_esta_marcado,
+        metricas=metricas,
+    )
+
+    # Un solo BrokenProcessPool -> una sola recreación del pool principal.
+    assert metricas.recreaciones_de_pool_principal == 1
+    # El grupo tóxico se reprocesa en aislamiento hasta agotar su cupo (2
+    # veces, ver MAX_REINTENTOS_POR_GRUPO) -- el colateral sano que
+    # compartía el pool roto (si lo hubo) se reprocesa una vez más, en
+    # aislamiento, antes de confirmarse inocente. El total es siempre >= 1.
+    assert metricas.reprocesos_en_aislamiento >= 1
+    snapshot = metricas.snapshot()
+    assert snapshot == {
+        "recreaciones_de_pool_principal": metricas.recreaciones_de_pool_principal,
+        "reprocesos_en_aislamiento": metricas.reprocesos_en_aislamiento,
+    }
