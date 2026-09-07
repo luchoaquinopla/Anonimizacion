@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import itertools
 import os
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
@@ -362,6 +363,69 @@ class MetricasDespacho:
 
 
 @dataclass
+class RegistroDePool:
+    """Referencia al `ProcessPoolExecutor` ACTUALMENTE activo de un despacho
+    en curso -- revisión adversarial ronda 3, hallazgo 3: "el resguardo del
+    timeout es una ilusión".
+
+    Por qué hace falta: `detener` (el `threading.Event` de `despachar_en_paralelo`)
+    sólo evita tomar grupos NUEVOS -- no interrumpe un worker que YA está
+    ocupado (cargando `MotorPii`, procesando un documento). Medido: con
+    `timeout=0,2` en el apagado cooperativo, el proceso quedó colgado ~114 s
+    de todos modos, porque el `atexit` de `concurrent.futures.process` espera
+    a que el pool ACTIVO termine, sin importar qué tan cooperativo haya sido
+    el pedido de detener. Un apagado con un límite de tiempo REAL exige poder
+    terminar los workers a la fuerza cuando el cooperativo se agota --
+    `ProcessPoolExecutor` no expone ninguna API pública para eso, así que
+    quien quiera hacerlo necesita una referencia al pool mientras está vivo.
+
+    Mutado en el lugar (nunca reasignado, mismo convenio que `MetricasDespacho`):
+    `_EstadoDespacho.ejecutar()` actualiza `self.pool` cada vez que crea o
+    recrea el pool principal (arranque y tras un `BrokenProcessPool`) --
+    quien tiene esta instancia ve siempre el pool VIGENTE, sin necesitar que
+    `despachar_en_paralelo` termine para consultarlo.
+
+    `terminar_a_la_fuerza` usa `ProcessPoolExecutor._processes` -- API
+    PRIVADA de `concurrent.futures.process`, no hay ninguna pública para
+    "matar los workers ya". Es un último recurso deliberado, documentado
+    como frágil: si una versión futura de CPython cambia ese atributo
+    interno, esta función deja de encontrar procesos para terminar (falla en
+    silencio, no lanza) en vez de romper con un `AttributeError` -- ver el
+    cuerpo del método.
+    """
+
+    pool: ProcessPoolExecutor | None = None
+
+    def terminar_a_la_fuerza(self) -> int:
+        """Manda una señal de terminación (SIGTERM en Unix,
+        `TerminateProcess` en Windows vía `multiprocessing.Process.terminate`)
+        a cada proceso hijo VIVO del pool actual -- sin esperar un cierre
+        limpio. El trabajo en vuelo en esos procesos se pierde: ningún
+        documento a medio procesar en el momento de la terminación llega a
+        escribirse. Devuelve la cantidad de procesos a los que se les mandó
+        la señal (no espera a que mueran -- eso lo confirma el llamador
+        observando que el hilo de despacho termina).
+
+        Best-effort ante la fragilidad del acceso privado: si `pool` no
+        expone `_processes` (cambio interno de una versión futura de
+        `concurrent.futures`), devuelve 0 en vez de lanzar -- un apagado que
+        no logra terminar procesos no puede además tumbar al llamador con
+        una excepción por una API que nunca estuvo garantizada.
+        """
+        if self.pool is None:
+            return 0
+        procesos = getattr(self.pool, "_processes", None)
+        if not procesos:
+            return 0
+        terminados = 0
+        for proceso in list(procesos.values()):
+            if proceso.is_alive():
+                proceso.terminate()
+                terminados += 1
+        return terminados
+
+
+@dataclass
 class _EstadoDespacho:
     """Estado mutable de una corrida de `despachar_en_paralelo`, en su propia
     clase (no closures anidadas dentro de la función) para que cada método
@@ -377,6 +441,8 @@ class _EstadoDespacho:
     cuarentena: DestinoCuarentena
     funcion_trabajo: FuncionTrabajo
     metricas: MetricasDespacho = field(default_factory=MetricasDespacho)
+    detener: threading.Event | None = None
+    registro_de_pool: RegistroDePool | None = None
 
     resultados: list[dict[str, object]] = field(default_factory=list)
     total_documentos: int = 0
@@ -387,6 +453,16 @@ class _EstadoDespacho:
     pool: ProcessPoolExecutor | None = None
 
     def _reponer(self) -> None:
+        # Revisión adversarial crítico 2: si se pidió detener (Ctrl+C en el
+        # servidor), NO se toma ningún grupo NUEVO del iterador -- ni en la
+        # ventana inicial ni al reponer un hueco que dejó un grupo terminado.
+        # Lo que ya estaba en vuelo se deja terminar normalmente (drena solo,
+        # el `while self.en_vuelo:` de `ejecutar()` sale cuando no queda
+        # nada pendiente). Esto acota el tiempo de apagado al de los grupos
+        # YA en curso -- segundos a bajas decenas de segundos por grupo, no
+        # las horas que dura la corrida completa.
+        if self.detener is not None and self.detener.is_set():
+            return
         grupo = next(self.grupos, None)
         if grupo is None:
             return
@@ -474,6 +550,17 @@ class _EstadoDespacho:
             pool_aislado.shutdown(wait=True)
             self._aceptar_exito(indice, grupo, parcial)
 
+    def _asignar_pool(self, pool: ProcessPoolExecutor | None) -> None:
+        """Único punto que reasigna `self.pool` -- mantiene
+        `self.registro_de_pool` (si hay uno) sincronizado con el pool
+        VIGENTE (revisión adversarial ronda 3, hallazgo 3: `RegistroDePool`
+        necesita ver el pool real en todo momento, incluso tras una
+        recreación por `BrokenProcessPool`, para poder terminarlo a la
+        fuerza si el apagado cooperativo se agota)."""
+        self.pool = pool
+        if self.registro_de_pool is not None:
+            self.registro_de_pool.pool = pool
+
     def _recuperar_de_pool_roto(self, indice: int, grupo: Grupo) -> None:
         """Descarta el pool roto y reprocesa en aislamiento TODO lo que
         seguía en vuelo (`afectados`: el grupo que disparó la excepción más
@@ -489,16 +576,34 @@ class _EstadoDespacho:
         señalara. Sobre un corpus de horas, un solo documento problemático
         temprano degradaba el resto de la corrida a (procesos - 1) para
         siempre.
+
+        EXCEPCIÓN a "siempre recrea" (revisión adversarial ronda 3, hallazgo
+        3): si `detener` ya está seteado, un `BrokenProcessPool` acá puede
+        ser la CONSECUENCIA DELIBERADA de `RegistroDePool.terminar_a_la_fuerza`
+        (el apagado cooperativo se agotó y alguien terminó los workers a
+        propósito) -- desde acá es indistinguible de un crash real. Recrear
+        el pool y reprocesar en ese momento sería exactamente lo opuesto de
+        lo que se pidió: seguiría gastando procesos nuevos justo cuando se
+        pidió parar. Los afectados se dan por perdidos (misma cuarentena que
+        cualquier otro grupo perdido) SIN reprocesar ni recrear -- `self.pool`
+        queda en `None`, y `ejecutar()` lo tolera (no llama `shutdown` sobre
+        `None`).
         """
         afectados = [(indice, grupo), *self.en_vuelo.values()]
         self.en_vuelo.clear()
         self.pool.shutdown(wait=False, cancel_futures=True)
         self.metricas.recreaciones_de_pool_principal += 1
 
+        if self.detener is not None and self.detener.is_set():
+            for indice_afectado, grupo_afectado in afectados:
+                self._dar_por_perdido(indice_afectado, grupo_afectado)
+            self._asignar_pool(None)
+            return
+
         for indice_afectado, grupo_afectado in afectados:
             self._reprocesar_en_aislamiento(indice_afectado, grupo_afectado)
 
-        self.pool = self.crear_pool(self.procesos)
+        self._asignar_pool(self.crear_pool(self.procesos))
         for _ in range(self.procesos):
             self._reponer()
 
@@ -520,7 +625,7 @@ class _EstadoDespacho:
             self._reponer()
 
     def ejecutar(self) -> tuple[list[dict[str, object]], int, int]:
-        self.pool = self.crear_pool(self.procesos)
+        self._asignar_pool(self.crear_pool(self.procesos))
         for _ in range(self.procesos):
             self._reponer()
 
@@ -532,13 +637,21 @@ class _EstadoDespacho:
                 if self.pool is not pool_antes:
                     # `_recuperar_de_pool_roto` ya resolvió TODO lo que
                     # seguía en vuelo en el pool viejo (colaterales
-                    # incluidos, vía aislamiento) y ya repuso la ventana --
-                    # el resto de `terminados` de este lote pertenece a ese
-                    # pool descartado. Volver a `wait()` sobre el pool nuevo
-                    # en vez de seguir iterando.
+                    # incluidos, vía aislamiento) y ya repuso la ventana (o,
+                    # si `detener` ya estaba seteado, dejó `self.pool` en
+                    # `None` a propósito -- ver su docstring) -- el resto de
+                    # `terminados` de este lote pertenece a ese pool
+                    # descartado. Volver a `wait()` sobre el pool nuevo (o
+                    # salir del `while` si no quedó ninguno) en vez de
+                    # seguir iterando.
                     break
 
-        self.pool.shutdown(wait=True)
+        # `self.pool` puede ser `None` acá (revisión adversarial ronda 3,
+        # hallazgo 3): `_recuperar_de_pool_roto` lo deja así cuando el
+        # `BrokenProcessPool` ocurre con `detener` ya seteado -- un apagado
+        # a la fuerza no tiene un pool "principal" que cerrar de nuevo.
+        if self.pool is not None:
+            self.pool.shutdown(wait=True)
         return self.resultados, self.total_documentos, self.total_grupos
 
 
@@ -551,9 +664,29 @@ def despachar_en_paralelo(
     cuarentena: DestinoCuarentena,
     funcion_trabajo: FuncionTrabajo = procesar_grupo_en_trabajador,
     metricas: MetricasDespacho | None = None,
+    detener: threading.Event | None = None,
+    registro_de_pool: RegistroDePool | None = None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Despacha `grupos` a un `ProcessPoolExecutor`, con recuperación ante un
     hijo muerto y sin materializar la partición completa en memoria.
+
+    `registro_de_pool` (revisión adversarial ronda 3, hallazgo 3): un
+    `RegistroDePool` opcional que, si se pasa, queda apuntando SIEMPRE al
+    pool VIGENTE mientras el despacho está en curso -- incluso tras una
+    recreación por `BrokenProcessPool`. El LLAMADOR (fuera de este hilo)
+    puede usarlo para `terminar_a_la_fuerza()` si el apagado cooperativo
+    (`detener`) se agota sin que el despacho termine solo -- ver el
+    docstring de `RegistroDePool` para el porqué hace falta: `detener` sólo
+    evita tomar trabajo NUEVO, nunca interrumpe un worker ya ocupado.
+
+    `detener` (revisión adversarial crítico 2, feature `despachador-desde-el-panel`):
+    un `threading.Event` opcional que, una vez seteado por el LLAMADOR (desde
+    otro hilo -- p. ej. `scripts/servir_panel.py::main` ante `KeyboardInterrupt`),
+    hace que esta función deje de tomar grupos NUEVOS del iterador `grupos` y
+    retorne apenas termine lo que ya estaba en vuelo. No cancela futuros ya
+    sometidos ni mata procesos hijos a la fuerza -- `pool.shutdown(wait=True)`
+    al final sigue esperando a que el pool termine limpio, sin huérfanos.
+    `None` (default): comportamiento sin cambios, corre hasta agotar `grupos`.
 
     `metricas` (`None` = se crea una instancia descartable, mismo convenio
     que `dormir`/`resolver_claves` en `tareas.construir_fabrica_ejecutor`):
@@ -668,4 +801,6 @@ def despachar_en_paralelo(
         cuarentena=cuarentena,
         funcion_trabajo=funcion_trabajo,
         metricas=metricas if metricas is not None else MetricasDespacho(),
+        detener=detener,
+        registro_de_pool=registro_de_pool,
     ).ejecutar()

@@ -106,6 +106,36 @@ def trabajo_marca_completado_y_devuelve_pid(corrida_id: str, grupo) -> list[dict
     return resultado
 
 
+def trabajo_marca_completado_tras_una_pausa(corrida_id: str, grupo) -> list[dict[str, object]]:
+    """Como `trabajo_marca_completado_y_devuelve_pid`, pero con una pausa
+    fija -- para tests de cancelación (`detener`, revisión adversarial
+    crítico 2) que necesitan una ventana confiable entre "el primer grupo
+    terminó" y "todos los grupos disponibles terminaron", sin la cual el
+    test sería una carrera contra trabajo instantáneo."""
+    import time
+
+    time.sleep(0.3)
+    directorio = Path(os.environ[VAR_ENV_MARCADOR_COMPLETADOS])
+    resultado = [
+        {"id_documento": referencia["id_documento"], "estado": "exito", "pid": os.getpid()} for referencia in grupo
+    ]
+    (directorio / f"listo-{grupo[0]['id_documento']}").touch()
+    return resultado
+
+
+def trabajo_duerme_mucho(corrida_id: str, grupo) -> list[dict[str, object]]:
+    """Duerme mucho más de lo que cualquier test debería esperar -- para
+    probar terminación FORZADA (`RegistroDePool.terminar_a_la_fuerza`,
+    revisión adversarial ronda 3, hallazgo 3): un `.terminate()` real mata
+    al proceso en medio de este `sleep`, sin que el trabajo tenga que
+    "cooperar" de ninguna forma -- es justo el caso que `detener`
+    (cooperativo) NO puede resolver por sí solo."""
+    import time
+
+    time.sleep(30)
+    return [{"id_documento": referencia["id_documento"], "estado": "exito"} for referencia in grupo]
+
+
 def trabajo_cuenta_intentos_y_muere_siempre(corrida_id: str, grupo) -> list[dict[str, object]]:
     """Muere en TODO intento -- como `trabajo_muere_siempre_si_esta_marcado`,
     pero además deja un archivo con nombre único (PID + monotonic) en

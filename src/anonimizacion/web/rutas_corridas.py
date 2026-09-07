@@ -89,7 +89,26 @@ def _crear_corrida(
     ruta = Path(solicitud["ruta"]).resolve()
     if not any(_esta_dentro_de(ruta, raiz) for raiz in raices):
         return _responder(iniciar_respuesta, "403 Forbidden", {"codigo": "ruta_no_autorizada"})
-    return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))
+    # `CorridaEnCursoError` vive en `ingesta/lanzador_corrida.py` (revisión
+    # adversarial ronda 3: es el gate a nivel de BASE, no sólo del panel --
+    # `LanzadorCorrida.lanzar()` es quien la lanza de verdad). Import a nivel
+    # de módulo acá sería seguro (no hay ciclo con `ingesta`), pero se
+    # mantiene diferido por coherencia con el resto de los imports
+    # perezosos de este módulo (`_embudo_corrida`/`_panel_corrida` más abajo).
+    from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
+
+    try:
+        return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))
+    except CorridaEnCursoError as error:
+        # Decisión "dos corridas a la vez" (feature `despachador-desde-el-panel`):
+        # `409`, no un `202` que prometería un despacho que el gate acaba de
+        # rechazar -- el operador ve CUÁL corrida sigue activa, no sólo que
+        # algo salió mal.
+        return _responder(
+            iniciar_respuesta,
+            "409 Conflict",
+            {"codigo": "corrida_en_curso", "id_corrida_activa": error.id_corrida_activa},
+        )
 
 
 def _consultar_corrida(

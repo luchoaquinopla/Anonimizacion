@@ -12,6 +12,8 @@ simulado) y recuperación ante `BrokenProcessPool` sin tumbar la corrida.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import pytest
@@ -27,6 +29,8 @@ from ._dobles_despacho_paralelo import (
     referencia,
     trabajo_cuenta_intentos_y_muere_siempre,
     trabajo_devuelve_pid,
+    trabajo_duerme_mucho,
+    trabajo_marca_completado_tras_una_pausa,
     trabajo_marca_completado_y_devuelve_pid,
     trabajo_muere_la_primera_vez_por_grupo,
     trabajo_muere_siempre_o_tarda_un_poco,
@@ -424,3 +428,204 @@ def test_las_metricas_de_despacho_cuentan_recreaciones_y_reprocesos():
         "recreaciones_de_pool_principal": metricas.recreaciones_de_pool_principal,
         "reprocesos_en_aislamiento": metricas.reprocesos_en_aislamiento,
     }
+
+
+# --- cancelación (revisión adversarial crítico 2) ---------------------------
+
+
+def test_despachar_en_paralelo_deja_de_tomar_grupos_nuevos_cuando_se_pide_detener(tmp_path, monkeypatch):
+    """Ctrl+C en el servidor (`scripts/servir_panel.py`) necesita poder
+    frenar un despacho de HORAS sin esperar a que TODOS los grupos
+    pendientes terminen -- sólo drenar lo que ya estaba en vuelo. `detener`
+    (un `threading.Event`) es la señal: una vez seteado, `_reponer` deja de
+    tomar grupos NUEVOS del iterador, tanto en la ventana inicial como al
+    reponer un hueco -- lo ya en vuelo se deja terminar normalmente.
+
+    Real, no simulado: `ProcessPoolExecutor` real con 2 workers, 10 grupos
+    disponibles -- si `detener` no tuviera efecto, los 10 se procesarían.
+    """
+    directorio_completados = tmp_path / "completados"
+    directorio_completados.mkdir()
+    monkeypatch.setenv(VAR_ENV_MARCADOR_COMPLETADOS, str(directorio_completados))
+
+    detener = threading.Event()
+    total_grupos_disponibles = 10
+    grupos = ((referencia(f"doc-cancelacion-{i}"),) for i in range(total_grupos_disponibles))
+
+    resultado: dict[str, object] = {}
+
+    def _correr() -> None:
+        resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
+            corrida_id="corrida-cancelacion",
+            grupos=grupos,
+            crear_pool=_crear_pool,
+            procesos=2,
+            cuarentena=CuarentenaEnMemoria(),
+            funcion_trabajo=trabajo_marca_completado_tras_una_pausa,
+            detener=detener,
+        )
+        resultado["resultados"] = resultados
+        resultado["total_documentos"] = total_documentos
+        resultado["total_grupos"] = total_grupos
+
+    hilo = threading.Thread(target=_correr)
+    hilo.start()
+
+    # Espera a que al menos UN grupo termine de verdad (marcador en disco,
+    # no una suposición de timing) antes de pedir la detención.
+    limite = time.monotonic() + 20
+    while not any(directorio_completados.iterdir()):
+        if time.monotonic() > limite:
+            hilo.join(timeout=5)
+            pytest.fail("ningún grupo completó a tiempo -- el test no puede seguir")
+        time.sleep(0.01)
+
+    detener.set()
+    hilo.join(timeout=30)
+
+    assert not hilo.is_alive(), "despachar_en_paralelo no retornó a tiempo tras pedir detener"
+    assert resultado["total_grupos"] < total_grupos_disponibles, (
+        "detener() no tuvo efecto: se procesaron TODOS los grupos disponibles"
+    )
+    assert resultado["total_grupos"] >= 1, "lo que ya estaba en vuelo tiene que haberse dejado terminar"
+
+
+def test_registro_de_pool_termina_los_procesos_hijos_vivos_a_la_fuerza():
+    """Revisión adversarial ronda 3, hallazgo 3: "el resguardo del timeout es
+    una ilusión" -- `detener` (cooperativo) sólo evita tomar trabajo NUEVO,
+    nunca interrumpe un worker YA ocupado. Con trabajo que duerme mucho más
+    que cualquier timeout razonable, `detener` solo NUNCA deja que el
+    despacho retorne a tiempo -- `RegistroDePool.terminar_a_la_fuerza` sí,
+    matando el proceso hijo real en medio del sueño."""
+    detener = threading.Event()
+    registro = despacho_paralelo.RegistroDePool()
+    grupos = iter([(referencia("doc-forzado-1"),), (referencia("doc-forzado-2"),)])
+
+    resultado: dict[str, object] = {}
+    errores: dict[str, str] = {}
+
+    def _correr() -> None:
+        try:
+            resultado["r"] = despacho_paralelo.despachar_en_paralelo(
+                corrida_id="corrida-forzada",
+                grupos=grupos,
+                crear_pool=_crear_pool,
+                procesos=2,
+                cuarentena=CuarentenaEnMemoria(),
+                funcion_trabajo=trabajo_duerme_mucho,
+                detener=detener,
+                registro_de_pool=registro,
+            )
+        except Exception:  # noqa: BLE001 -- capturado para un mensaje de fallo legible, no un KeyError críptico
+            import traceback
+
+            errores["e"] = traceback.format_exc()
+
+    hilo = threading.Thread(target=_correr)
+    hilo.start()
+
+    # Espera a que el pool real tenga sus DOS procesos hijos reales ya
+    # arrancados -- no sólo el primero. Terminar un proceso mientras
+    # `ProcessPoolExecutor` todavía está en medio de generar OTRO (spawn de
+    # Windows, duplicación de handles) es una carrera real de este test, no
+    # del código bajo prueba: confirmado empíricamente en esta sesión que
+    # terminar el primer worker mientras el segundo `_spawn_process()`
+    # seguía en curso producía `OSError: handle is closed` -- una carrera de
+    # infraestructura de `multiprocessing.spawn`, no de `RegistroDePool`
+    # (reproducido y descartado corriendo el mismo escenario sin pytest de
+    # por medio, donde no ocurre). Esperar a que AMBOS procesos ya figuren
+    # en `_processes` antes de terminar evita esa carrera sin debilitar lo
+    # que el test verifica.
+    limite = time.monotonic() + 20
+    while registro.pool is None or len(getattr(registro.pool, "_processes", {}) or {}) < 2:
+        if time.monotonic() > limite:
+            detener.set()
+            hilo.join(timeout=5)
+            pytest.fail("el pool nunca tuvo sus dos procesos hijos disponibles en el registro")
+        time.sleep(0.01)
+
+    # Con SOLO el apagado cooperativo, el hilo seguiría bloqueado ~30 s (el
+    # sleep del trabajo) -- confirmar que la terminación forzada no depende
+    # de eso: pedirla ANTES de que el sleep termine y esperar un tiempo
+    # mucho menor a 30 s.
+    detener.set()
+    terminados = registro.terminar_a_la_fuerza()
+    hilo.join(timeout=10)
+
+    assert not errores, f"_correr crasheo: {errores.get('e')}"
+    assert terminados >= 1, "tenía que haber al menos un proceso hijo vivo para terminar"
+    assert not hilo.is_alive(), (
+        "el despacho tiene que retornar en segundos tras la terminación forzada, "
+        "no esperar los ~30 s del sleep -- si esto falla, terminar_a_la_fuerza no funcionó"
+    )
+    resultados, _total_documentos, total_grupos = resultado["r"]  # type: ignore[misc]
+    assert total_grupos == 2, "los grupos interrumpidos se dan por perdidos, no se cuentan como exito silencioso"
+    assert all(r["estado"] != "exito" for r in resultados), "ningún grupo forzado a morir puede figurar como exito"
+
+
+def test_detener_seteado_durante_una_recuperacion_real_no_repone_en_el_pool_recreado():
+    """Hueco de cobertura señalado en revisión adversarial ronda 3: `_reponer`
+    ya respetaba `detener` incluso DENTRO de `_recuperar_de_pool_roto` (el
+    trace era consistente por lectura), pero no había ningún test de esa
+    interacción específica -- `detener` puede setearse en medio de una
+    recuperación NORMAL (un crash real, sin relación con
+    `terminar_a_la_fuerza`), justo entre que se recrea el pool principal y
+    se repone la ventana. Ningún grupo sano restante debe someterse al pool
+    recién recreado si eso pasa."""
+    detener = threading.Event()
+    llamadas_pool_principal = 0
+
+    def _crear_pool_que_detiene_tras_recuperar(n: int) -> ProcessPoolExecutor:
+        nonlocal llamadas_pool_principal
+        if n == 2:  # pool PRINCIPAL (el aislado siempre pide n=1)
+            llamadas_pool_principal += 1
+            if llamadas_pool_principal == 2:
+                # Segunda vez que se pide el pool principal: es la
+                # RECREACIÓN tras el crash -- simula que algo externo (no
+                # `terminar_a_la_fuerza`, que es un caso ya cubierto aparte)
+                # pidió detener justo en este instante.
+                detener.set()
+        return ProcessPoolExecutor(max_workers=n)
+
+    # `trabajo_muere_siempre_o_tarda_un_poco` (no `..._si_esta_marcado`): los
+    # grupos sanos duermen unos milisegundos -- sin eso, con trabajo sano
+    # INSTANTÁNEO los sanos pueden completarse y agotar el iterador por su
+    # cuenta ANTES de que el sistema operativo notifique la muerte del
+    # tóxico (ver el docstring de ese doble), y el escenario que este test
+    # quiere ejercitar (grupos sanos TODAVÍA en el iterador cuando se
+    # recupera) no llegaría a darse -- confirmado empíricamente en esta
+    # sesión con el doble instantáneo: intermitente, 2 de 3 corridas.
+    grupos = iter(
+        [
+            (referencia("doc-ok-1"),),
+            (referencia(ID_DOCUMENTO_QUE_MUERE_SIEMPRE),),
+            (referencia("doc-ok-2"),),
+            (referencia("doc-ok-3"),),
+        ]
+    )
+    cuarentena = CuarentenaEnMemoria()
+
+    resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
+        corrida_id="corrida-detener-durante-recuperacion",
+        grupos=grupos,
+        crear_pool=_crear_pool_que_detiene_tras_recuperar,
+        procesos=2,
+        cuarentena=cuarentena,
+        funcion_trabajo=trabajo_muere_siempre_o_tarda_un_poco,
+        detener=detener,
+    )
+
+    # El grupo tóxico se recupera NORMALMENTE (no fue una cancelación --
+    # `detener` no estaba seteado cuando la recuperación empezó): termina en
+    # cuarentena por su propia causa, con la MISMA atribución causal de
+    # siempre.
+    fallos = [r for r in resultados if r["estado"] != "exito"]
+    assert [r["id_documento"] for r in fallos] == [ID_DOCUMENTO_QUE_MUERE_SIEMPRE]
+    assert fallos[0]["codigo"] == "proceso_interrumpido"
+
+    # Pero como `detener` quedó seteado justo al recrear el pool principal,
+    # `_reponer()` no debe haber sometido NINGÚN grupo sano restante a ese
+    # pool recién recreado -- el despacho termina antes de agotar los 4
+    # grupos disponibles.
+    assert total_grupos < 4, "no debía someter mas trabajo al pool recreado tras detener() intermedio"
+    assert total_documentos < 4

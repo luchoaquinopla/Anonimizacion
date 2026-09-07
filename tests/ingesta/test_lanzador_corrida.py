@@ -13,16 +13,26 @@ inventario: es el inventario más el sobretamaño").
 
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
-from anonimizacion.ingesta.lanzador_corrida import CuarentenaDeCorrida, LanzadorCorrida
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError, CuarentenaDeCorrida, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
-from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm, Episodio, Estudio
+
+# Ver el comentario junto a `_CONNECT_REAL` en
+# `tests/scripts/test_procesar_carpeta.py`: captura la implementación real
+# ANTES de que `tests/conftest.py::_bloquear_llamadas_de_red_reales` la
+# parchee a nivel de sesión.
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 
 
 @dataclass
@@ -60,6 +70,34 @@ def _motor_con_esquema():
     return motor
 
 
+def test_lanzar_rechaza_una_segunda_corrida_mientras_la_primera_sigue_activa(tmp_path) -> None:
+    """Revisión adversarial ronda 3, hallazgo 4: `scripts/procesar_carpeta.py`
+    no llama `listar_corridas_no_terminales` en ningún punto -- no tiene gate
+    propio. El `threading.Lock` de `ServicioCorridasReal` sólo protege al
+    panel contra SUS PROPIAS peticiones concurrentes; el gate real tiene que
+    vivir donde AMBOS procesos lo vean: la base (`ux_corrida_una_activa`,
+    `modelos_orm.py`). Dos `LanzadorCorrida` INDEPENDIENTES (simulando panel
+    y CLI) contra la MISMA base -- ninguno sabe del otro, y aun así la
+    segunda llamada a `lanzar` tiene que fallar."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+
+    lanzador_panel = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    lanzador_cli = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    activa = lanzador_panel.lanzar(tmp_path)
+    _materializar(activa)  # queda en INVENTARIANDO -- activa, nadie la cerró
+
+    with pytest.raises(CorridaEnCursoError) as excinfo:
+        lanzador_cli.lanzar(tmp_path)
+
+    assert excinfo.value.id_corrida_activa == activa.corrida_id
+    # La corrida rechazada NUNCA debe quedar a medio crear en la base.
+    with Session(motor) as sesion:
+        corridas = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert [c.id_corrida for c in corridas] == [activa.corrida_id]
+
+
 def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) -> None:
     """6.4: falla porque `LanzadorCorrida` no existe."""
     _pdf(tmp_path, "uno.pdf", b"contenido-uno")
@@ -89,6 +127,11 @@ def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) ->
 
 
 def test_lanzar_dos_veces_produce_dos_corridas_independientes(tmp_path) -> None:
+    """La segunda corrida sólo puede lanzarse DESPUÉS de que la primera
+    cierre -- el gate de "una corrida a la vez" (`ux_corrida_una_activa`,
+    revisión adversarial ronda 3) rechaza una segunda fila activa mientras
+    exista una; dos corridas no terminales nunca pueden coexistir, ni
+    siquiera en este test."""
     _pdf(tmp_path, "uno.pdf", b"contenido-uno")
 
     motor = _motor_con_esquema()
@@ -97,6 +140,9 @@ def test_lanzar_dos_veces_produce_dos_corridas_independientes(tmp_path) -> None:
 
     primero = lanzador.lanzar(tmp_path)
     _materializar(primero)  # drena el generador: dispara el registro en DB (ver docstring)
+    lanzador.marcar_procesando(primero.corrida_id)
+    lanzador.marcar_finalizada(primero.corrida_id, hubo_cuarentena=False)
+
     segundo = lanzador.lanzar(tmp_path)
     _materializar(segundo)
 
@@ -236,6 +282,267 @@ def test_lanzar_referencias_iterada_dos_veces_falla_ruidoso(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="un solo uso"):
         list(resultado.referencias)  # segundo consumo: debe fallar, no devolver []
+
+
+def test_marcar_finalizada_cierra_procesando_sin_pasar_por_reconciliando(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: quien de verdad despachó y
+    terminó de procesar el inventario (el despachador desde el panel, hoy
+    `ServicioCorridasReal`) tiene que poder cerrar la corrida -- misma regla
+    de `marcar_procesando`: quien avanza el estado tiene que ser quien hizo
+    el trabajo."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=False)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada"
+
+
+def test_marcar_finalizada_con_cuarentena_usa_el_estado_correspondiente(tmp_path) -> None:
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=True)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada_con_cuarentena"
+
+
+def test_marcar_finalizada_de_corrida_inexistente_falla_ruidoso() -> None:
+    """Mismo contrato que `marcar_procesando`: no hay forma de finalizar una
+    corrida que no existe."""
+    motor = _motor_con_esquema()
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    with pytest.raises(ValueError, match="no existe una corrida"):
+        lanzador.marcar_finalizada("corrida-fantasma", hubo_cuarentena=False)
+
+
+def test_marcar_fallida_cierra_procesando_como_fallida(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: si el despacho en segundo plano
+    lanza una excepción INESPERADA (no una cuarentena por documento, que
+    `despachar_en_paralelo` nunca propaga -- algo que rompe el hilo entero),
+    quien orquesta el despacho tiene que poder cerrar la corrida como
+    `FALLIDA` en vez de dejarla `procesando` para siempre."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_fallida(resultado.corrida_id)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "fallida"
+
+
+_MARGEN_PRUEBA = timedelta(minutes=15)
+
+
+def test_recuperar_corridas_abandonadas_cierra_toda_corrida_no_terminal_sin_evidencia_reciente(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: al arrancar el servidor, una
+    corrida en estado no terminal SIN evidencia reciente de trabajo (ver
+    `RepositorioCorridas.ultima_actividad`) es una corrida abandonada por un
+    proceso anterior. Dejarla en su estado no terminal repetiría la misma
+    mentira que `fix/silencios-de-ingesta-y-panel` cerró en la punta de
+    arranque, y además bloquearía para siempre el gate de "una corrida a la
+    vez" (`listar_corridas_no_terminales`), sacando al operador de su propio
+    panel.
+
+    `ahora` se inyecta bien en el futuro (revisión adversarial crítico 1):
+    sin esto, `corrida.actualizada_en` (recién escrita por este mismo test)
+    siempre estaría dentro de CUALQUIER margen razonable, y el test no
+    probaría nada sobre el paso del tiempo."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)  # queda en INVENTARIANDO -- "abandonada" tras un crash simulado
+
+    mucho_despues = datetime.now(timezone.utc) + timedelta(days=1)
+    recuperados = recuperar_corridas_abandonadas(repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=mucho_despues)
+
+    assert recuperados == [resultado.corrida_id]
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "fallida"
+
+
+def test_recuperar_corridas_abandonadas_no_toca_corridas_ya_cerradas(tmp_path) -> None:
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=False)
+
+    mucho_despues = datetime.now(timezone.utc) + timedelta(days=1)
+    recuperados = recuperar_corridas_abandonadas(repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=mucho_despues)
+
+    assert recuperados == []
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada"
+
+
+def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso(tmp_path) -> None:
+    """Revisión adversarial crítico 1 -- reproduce el escenario real:
+    `scripts/procesar_carpeta.py` (OTRO proceso, mismo `LanzadorCorrida`,
+    misma base) sigue escribiendo `Estudio` bajo un `corrida_id` que nunca va
+    a llamar `marcar_finalizada`/`marcar_fallida` -- ese es su comportamiento
+    NORMAL, no un bug. Si el panel arranca en ese momento, la recuperación de
+    arranque NO puede marcarla `FALLIDA`: sería la inversión exacta del
+    defecto que cerró el PR #33 (antes "procesando" sin que nada procese,
+    ahora "fallida" mientras algo sí procesa) -- y además reabriría el gate
+    de "una corrida a la vez" para una segunda corrida que duplicaría el
+    presupuesto de memoria de la que sigue viva."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)  # como haría procesar_carpeta.py
+
+    ahora = datetime.now(timezone.utc)
+    # "El script sigue escribiendo": un Estudio real, reciente, bajo esta
+    # corrida -- sin que NADA haya llamado marcar_finalizada/marcar_fallida,
+    # exactamente el estado en el que procesar_carpeta.py deja la corrida
+    # mientras sigue corriendo.
+    #
+    # CORRECCIÓN (revisión adversarial, ronda 3): la versión anterior
+    # insertaba este `Estudio` SIN crear su `Episodio` padre primero.
+    # `Estudio.id_episodio` es un FK real contra `episodio.id_episodio`
+    # (`modelos_orm.py`) -- SQLite no impone claves foráneas por defecto y lo
+    # dejaba pasar en silencio, así que este test JAMÁS podía correr contra
+    # Postgres real (`ForeignKeyViolation`). El test que respalda la
+    # corrección de un crítico tiene que poder correr en el motor que la
+    # corrección dice proteger -- ver
+    # `test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso_postgres_real`
+    # más abajo, la misma reproducción contra Postgres de verdad.
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-viva-1", id_paciente="paciente-viva-1", fecha_ancla=date(2024, 1, 1)))
+        sesion.add(
+            Estudio(
+                id_episodio="ep-viva-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2024, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-corrida-viva-1",
+                corrida_id=resultado.corrida_id,
+                creado_en=ahora - timedelta(minutes=2),
+            )
+        )
+
+    # El panel arranca 5 minutos después, con un margen de 15 -- la evidencia
+    # de hace 2 minutos sigue dentro del margen.
+    recuperados = recuperar_corridas_abandonadas(
+        repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=ahora + timedelta(minutes=5)
+    )
+
+    assert recuperados == [], "una corrida con evidencia reciente de otro proceso NO se toca"
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "procesando", "el arranque del panel no puede pisar el trabajo real de otro proceso"
+
+
+@pytest.fixture()
+def _engine_postgres_real(monkeypatch: pytest.MonkeyPatch):
+    """Motor contra el Postgres real de `docker-compose.yml`, o `skip` si no
+    responde -- mismo patrón que `tests/scripts/test_procesar_carpeta.py`."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexion es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso_postgres_real(
+    tmp_path, _engine_postgres_real
+) -> None:
+    """Revisión adversarial, ronda 3: la misma reproducción de arriba, pero
+    contra Postgres real -- exactamente el motor que la corrección dice
+    proteger, con sus claves foráneas reales impuestas. "Antes de decir que
+    algo está probado, correlo contra Postgres": si este test no hubiera
+    existido, el bug de fixture (Estudio sin Episodio) habría quedado
+    invisible para siempre detrás de SQLite."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    motor = _engine_postgres_real
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    ahora = datetime.now(timezone.utc)
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(
+            Episodio(id_episodio="ep-viva-pg-1", id_paciente="paciente-viva-pg-1", fecha_ancla=date(2024, 1, 1))
+        )
+        sesion.add(
+            Estudio(
+                id_episodio="ep-viva-pg-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2024, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-corrida-viva-pg-1",
+                corrida_id=resultado.corrida_id,
+                creado_en=ahora - timedelta(minutes=2),
+            )
+        )
+
+    recuperados = recuperar_corridas_abandonadas(
+        repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=ahora + timedelta(minutes=5)
+    )
+
+    assert recuperados == [], "una corrida con evidencia reciente de otro proceso NO se toca (Postgres real)"
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "procesando"
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:

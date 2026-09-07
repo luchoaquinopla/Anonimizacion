@@ -13,6 +13,7 @@ from anonimizacion.dominio.corridas import Corrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import Base, Estudio
 from anonimizacion.web.rutas_corridas import EstadoCorridaPortal, crear_aplicacion_corridas
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
 
 
 @dataclass
@@ -239,6 +240,33 @@ def test_get_panel_de_una_corrida_inexistente_responde_404(tmp_path: Path) -> No
 
     assert estado == "404 Not Found"
     assert cuerpo == {"codigo": "corrida_no_encontrada"}
+
+
+def test_crear_corrida_responde_409_cuando_ya_hay_una_activa(tmp_path: Path) -> None:
+    """Decisión "dos corridas a la vez": el servicio señala con
+    `CorridaEnCursoError` -- la ruta la traduce a `409`, con el id de la
+    corrida activa para que el operador sepa cuál está esperando, nunca a un
+    `202` que prometería un despacho que el gate acaba de rechazar."""
+
+    @dataclass
+    class _ServicioOcupado:
+        def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
+            raise CorridaEnCursoError("corrida-en-curso-1")
+
+        def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def reintentar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+    aplicacion = crear_aplicacion_corridas([tmp_path], _ServicioOcupado())
+
+    estado, _encabezados, cuerpo = _solicitar(
+        aplicacion, "POST", "/corridas", json.dumps({"ruta": str(tmp_path)}).encode()
+    )
+
+    assert estado == "409 Conflict"
+    assert cuerpo == {"codigo": "corrida_en_curso", "id_corrida_activa": "corrida-en-curso-1"}
 
 
 def test_reintentar_responde_501_cuando_el_servicio_no_lo_implementa(tmp_path: Path) -> None:

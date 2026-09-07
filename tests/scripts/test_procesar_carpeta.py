@@ -182,6 +182,30 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     assert corrida.estado == EstadoCorrida.PROCESANDO.value
 
 
+def test_el_script_informa_con_claridad_si_ya_hay_una_corrida_activa(tmp_path, motor: MotorPii, capsys) -> None:
+    """Revisión adversarial ronda 3, hallazgo 4: el gate de "una corrida a la
+    vez" tiene que vivir donde AMBOS procesos (panel y este script) lo vean
+    -- confirmado que este script no llamaba `listar_corridas_no_terminales`
+    en ningún punto, así que la única protección real que le llega es la que
+    la BASE le impone (`ux_corrida_una_activa`, `CorridaEnCursoError`). El
+    script tiene que traducir ese rechazo en un mensaje claro y un código de
+    salida propio -- no dejar que una excepción cruda le llegue a la
+    consola del operador."""
+    _grupo_completo(tmp_path, "s-gate")
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    primero = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+    assert primero == 0  # deja la corrida en PROCESANDO -- este camino nunca la cierra
+
+    segundo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert segundo == 2, "codigo de salida propio, distinto de exito (0) y de 'sin PDFs' (1)"
+    salida = capsys.readouterr().err
+    assert "ya hay una corrida activa" in salida
+
+
 def test_el_script_despacha_dos_pacientes_distintos_en_grupos_separados(
     tmp_path, motor: MotorPii, monkeypatch: pytest.MonkeyPatch
 ) -> None:

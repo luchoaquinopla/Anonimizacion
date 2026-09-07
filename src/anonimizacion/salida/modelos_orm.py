@@ -48,6 +48,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Time, UniqueConstraint
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -273,13 +274,51 @@ class Cuarentena(Base):
 
 
 class CorridaOrm(Base):
-    """Estado durable de una ejecución administrativa del pipeline."""
+    """Estado durable de una ejecución administrativa del pipeline.
+
+    `activa` + `ux_corrida_una_activa` (revisión adversarial ronda 3,
+    hallazgo 4, feature `despachador-desde-el-panel`): el gate de "una
+    corrida a la vez" NO puede vivir sólo en un `threading.Lock` de
+    `ServicioCorridasReal` -- eso sólo protege al panel contra SUS PROPIAS
+    peticiones concurrentes, nunca contra `scripts/procesar_carpeta.py`
+    (OTRO proceso) lanzando una corrida real mientras el panel ya está
+    procesando una. Confirmado: `procesar_carpeta.py` no llama
+    `listar_corridas_no_terminales` en ningún punto -- no tiene gate propio.
+
+    `activa` es `True` mientras `estado` NO es terminal
+    (`RepositorioCorridas` la mantiene sincronizada en cada escritura, nunca
+    se setea a mano). El índice único parcial `ux_corrida_una_activa`
+    (`WHERE activa`, en la migración correspondiente y acá para que
+    `Base.metadata.create_all` -- usado por los tests rápidos con SQLite --
+    también lo exija) hace que la BASE rechace crear una segunda fila
+    `activa=True` mientras ya existe una, sin importar qué proceso ni en qué
+    orden -- Postgres decide atómicamente, no un lock en memoria de un solo
+    proceso. Todas las filas con `activa=False` (terminales) quedan FUERA
+    del índice parcial, así que nunca compiten entre sí: sólo puede haber
+    UNA fila `activa=True` en total, nunca más.
+
+    `LanzadorCorrida.lanzar()` traduce la violación de esta restricción a
+    `CorridaEnCursoError` -- ver ese módulo.
+    """
 
     __tablename__ = "corrida"
+    __table_args__ = (
+        Index(
+            "ux_corrida_una_activa",
+            "activa",
+            unique=True,
+            sqlite_where=sa_text("activa"),
+            postgresql_where=sa_text("activa"),
+        ),
+    )
 
     id_corrida: Mapped[str] = mapped_column(String(36), primary_key=True)
     estado: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Ver el docstring de la clase: mantenida por `RepositorioCorridas`, no
+    # por el dominio -- es un dato de PERSISTENCIA (para el índice único
+    # parcial), no una transición de `Corrida.avanzar_a`.
+    activa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     creada_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=False)
     actualizada_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_ahora_utc, onupdate=_ahora_utc, nullable=False
