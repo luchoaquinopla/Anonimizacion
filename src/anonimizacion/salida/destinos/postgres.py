@@ -18,7 +18,10 @@ ese patrón pisaría en silencio un puente en conflicto (el bug corregido
 post-PR5, commit 07da933; decisión reafirmada en
 `openspec/changes/escritura-idempotente/design.md`, Decisión 3). En su lugar
 hace SELECT explícito y decide entre INSERT / no-op / marcar ambiguo, calcado
-del método `registrar_puente` de `ResolutorClaves`.
+del método `registrar_puente` de `ResolutorClaves` -- y ahora, además,
+tolera la carrera de dos procesos concurrentes sobre el mismo
+`id_alt_paciente` (ver `registrar_vinculo` más abajo) sin perder esa
+decisión.
 """
 
 from __future__ import annotations
@@ -125,22 +128,67 @@ class EscritorPostgres:
     # --- vinculo_paciente: respaldo persistente de ResolutorClaves ---------
 
     def registrar_vinculo(self, id_alt_paciente: str, id_paciente: str) -> None:
-        with Session(self._engine) as sesion, sesion.begin():
-            existente = sesion.get(VinculoPaciente, id_alt_paciente)
+        """Inserta o decide sobre `vinculo_paciente`, tolerando la carrera de N procesos.
 
-            if existente is None:
-                sesion.add(VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False))
+        Con un solo proceso el `SELECT` previo alcanza. Con `ProcessPoolExecutor`
+        (paralelismo-de-procesamiento PR 3) dos procesos pueden resolver el MISMO
+        paciente a la vez: ambos ven "no existe" y ambos intentan insertar. La
+        restricción de clave primaria de `vinculo_paciente.id_alt_paciente` es la
+        autoridad final -- el perdedor recibe `IntegrityError`, NO un
+        `IntegrityError` que se descarta sin más (a diferencia de
+        `escribir_registro`): acá "ya existe" puede significar un homónimo real
+        (el ganador insertó un `id_paciente` DISTINTO), así que hay que releer el
+        estado real y aplicar la MISMA decisión (`_decidir_vinculo`) que el
+        camino sin carrera. Perder esa decisión violaría el invariante "una vez
+        ambiguo, siempre ambiguo": significaría afirmar en silencio que dos
+        pacientes distintos son el mismo.
+        """
+        with Session(self._engine) as sesion:
+            try:
+                with sesion.begin():
+                    existente = self._buscar_vinculo(sesion, id_alt_paciente)
+                    if existente is not None:
+                        self._decidir_vinculo(existente, id_paciente)
+                        return
+                    sesion.add(
+                        VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False)
+                    )
+            except IntegrityError:
+                pass
+            else:
                 return
 
-            if existente.ambiguo:
-                return  # ya ambiguo -- permanece ambiguo, no hay vuelta atrás
+        # Carrera: otro proceso insertó el mismo id_alt_paciente entre nuestro
+        # SELECT y nuestro INSERT. La sesion anterior ya quedo cerrada (y, contra
+        # Postgres real, su transaccion abortada por el IntegrityError) -- se
+        # resuelve en una sesion NUEVA, releyendo el estado real en vez de asumir
+        # que "ya existe" es sinonimo de "nada que hacer".
+        with Session(self._engine) as sesion, sesion.begin():
+            existente = sesion.get(VinculoPaciente, id_alt_paciente)
+            if existente is None:
+                # Defensivo: no deberia pasar (el IntegrityError implica que la
+                # fila ya existe), y este pipeline no borra vinculo_paciente.
+                sesion.add(
+                    VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False)
+                )
+                return
+            self._decidir_vinculo(existente, id_paciente)
 
-            if existente.id_paciente == id_paciente:
-                return  # reprocesamiento idempotente del mismo laboratorio
+    @staticmethod
+    def _buscar_vinculo(sesion: Session, id_alt_paciente: str) -> VinculoPaciente | None:
+        return sesion.get(VinculoPaciente, id_alt_paciente)
 
-            # mismo id_alt_paciente, id_paciente distinto -> homónimos reales
-            existente.id_paciente = None
-            existente.ambiguo = True
+    @staticmethod
+    def _decidir_vinculo(existente: VinculoPaciente, id_paciente: str) -> None:
+        if existente.ambiguo:
+            return  # ya ambiguo -- permanece ambiguo, no hay vuelta atrás
+
+        if existente.id_paciente == id_paciente:
+            return  # reprocesamiento idempotente del mismo laboratorio
+
+        # mismo id_alt_paciente, id_paciente distinto -> homónimos reales
+        existente.id_paciente = None
+        existente.ambiguo = True
 
     def resolver_vinculo(self, id_alt_paciente: str) -> str | None:
         with Session(self._engine) as sesion:
@@ -162,12 +210,31 @@ class EscritorPostgres:
         A diferencia de `vinculo_paciente`, acá no hay riesgo de ambigüedad:
         el mismo `id_episodio` siempre corresponde al mismo
         `(id_paciente, fecha_ancla)` (ver `pseudonimizacion/claves.py::
-        generar_id_episodio`), así que un insert-si-no-existe es seguro.
+        generar_id_episodio`), así que un insert-si-no-existe es seguro --
+        incluida la carrera de dos procesos escribiendo el mismo episodio a la
+        vez (`paralelismo-de-procesamiento` PR 3): el que pierde la carrera de
+        la restricción de clave primaria no tiene nada que decidir, a
+        diferencia de `registrar_vinculo` -- la fila que ganó es idéntica a la
+        que este proceso hubiera insertado, así que tratar el `IntegrityError`
+        como "ya escrito" (mismo patrón que `escribir_registro`) alcanza.
         """
-        with Session(self._engine) as sesion, sesion.begin():
-            if sesion.get(Episodio, id_episodio) is not None:
-                return
-            sesion.add(Episodio(id_episodio=id_episodio, id_paciente=id_paciente, fecha_ancla=fecha_ancla))
+        with Session(self._engine) as sesion:
+            try:
+                with sesion.begin():
+                    if self._buscar_episodio(sesion, id_episodio) is not None:
+                        return
+                    sesion.add(Episodio(id_episodio=id_episodio, id_paciente=id_paciente, fecha_ancla=fecha_ancla))
+            except IntegrityError:
+                # Carrera: otro proceso inserto el mismo id_episodio entre
+                # nuestro SELECT y nuestro INSERT. Es funcion pura de
+                # (id_paciente, fecha_ancla) -- la fila que gano es identica a
+                # la que hubieramos escrito. La restriccion unica es la
+                # autoridad final; no hay nada mas que hacer.
+                pass
+
+    @staticmethod
+    def _buscar_episodio(sesion: Session, id_episodio: str) -> Episodio | None:
+        return sesion.get(Episodio, id_episodio)
 
     # --- registro anonimizado: dispatch por tipo_documento -------------------
 
