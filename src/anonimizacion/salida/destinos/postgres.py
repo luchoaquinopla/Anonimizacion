@@ -64,24 +64,50 @@ from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEco
 # le hace un "SELECT 1" liviano; si falla, la descarta y abre una nueva en
 # vez de propagar el error al llamador. Cuesta un round-trip de red POR
 # checkout, no por documento. `EscritorPostgres` abre una `Session` (=~ un
-# checkout) por cada `registrar_vinculo`/`escribir_episodio`/`escribir_registro`
-# -- hasta 3 por documento en el camino de laboratorio. Con la latencia
-# medida para este cambio (54,9 ms mediana a São Paulo) y los 6,67 round
-# trips por documento ya medidos (~366 ms de red por documento sin
-# pre_ping), 3 checkouts extra sumam ~165 ms más por documento (~45% más
-# round trips de red). Es un costo real, no gratis -- se acepta a cambio de
-# no perder documentos válidos por una conexión muerta del pool.
+# checkout) por cada `registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`/
+# `escribir_episodio`/`escribir_registro` que se llame -- y el número de
+# checkouts por documento NO es una constante: `escribir_episodio` se
+# deduplica por EPISODIO, no por documento (`pipeline/ejecutor.py:543-553`),
+# y el camino de identidad sin DNI puede necesitar `resolver_vinculo` +
+# `es_ambiguo` (`pseudonimizacion/resolutor_claves.py:218-230`), no sólo uno.
+# En un episodio real de 4 estudios (1 con DNI que abre el puente + 3 sin DNI
+# que lo resuelven, que es la forma del corpus real -- ver proposal.md):
+# el primer documento paga 3 (`registrar_vinculo` + `escribir_episodio` +
+# `escribir_registro`), los otros tres pagan 2 cada uno (`resolver_vinculo` +
+# `escribir_registro`) porque el episodio ya quedó escrito -- 9 checkouts /
+# 4 documentos ≈ 2,25 checkouts/documento en promedio. El piso es 1 (DNI sin
+# fecha de nacimiento, documento que no es el primero de su episodio); el
+# techo sube a 4 cuando `registrar_vinculo` pisa la rama de carrera que este
+# mismo PR agrega más abajo (colisión real de `IntegrityError`: abre una
+# SEGUNDA `Session` para releer y decidir, ver el docstring de
+# `registrar_vinculo`) -- justo el escenario de contención que PR 3 hace
+# común. Con la latencia medida para este cambio (54,9 ms mediana a São
+# Paulo, ver proposal.md para el método) y los 6,67 round trips/documento ya
+# medidos contra Postgres real (~366 ms de red por documento sin pre_ping),
+# el costo de pre_ping en el caso típico (~2,25 checkouts extra) ronda
+# ~124 ms más por documento (~34% más round trips de red); en el peor caso
+# bajo contención (4 checkouts) sube a ~220 ms (~60%). Es un costo real, no
+# gratis -- se acepta a cambio de no perder documentos válidos por una
+# conexión muerta del pool.
 #
-# `pool_recycle`: Postgres en sí no mata conexiones ociosas por default
-# (`idle_session_timeout` viene deshabilitado), pero la red intermedia sí --
-# el caso documentado más conocido es el NAT Gateway de AWS, que descarta
-# flujos TCP ociosos a los 350 s sin enviar ningún FIN/RST. Este repo no
-# documenta la topología de red exacta hacia RDS (VPC/NAT/security groups),
-# así que 270 s (4,5 min) es un valor defensivo: reciclar la conexión antes
-# de que CUALQUIER middlebox con un timeout de ese orden la mate en
-# silencio, no un número derivado de un dato medido de este proyecto. Si
-# alguna vez se documenta el timeout real de la red hacia RDS, este valor
-# debería ajustarse contra ese dato, no quedar como constante mágica.
+# `pool_recycle`: recicla por EDAD de la conexión desde que se creó, evaluado
+# SÓLO en el momento del checkout (`sqlalchemy/pool/base.py::
+# _ConnectionRecord.get_connection`) -- NO detecta inactividad. Una conexión
+# puede quedar ociosa en el pool y morir por el idle-timeout de un NAT/
+# firewall intermedio (el caso documentado más conocido es el NAT Gateway de
+# AWS, que descarta flujos TCP ociosos a los 350 s sin FIN/RST) mucho antes
+# de llegar a los 270 s de EDAD -- si nadie la saca del pool, `pool_recycle`
+# nunca se evalúa y no hace nada por ella. Con `pool_size=5` y un proceso
+# secuencial, ese escenario (conexión poco usada, ociosa por minutos) es
+# plausible. **La defensa real contra la conexión muerta por inactividad es
+# `pool_pre_ping`** (prueba viva en cada checkout, sin importar la edad ni
+# el tiempo ocioso) -- `pool_recycle` es un complemento, no un sustituto: pone
+# un TOPE DURO a la edad máxima de cualquier conexión (útil si RDS o un
+# proxy intermedio fuerza un ciclo de conexión periódico), pero no cubre el
+# hueco de "murió mientras estaba ociosa y nadie la volvió a pedir". Este
+# repo no documenta la topología de red exacta hacia RDS (VPC/NAT/security
+# groups), así que 270 s (4,5 min) sigue siendo un valor defensivo, no un
+# número derivado de un dato medido de este proyecto.
 #
 # `pool_size`: explícito (5, el default histórico de SQLAlchemy) para que el
 # presupuesto contra `max_connections` de RDS sea legible más adelante: con
