@@ -38,20 +38,23 @@ _TOPE_BYTES_PROVISIONAL = 50 * 1024 * 1024
 # Sentinel de `listar_grupos()`: clave compartida por los archivos que están
 # directamente bajo la raíz, sin subcarpeta propia (corpus plano o sueltos
 # mezclados con carpetas -- ver docstring de `listar_grupos`).
+#
+# Nota de una revisión adversarial anterior (ya corregida, se deja como
+# advertencia): esta clase intentó trocear el caso `_CLAVE_RAIZ` en
+# sub-grupos sintéticos de tamaño fijo para acotar RAM también en un corpus
+# plano. Eso introducía una regresión de CORRECTITUD, no sólo de memoria: un
+# corte por orden alfabético de ruta, sin ningún criterio clínico, separa a
+# un mismo paciente en dos cortes con probabilidad alta en un corpus de más
+# de un puñado de archivos -- ese paciente golpea `EPISODIO_INCOMPLETO` en
+# AMBOS, cuando antes (lote único) `vincular_episodios` lo veía completo. Se
+# revirtió: un corpus plano vuelve a ser UN solo grupo, sin trocear. La RAM
+# NO está acotada en ese caso degenerado -- es el precio aceptado, no un
+# descuido: el proposal ya advierte que si el corpus llega plano, el
+# paralelismo del tramo 3 rendiría cero de todos modos (`proposal.md`,
+# "Antes de leer"), así que no hay nada que ganar arriesgando la
+# completitud de episodio para acotar memoria en un escenario donde el
+# beneficio de fondo (paralelizar) ya es nulo.
 _CLAVE_RAIZ = "__raiz__"
-# Tope de artefactos por sub-grupo SINTÉTICO bajo `_CLAVE_RAIZ` (revisión
-# adversarial, hallazgo alto): sin este tope, un corpus plano de N archivos
-# sueltos hashea los N antes de entregar el único grupo -- `itertools.groupby`
-# necesita agotar el resto del flujo para saber que la clave constante no
-# cambia. Eso anula el objetivo de memoria acotada de este módulo exactamente
-# en el escenario que el proposal marca como incierto (corpus sin
-# subcarpetas). Estos sub-grupos NO representan pacientes -- son cortes de
-# tamaño fijo sin ningún criterio clínico, puramente para acotar RAM. La
-# validación de completitud de episodio ya podía fallar en un corpus plano
-# (no hay forma de saber dónde empieza/termina un paciente sin subcarpetas);
-# trocear no empeora esa incertidumbre, sólo evita que además reviente la
-# memoria.
-_TOPE_SUBGRUPO_RAIZ = 1000
 
 # Un "grupo" es una tupla de artefactos que comparten agrupamiento (spec
 # `procesamiento-por-grupo`, openspec `paralelismo-de-procesamiento`). No es
@@ -243,33 +246,38 @@ class FuenteLocal:
 
         Corpus plano (honesto sobre la incertidumbre real -- ver proposal.md
         "Antes de leer"): si no hay subcarpetas, todos los archivos sueltos
-        bajo `directorio` comparten la clave sentinel `_CLAVE_RAIZ`. Sin nada
-        más, `itertools.groupby` tendría que agotar TODO el resto del listado
-        para confirmar que la clave constante no cambia -- exactamente el
-        problema de memoria que este módulo existe para evitar, resucitado
-        para el escenario que el proposal marca como incierto. Por eso ese
-        caso se trocea en sub-grupos SINTÉTICOS de a lo sumo
-        `_TOPE_SUBGRUPO_RAIZ` artefactos (ver `_trocear`): no representan
-        pacientes, son cortes de tamaño fijo sin ningún criterio clínico. El
-        paralelismo del tramo 3 rendiría igual de mal en ese caso (los cortes
-        no respetan episodios) -- lo que este chunking preserva es sólo el
-        acotamiento de RAM, no la correctud de la agrupación clínica, que ya
-        era imposible de garantizar sin subcarpetas.
+        bajo `directorio` comparten la clave sentinel `_CLAVE_RAIZ` y forman
+        UN SOLO grupo -- exactamente el corpus entero, tal como se procesaba
+        antes de este cambio. Eso significa que `itertools.groupby` agota
+        todo el listado antes de entregar ese único grupo, y que la RAM NO
+        está acotada en este caso: es el precio aceptado por preservar
+        correctitud clínica en el escenario degenerado. La alternativa
+        (trocear ese único grupo en sub-grupos sintéticos de tamaño fijo, por
+        orden alfabético de ruta) se probó y se revirtió: partía pacientes
+        entre dos cortes con probabilidad alta en cualquier corpus de más de
+        un puñado de archivos, y cada uno de esos pacientes partidos golpea
+        `EPISODIO_INCOMPLETO` en AMBOS cortes -- una regresión de
+        CORRECTITUD, no sólo de memoria, y estrictamente peor que el
+        comportamiento anterior a este módulo (lote único, sin cortes). El
+        paralelismo del tramo 3 rendiría cero en un corpus plano de todos
+        modos (`proposal.md`, "Antes de leer"), así que no hay beneficio real
+        que justifique arriesgar la completitud de episodio para acotar
+        memoria acá.
 
         Advertencia documentada, no maquillada: en un corpus MIXTO -- algunas
         subcarpetas y ADEMÁS archivos sueltos intercalados alfabéticamente
         entre ellas -- los archivos sueltos pueden partirse en más de un
         grupo con la misma clave sentinel, si una subcarpeta los separa en el
-        orden alfabético (además del troceo por tamaño de arriba). La
-        partición sigue siendo disjunta y exhaustiva (ningún archivo se
-        pierde ni se cuenta dos veces: cada `ArtefactoCrudo` que `listar()`
-        produce cae en EXACTAMENTE un grupo), sólo dejan de agruparse todos
-        los sueltos entre sí. El corpus real descripto por el instituto no
-        tiene esa mezcla (o todo tiene subcarpetas, o nada las tiene); si
-        además los sueltos fueran del mismo paciente, la validación de
-        completitud de episodio (`pipeline/coordinador_episodios.py`) los
-        vería como grupos independientes incompletos -- riesgo que no se
-        resuelve acá porque no hay hoy ningún corpus real que lo ejercite.
+        orden alfabético. La partición sigue siendo disjunta y exhaustiva
+        (ningún archivo se pierde ni se cuenta dos veces: cada `ArtefactoCrudo`
+        que `listar()` produce cae en EXACTAMENTE un grupo), sólo dejan de
+        agruparse todos los sueltos entre sí. El corpus real descripto por el
+        instituto no tiene esa mezcla (o todo tiene subcarpetas, o nada las
+        tiene); si además los sueltos fueran del mismo paciente, la
+        validación de completitud de episodio
+        (`pipeline/coordinador_episodios.py`) los vería como grupos
+        independientes incompletos -- riesgo que no se resuelve acá porque no
+        hay hoy ningún corpus real que lo ejercite.
         """
         ruta_raiz = self.directorio.resolve()
         if not ruta_raiz.is_dir():
@@ -283,24 +291,8 @@ class FuenteLocal:
             partes = Path(artefacto.uri).relative_to(ruta_raiz).parts
             return partes[0] if len(partes) > 1 else _CLAVE_RAIZ
 
-        for clave, artefactos_del_grupo in itertools.groupby(self._listar_generador(ruta_raiz), key=_clave):
-            if clave == _CLAVE_RAIZ:
-                yield from self._trocear(artefactos_del_grupo, _TOPE_SUBGRUPO_RAIZ)
-            else:
-                yield tuple(artefactos_del_grupo)
-
-    @staticmethod
-    def _trocear(artefactos: Iterator[ArtefactoCrudo], tamano: int) -> Iterator[_GrupoArtefactos]:
-        """Parte un iterador perezoso en tuplas de a lo sumo `tamano` -- sin
-        acumular más de un trozo en memoria a la vez."""
-        trozo: list[ArtefactoCrudo] = []
-        for artefacto in artefactos:
-            trozo.append(artefacto)
-            if len(trozo) >= tamano:
-                yield tuple(trozo)
-                trozo = []
-        if trozo:
-            yield tuple(trozo)
+        for _clave_grupo, artefactos_del_grupo in itertools.groupby(self._listar_generador(ruta_raiz), key=_clave):
+            yield tuple(artefactos_del_grupo)
 
     def _apartar_por_sobretamano(self, ruta: Path, tamano_bytes: int) -> None:
         # `id_documento` es el sha256 de la RUTA, no del contenido: el nombre

@@ -417,57 +417,28 @@ def test_fuente_local_listar_grupos_corpus_plano_es_un_solo_grupo(tmp_path: Path
     assert len(grupos[0]) == 3
 
 
-def test_fuente_local_listar_grupos_corpus_plano_se_trocea_para_acotar_ram(tmp_path: Path) -> None:
-    """Hallazgo alto de revision adversarial: sin trocear, un corpus plano
-    hashea TODOS sus archivos antes de entregar el unico grupo (itertools.groupby
-    necesita agotar el flujo para confirmar que la clave constante no cambia),
-    anulando el objetivo de RAM acotada del modulo. Con mas archivos sueltos que
-    `_TOPE_SUBGRUPO_RAIZ`, listar_grupos() debe partirlos en mas de un grupo
-    sintetico -- ninguno de esos grupos representa un paciente real."""
-    from anonimizacion.ingesta.fuente import _TOPE_SUBGRUPO_RAIZ
-
+def test_fuente_local_listar_grupos_corpus_plano_grande_no_se_trocea(tmp_path: Path) -> None:
+    """Centinela de correctitud (revisión adversarial, hallazgo crítico 2):
+    una versión anterior de esta función troceaba un corpus plano grande en
+    sub-grupos sintéticos de tamaño fijo para acotar RAM -- eso partía
+    pacientes entre dos cortes por orden alfabético de ruta, sin ningún
+    criterio clínico, y cada paciente partido terminaba en
+    `EPISODIO_INCOMPLETO` en ambos cortes. Se revirtió: un corpus plano,
+    sin importar cuántos archivos tenga, es SIEMPRE un solo grupo -- la
+    memoria no está acotada en ese caso degenerado, a propósito (ver
+    docstring del módulo). Si esto vuelve a fallar, alguien reintrodujo el
+    troceo sin agregar de nuevo esta protección."""
     entrada = tmp_path / "entrada"
     entrada.mkdir()
-    total_archivos = _TOPE_SUBGRUPO_RAIZ + 5
+    total_archivos = 1005  # mayor al viejo _TOPE_SUBGRUPO_RAIZ (1000), a propósito
     for indice in range(total_archivos):
         _crear_pdf_falso(entrada / f"doc-{indice:05d}.pdf", f"contenido-{indice}".encode())
 
     fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
     grupos = list(fuente.listar_grupos())
 
-    assert len(grupos) == 2
-    assert sorted(len(g) for g in grupos) == [5, _TOPE_SUBGRUPO_RAIZ]
-    assert sum(len(g) for g in grupos) == total_archivos
-
-
-def test_fuente_local_listar_grupos_corpus_plano_es_perezoso_dentro_del_tope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """El troceo acota la RAM: consumir el PRIMER grupo sintetico no debe
-    hashear archivos del segundo trozo."""
-    from anonimizacion.ingesta.fuente import _TOPE_SUBGRUPO_RAIZ
-
-    entrada = tmp_path / "entrada"
-    entrada.mkdir()
-    total_archivos = _TOPE_SUBGRUPO_RAIZ + 5
-    for indice in range(total_archivos):
-        _crear_pdf_falso(entrada / f"doc-{indice:05d}.pdf", f"contenido-{indice}".encode())
-
-    original = FuenteLocal._calcular_huella
-    llamados: list[Path] = []
-
-    def _huella_contada(ruta: Path) -> str:
-        llamados.append(ruta)
-        return original(ruta)
-
-    monkeypatch.setattr(FuenteLocal, "_calcular_huella", staticmethod(_huella_contada))
-
-    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
-    iterador = fuente.listar_grupos()
-    primer_grupo = next(iterador)
-
-    assert len(primer_grupo) == _TOPE_SUBGRUPO_RAIZ
-    assert len(llamados) == _TOPE_SUBGRUPO_RAIZ
+    assert len(grupos) == 1
+    assert len(grupos[0]) == total_archivos
 
 
 def test_fuente_local_listar_grupos_particion_es_disjunta_y_exhaustiva(tmp_path: Path) -> None:
