@@ -250,10 +250,65 @@ class LanzadorCorrida:
         `corrida_id` desde una cola), así que no puede asumir que tiene el
         objeto `Corrida` a mano.
         """
+        self._transicionar(corrida_id, EstadoCorrida.PROCESANDO)
+
+    def marcar_finalizada(self, corrida_id: str, *, hubo_cuarentena: bool) -> None:
+        """Avanza `corrida_id` a un estado TERMINAL y persiste -- o falla ruidoso.
+
+        Simétrico de `marcar_procesando` en el otro extremo (feature
+        `despachador-desde-el-panel`): quien REALMENTE terminó de despachar
+        el inventario tiene que ser quien cierra la corrida -- hoy
+        `ServicioCorridasReal`, el despachador desde el panel. Sin esto, una
+        corrida procesada de punta a punta queda diciendo `procesando` para
+        siempre: la misma clase de mentira que `marcar_procesando` cerró en
+        la punta de arranque, ahora en la punta de cierre. Cerrarla también
+        es lo que libera el gate de "una corrida a la vez"
+        (`RepositorioCorridas.listar_corridas_no_terminales`) para la
+        siguiente corrida.
+
+        `PROCESANDO -> {COMPLETADA, COMPLETADA_CON_CUARENTENA}` DIRECTA, sin
+        pasar por `RECONCILIANDO`/`PUBLICANDO` (ver el comentario junto a
+        `_TRANSICIONES_CORRIDA` en `dominio/corridas.py`): en esta
+        arquitectura, `procesar_grupo` ya reconcilia y publica cada grupo de
+        punta a punta en una sola llamada síncrona -- no hay una fase
+        administrativa separada que atravesar.
+
+        `hubo_cuarentena`: quien despachó ya sabe, al terminar
+        `despachar_en_paralelo`, si algún documento terminó en cuarentena --
+        se lo pasa acá en vez de que este método vuelva a consultar el
+        embudo, que es una lectura agregada más cara y ya resuelta por el
+        llamador.
+
+        Lee la corrida desde el repositorio, igual que `marcar_procesando`:
+        el llamador puede ser un hilo/proceso distinto del que la creó.
+        """
+        destino = EstadoCorrida.COMPLETADA_CON_CUARENTENA if hubo_cuarentena else EstadoCorrida.COMPLETADA
+        self._transicionar(corrida_id, destino)
+
+    def marcar_fallida(self, corrida_id: str) -> None:
+        """Cierra `corrida_id` como `FALLIDA` -- backstop del despachador
+        (feature `despachador-desde-el-panel`) ante una excepción INESPERADA
+        que rompe el hilo de despacho entero, distinta de una cuarentena por
+        documento (`despachar_en_paralelo` nunca propaga esas: quedan
+        registradas en `cuarentena` y la corrida sigue). Sin esto, una
+        corrida cuyo despacho crasheó por una razón no contemplada (un `pool`
+        que no pudo crearse, un `ValueError` de validación, etc.) quedaría
+        `procesando` para siempre -- la misma mentira que este cambio existe
+        para cerrar, en su forma más inesperada.
+        """
+        self._transicionar(corrida_id, EstadoCorrida.FALLIDA)
+
+    def _transicionar(self, corrida_id: str, destino: EstadoCorrida) -> None:
+        """Lee `corrida_id`, avanza a `destino` y persiste -- o falla ruidoso
+        si la corrida no existe. Compartido por `marcar_procesando`,
+        `marcar_finalizada` y `marcar_fallida`: los tres leen la corrida
+        desde el repositorio (nunca en memoria, a diferencia de `lanzar()`)
+        porque su llamador puede ser un hilo/proceso distinto del que la
+        creó."""
         corrida = self.repositorio.obtener_corrida(corrida_id)
         if corrida is None:
             raise ValueError(f"no existe una corrida con id {corrida_id}")
-        self._avanzar_y_persistir(corrida, EstadoCorrida.PROCESANDO)
+        self._avanzar_y_persistir(corrida, destino)
 
     def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:
         """Avanza `corrida` en memoria y persiste, o falla ruidoso.
@@ -287,3 +342,55 @@ class LanzadorCorrida:
                 "real, no una carrera esperable. Ver el docstring de _avanzar_y_persistir "
                 "para la recuperacion manual."
             )
+
+
+def recuperar_corridas_abandonadas(repositorio: RepositorioCorridas) -> list[str]:
+    """Cierra como `FALLIDA` toda corrida no terminal al arrancar el servidor
+    (feature `despachador-desde-el-panel`, decisión "qué pasa si el servidor
+    se cae con una corrida en curso").
+
+    Llamador de producción: `scripts/servir_panel.py::construir_aplicacion`,
+    UNA vez, antes de empezar a servir peticiones.
+
+    Por qué es seguro asumir "abandonada" y no "todavía en curso": este
+    servidor es `wsgiref.simple_server` de UN SOLO proceso (design.md, "El
+    punto de entrada") -- no hay ningún mecanismo que persista "hay un hilo
+    corriendo `despachar_en_paralelo` para este `corrida_id`" a través de un
+    reinicio del proceso. Si el proceso que arranca ahora encuentra una
+    corrida no terminal (`RepositorioCorridas.listar_corridas_no_terminales`),
+    el hilo que la estaba procesando murió con el proceso anterior -- no hay
+    ningún otro proceso que pueda estar procesándola ahora mismo. Dejarla en
+    su estado no terminal repetiría la misma mentira que
+    `LanzadorCorrida.marcar_procesando` cerró en la punta de arranque
+    (`PROCESANDO` sin que nada procese) y bloquearía para siempre el gate de
+    "una corrida a la vez" (`ServicioCorridasReal.crear_corrida`), sacando al
+    operador de su propio panel tras cualquier caída.
+
+    `FALLIDA`, no un intento de reanudación: la reanudación por documento
+    está fuera de alcance (`reintentar_corrida` sigue devolviendo 501, ver
+    `web/rutas_corridas.py`) -- sin ella, no hay forma honesta de saber
+    cuánto del inventario ya se procesó antes de la caída. Los documentos que
+    sí llegaron a escribirse en `estudio`/`cuarentena` (Postgres, con su
+    propio `corrida_id`) no se pierden ni se revierten: sólo el renglón
+    administrativo de `corrida` queda `FALLIDA`, la misma distinción que ya
+    hace `LanzadorCorrida._inventariar_y_generar_referencias` entre
+    trazabilidad administrativa y datos clínicos reales.
+
+    Asume un ÚNICO proceso servidor (sin réplicas ni balanceador delante):
+    con más de una instancia corriendo a la vez, una corrida recién creada
+    por la instancia A podría verse como "abandonada" desde el arranque de la
+    instancia B. El diseño actual (`servir_panel.py`, sin autenticación,
+    documentado para la intranet de un solo instituto) no contempla ese
+    despliegue -- si aparece, este supuesto necesita revisarse primero.
+
+    Devuelve los `id_corrida` recuperados, para que el llamador pueda
+    loguearlos (visibilidad operativa: el médico que reinicia el panel
+    después de una caída debe poder ver qué corrida se perdió).
+    """
+    recuperados: list[str] = []
+    for corrida in repositorio.listar_corridas_no_terminales():
+        version_antes = corrida.version
+        corrida.avanzar_a(EstadoCorrida.FALLIDA)
+        if repositorio.actualizar_corrida(corrida, version_esperada=version_antes):
+            recuperados.append(corrida.id_corrida)
+    return recuperados

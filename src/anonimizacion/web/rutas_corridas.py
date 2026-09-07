@@ -89,7 +89,24 @@ def _crear_corrida(
     ruta = Path(solicitud["ruta"]).resolve()
     if not any(_esta_dentro_de(ruta, raiz) for raiz in raices):
         return _responder(iniciar_respuesta, "403 Forbidden", {"codigo": "ruta_no_autorizada"})
-    return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))
+    # Import diferido: `servicio_corridas.py` importa `EstadoCorridaPortal`
+    # DESDE este módulo a nivel de módulo -- un import a nivel de módulo acá
+    # sería un ciclo (mismo motivo que `_embudo_corrida`/`_panel_corrida` ya
+    # difieren su import de `construir_payload_embudo` más abajo).
+    from anonimizacion.web.servicio_corridas import CorridaEnCursoError
+
+    try:
+        return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))
+    except CorridaEnCursoError as error:
+        # Decisión "dos corridas a la vez" (feature `despachador-desde-el-panel`):
+        # `409`, no un `202` que prometería un despacho que el gate acaba de
+        # rechazar -- el operador ve CUÁL corrida sigue activa, no sólo que
+        # algo salió mal.
+        return _responder(
+            iniciar_respuesta,
+            "409 Conflict",
+            {"codigo": "corrida_en_curso", "id_corrida_activa": error.id_corrida_activa},
+        )
 
 
 def _consultar_corrida(

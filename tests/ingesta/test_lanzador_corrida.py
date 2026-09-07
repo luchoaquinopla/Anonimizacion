@@ -238,6 +238,127 @@ def test_lanzar_referencias_iterada_dos_veces_falla_ruidoso(tmp_path) -> None:
         list(resultado.referencias)  # segundo consumo: debe fallar, no devolver []
 
 
+def test_marcar_finalizada_cierra_procesando_sin_pasar_por_reconciliando(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: quien de verdad despachó y
+    terminó de procesar el inventario (el despachador desde el panel, hoy
+    `ServicioCorridasReal`) tiene que poder cerrar la corrida -- misma regla
+    de `marcar_procesando`: quien avanza el estado tiene que ser quien hizo
+    el trabajo."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=False)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada"
+
+
+def test_marcar_finalizada_con_cuarentena_usa_el_estado_correspondiente(tmp_path) -> None:
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=True)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada_con_cuarentena"
+
+
+def test_marcar_finalizada_de_corrida_inexistente_falla_ruidoso() -> None:
+    """Mismo contrato que `marcar_procesando`: no hay forma de finalizar una
+    corrida que no existe."""
+    motor = _motor_con_esquema()
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    with pytest.raises(ValueError, match="no existe una corrida"):
+        lanzador.marcar_finalizada("corrida-fantasma", hubo_cuarentena=False)
+
+
+def test_marcar_fallida_cierra_procesando_como_fallida(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: si el despacho en segundo plano
+    lanza una excepción INESPERADA (no una cuarentena por documento, que
+    `despachar_en_paralelo` nunca propaga -- algo que rompe el hilo entero),
+    quien orquesta el despacho tiene que poder cerrar la corrida como
+    `FALLIDA` en vez de dejarla `procesando` para siempre."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    lanzador.marcar_fallida(resultado.corrida_id)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "fallida"
+
+
+def test_recuperar_corridas_abandonadas_cierra_toda_corrida_no_terminal(tmp_path) -> None:
+    """Feature `despachador-desde-el-panel`: al arrancar el servidor, toda
+    corrida en un estado no terminal es necesariamente una corrida abandonada
+    por un proceso anterior -- este servidor es de un solo proceso, sin
+    persistencia de "hay un hilo corriendo para este corrida_id". Dejarla en
+    su estado no terminal repetiría la misma mentira que
+    `fix/silencios-de-ingesta-y-panel` cerró en la punta de arranque, y
+    además bloquearía para siempre el gate de "una corrida a la vez"
+    (`listar_corridas_no_terminales`), sacando al operador de su propio
+    panel."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)  # queda en INVENTARIANDO -- "abandonada" tras un crash simulado
+
+    recuperados = recuperar_corridas_abandonadas(repositorio)
+
+    assert recuperados == [resultado.corrida_id]
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "fallida"
+
+
+def test_recuperar_corridas_abandonadas_no_toca_corridas_ya_cerradas(tmp_path) -> None:
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=False)
+
+    recuperados = recuperar_corridas_abandonadas(repositorio)
+
+    assert recuperados == []
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "completada"
+
+
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:
     """Unidad, sin `LanzadorCorrida`: `CuarentenaDeCorrida.registrar` delega en
     el sumidero interno con el mismo `ErrorDocumento`, solo con `corrida_id` fijado."""

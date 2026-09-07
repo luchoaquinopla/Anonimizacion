@@ -121,6 +121,39 @@ def test_registrar_documentos_particiona_en_varios_lotes() -> None:
     assert len(documentos) == 7
 
 
+def test_listar_corridas_no_terminales_excluye_estados_cerrados() -> None:
+    """Feature `despachador-desde-el-panel`: el gate de "una corrida a la
+    vez" (`ServicioCorridasReal.crear_corrida`) y la recuperación de arranque
+    (`recuperar_corridas_abandonadas`) necesitan poder distinguir corridas
+    activas de corridas ya cerradas -- sin esto, cada uno tendría que repetir
+    su propio filtro de estados."""
+    from anonimizacion.dominio.estados_corrida import EstadoCorrida
+
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+
+    activa = Corrida.crear("corrida-activa")
+    activa.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    repositorio.crear_corrida(activa)
+    repositorio.actualizar_corrida(activa, version_esperada=0)
+
+    completada = Corrida.crear("corrida-completada")
+    repositorio.crear_corrida(completada)
+    completada.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    repositorio.actualizar_corrida(completada, version_esperada=0)
+    completada.avanzar_a(EstadoCorrida.PROCESANDO)
+    repositorio.actualizar_corrida(completada, version_esperada=1)
+    completada.avanzar_a(EstadoCorrida.COMPLETADA)
+    repositorio.actualizar_corrida(completada, version_esperada=2)
+
+    no_terminales = repositorio.listar_corridas_no_terminales()
+
+    assert [c.id_corrida for c in no_terminales] == ["corrida-activa"]
+    assert no_terminales[0].estado is EstadoCorrida.INVENTARIANDO
+    assert no_terminales[0].version == 1
+
+
 def test_registrar_documentos_dos_veces_no_duplica_el_denominador() -> None:
     """6.3: `uq_documento_corrida_huella` evita duplicar el denominador del
     embudo si el mismo inventario se registra dos veces (relanzar la misma

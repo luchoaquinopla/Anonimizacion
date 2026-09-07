@@ -20,8 +20,9 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.corridas import Corrida
+from anonimizacion.dominio.estados_corrida import EstadoCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
-from anonimizacion.salida.modelos_orm import Base, Estudio
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Estudio
 
 # `tests/conftest.py::_bloquear_llamadas_de_red_reales` parchea
 # `socket.socket.connect` para TODA la sesión, antes de que corra ningún
@@ -60,6 +61,58 @@ def _cargar_script():
     return modulo
 
 
+def test_parsear_args_expone_procesos_con_default_conservador(monkeypatch) -> None:
+    """Feature `despachador-desde-el-panel`: mismo flag que `--procesos` en
+    `scripts/procesar_carpeta.py`, mismo default (`despacho_paralelo.grado_de_concurrencia_por_defecto`)
+    -- el despachador desde el panel usa el mismo grado de concurrencia que
+    el script."""
+    from anonimizacion.trabajadores import despacho_paralelo
+
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+
+    args = modulo._parsear_args()
+
+    assert args.procesos == despacho_paralelo.grado_de_concurrencia_por_defecto()
+
+
+def test_parsear_args_rechaza_procesos_por_encima_del_tope_duro(monkeypatch) -> None:
+    from anonimizacion.trabajadores import despacho_paralelo
+
+    modulo = _cargar_script()
+    tope = despacho_paralelo.tope_duro_concurrencia()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--procesos", str(tope + 1)])
+
+    with pytest.raises(SystemExit):
+        modulo._parsear_args()
+
+
+def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> None:
+    """Decisión "el pepper HMAC" (feature `despachador-desde-el-panel`): sin
+    `ANONIMIZACION_PEPPER`/`ANONIMIZACION_PEPPER_ARCHIVO`, cada proceso hijo
+    fallaría recién al arrancar (`despacho_paralelo.inicializar_trabajador`
+    -> `obtener_pepper()`), a mitad de una corrida ya aceptada -- el fallo
+    quedaría disfrazado de `PROCESO_INTERRUMPIDO` en cuarentena, ocultando la
+    causa real (una variable de entorno faltante en el SERVIDOR, no en el
+    documento). El servidor tiene que fallar temprano y claro, ANTES de
+    conectar a Postgres o de aceptar ningún `POST /corridas`."""
+    from anonimizacion.pseudonimizacion.almacen_pepper import ErrorPepperNoConfigurado
+
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: (_ for _ in ()).throw(ErrorPepperNoConfigurado()))
+
+    llamadas: list[str] = []
+    monkeypatch.setattr(
+        modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
+    )
+
+    codigo = modulo.main()
+
+    assert codigo == 1
+    assert llamadas == [], "no debe conectar a Postgres si el pepper no esta configurado"
+
+
 def test_el_servidor_es_wsgiref_con_threading_mixin() -> None:
     """10.10: el punto de entrada usa `wsgiref.simple_server` + `ThreadingMixIn`."""
     modulo = _cargar_script()
@@ -96,6 +149,7 @@ def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch)
     contra un panel de larga vida hablando con RDS."""
     modulo = _cargar_script()
     monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
 
     llamadas: list[str] = []
 
@@ -118,6 +172,33 @@ def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch)
 
     assert codigo == 0
     assert llamadas == [modulo._DB_URL_DEFAULT]
+
+
+def test_construir_aplicacion_recupera_corridas_abandonadas_al_arrancar(tmp_path, capsys) -> None:
+    """Decisión "qué pasa si el servidor se cae con una corrida en curso"
+    (feature `despachador-desde-el-panel`): al construir la aplicación --
+    UNA vez, antes de servir ninguna petición -- toda corrida no terminal
+    tiene que cerrarse `FALLIDA`. Sin esto, tras cualquier caída el gate de
+    "una corrida a la vez" (`ServicioCorridasReal.crear_corrida`) queda
+    bloqueado para siempre: la corrida fantasma nunca termina, así que ningún
+    `POST /corridas` nuevo puede aceptarse."""
+    modulo = _cargar_script()
+    engine = sa.create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=sa.pool.StaticPool
+    )
+    Base.metadata.create_all(engine)
+    repositorio = RepositorioCorridas(engine)
+    abandonada = Corrida.crear("corrida-abandonada")
+    repositorio.crear_corrida(abandonada)
+    abandonada.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    repositorio.actualizar_corrida(abandonada, version_esperada=0)
+
+    modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
+
+    with Session(engine) as sesion:
+        fila = sesion.get(CorridaOrm, "corrida-abandonada")
+    assert fila.estado == "fallida"
+    assert "corrida-abandonada" in capsys.readouterr().err
 
 
 def test_el_servidor_real_responde_una_peticion_http_real(tmp_path, monkeypatch) -> None:
@@ -153,7 +234,7 @@ def test_el_servidor_real_responde_una_peticion_http_real(tmp_path, monkeypatch)
             )
         )
 
-    aplicacion = modulo.construir_aplicacion(engine, tmp_path)
+    aplicacion = modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
     servidor = make_server("127.0.0.1", 0, aplicacion, server_class=modulo._ServidorConHilos)
     puerto = servidor.server_address[1]
     hilo = threading.Thread(target=servidor.serve_forever, daemon=True)

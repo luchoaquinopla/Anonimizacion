@@ -25,6 +25,16 @@ _ESTADOS_TERMINALES = {
     EstadoDocumentoCorrida.ERROR_FINAL,
 }
 
+# Estados TERMINALES de `corrida` (plano de control, no de documento -- ver
+# `_ESTADOS_TERMINALES` arriba para la distinción). Usado por
+# `listar_corridas_no_terminales`: feature `despachador-desde-el-panel`, para
+# el gate de "una corrida a la vez" y la recuperación de arranque.
+_ESTADOS_CORRIDA_TERMINALES = {
+    EstadoCorrida.COMPLETADA,
+    EstadoCorrida.COMPLETADA_CON_CUARENTENA,
+    EstadoCorrida.FALLIDA,
+}
+
 
 class RepositorioCorridas:
     """Persiste la unidad administrativa y permite reanudar documentos no terminales."""
@@ -57,6 +67,38 @@ class RepositorioCorridas:
         if fila is None:
             return None
         return Corrida(id_corrida=fila.id_corrida, estado=EstadoCorrida(fila.estado), version=fila.version)
+
+    def listar_corridas_no_terminales(self) -> list[Corrida]:
+        """Corridas en cualquier estado ACTIVO (no `COMPLETADA`/
+        `COMPLETADA_CON_CUARENTENA`/`FALLIDA`) -- feature `despachador-desde-el-panel`.
+
+        Dos llamadores reales, misma pregunta: "¿hay trabajo en curso?"
+
+        - `ServicioCorridasReal.crear_corrida`: gate de "una corrida a la
+          vez" -- rechaza un `POST /corridas` nuevo mientras una siga activa
+          (ver su docstring para el porqué de esa decisión, memoria y
+          `ProcessPoolExecutor` compartidos entre corridas concurrentes).
+        - `lanzador_corrida.recuperar_corridas_abandonadas`: al arrancar el
+          servidor, cualquier corrida que esta consulta devuelva es
+          necesariamente una corrida abandonada por un proceso anterior (el
+          servidor es de un solo proceso, sin persistencia de "hay un hilo
+          corriendo para este `corrida_id`").
+
+        Orden estable por `id_corrida` (no hay columna de fecha de creación
+        en `corrida` hoy) -- sólo importa para que el gate reporte SIEMPRE la
+        misma corrida activa en `409`, no una elección arbitraria entre
+        varias filas no terminales.
+        """
+        with Session(self._motor) as sesion:
+            filas = sesion.scalars(
+                select(CorridaOrm)
+                .where(CorridaOrm.estado.not_in({e.value for e in _ESTADOS_CORRIDA_TERMINALES}))
+                .order_by(CorridaOrm.id_corrida)
+            ).all()
+        return [
+            Corrida(id_corrida=fila.id_corrida, estado=EstadoCorrida(fila.estado), version=fila.version)
+            for fila in filas
+        ]
 
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
         """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.
