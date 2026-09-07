@@ -35,4 +35,10 @@ EXPLICACION_POR_CODIGO: dict[str, str] = {
     # código crudo.
     "artefacto_sobretamano": "El archivo excede el tamaño máximo permitido.",
     "formato_no_soportado": "El archivo no es un formato que el sistema pueda procesar.",
+    # Deliberadamente distinto del texto de `error_transitorio_agotado`
+    # (openspec `paralelismo-de-procesamiento` PR 3, revisión adversarial):
+    # ese es un fallo DENTRO del pipeline sobre un documento que sí corrió;
+    # este es un fallo del PROCESO que lo procesaba, sin que el documento
+    # necesariamente haya llegado a ejecutarse.
+    "proceso_interrumpido": "El proceso que lo estaba procesando se interrumpió inesperadamente (no es un problema del documento).",
 }

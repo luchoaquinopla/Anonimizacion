@@ -43,8 +43,21 @@ from anonimizacion.salida.modelos_orm import Cuarentena, DocumentoCorridaOrm, Es
 #: termina en pseudonimización y recién después corre `_coordinar_resueltos`.
 #: `deteccion` y `deteccion_pii` quedan fuera: ninguna de las dos produce
 #: cuarentena (Requisito 2 de la spec).
+#: `despacho` (openspec `paralelismo-de-procesamiento` PR 3, hallazgo de
+#: revisión adversarial): un documento ya inventariado cuyo proceso hijo
+#: murió antes de llegar a EXTRACCION. Va justo después de `ingesta` porque
+#: es el único punto del recorrido donde ese documento pudo haberse
+#: detenido -- nunca llegó a ninguna etapa posterior del pipeline. Antes de
+#: agregarla, `despacho_paralelo.py` apartaba con un `etapa` fuera de este
+#: vocabulario fijo: `calcular_embudo` sí lo sumaba al total global
+#: (`apartados`), pero el desglose por etapa de más abajo lo saltaba
+#: silenciosamente -- el `for etapa in ETAPAS_EMBUDO` nunca lo visitaba, así
+#: que `llegaron` nunca restaba esos apartados en ningún punto del recorrido
+#: y el desglose quedaba inflado a partir de esa etapa en adelante, aunque
+#: el total (`residuo`/`cierra`) siguiera cerrando bien.
 ETAPAS_EMBUDO: tuple[str, ...] = (
     "ingesta",
+    "despacho",
     "extraccion",
     "parseo",
     "reconciliacion",

@@ -66,6 +66,7 @@ from .codigos_cuarentena import EXPLICACION_POR_CODIGO
 
 _ETIQUETA_ETAPA: dict[str, str] = {
     "ingesta": "Ingesta",
+    "despacho": "Despacho",
     "extraccion": "Extracción",
     "parseo": "Parseo",
     "reconciliacion": "Reconciliación",

@@ -139,6 +139,7 @@ def test_el_embudo_de_una_corrida_responde_antes_que_la_rama_generica(tmp_path: 
     assert set(cuerpo["estimacion"]) == {"situacion"}  # "midiendo": sin números que adivinar
     assert [e["etapa"] for e in cuerpo["etapas"]] == [
         "ingesta",
+        "despacho",
         "extraccion",
         "parseo",
         "reconciliacion",

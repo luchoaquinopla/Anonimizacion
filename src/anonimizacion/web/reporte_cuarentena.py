@@ -102,6 +102,11 @@ _ACCION_POR_CODIGO: dict[str, AccionRequerida] = {
     "cobertura_ambigua": AccionRequerida.REVISAR_EL_PROGRAMA,
     "artefacto_sobretamano": AccionRequerida.REVISAR_EL_PROGRAMA,
     "error_transitorio_agotado": AccionRequerida.REVISAR_EL_PROGRAMA,
+    # Distinto texto que "error_transitorio_agotado" (ver codigos_cuarentena.py),
+    # misma acción: reprocesar sin cambios puede andar (el proceso murió, no
+    # el documento), pero igual amerita avisar al equipo -- un patrón de
+    # OOM-kill repetido es una señal de infraestructura, no algo para ignorar.
+    "proceso_interrumpido": AccionRequerida.REVISAR_EL_PROGRAMA,
     # Identidad: reprocesar no lo arregla.
     "clave_pii_no_resuelta": AccionRequerida.REVISAR_A_MANO,
     "clave_pii_ambigua": AccionRequerida.REVISAR_A_MANO,
