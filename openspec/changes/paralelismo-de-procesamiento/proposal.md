@@ -182,8 +182,10 @@ el código.
 1. **BLOQUEANTE — respuesta del instituto**, en un solo email: (a) tamaño real del corpus,
    (b) si los PDFs vienen agrupados en subcarpetas por paciente/episodio. Sin (b), la unidad de
    paralelización no existe y hay que rediseñar el agrupamiento sobre otra señal.
-2. **Docker no está disponible en esta máquina** → no hay Postgres real. **La mitad de red del
-   presupuesto no se puede medir acá.** Ver Criterio de éxito.
+2. **Actualización durante el PR 1**: Docker SÍ está disponible en la máquina donde se implementó
+   el PR 1, y se usó para medir la mitad de red del presupuesto contra Postgres real (ver
+   "Datos medidos durante el PR 1" en Criterio de éxito). Sigue bloqueante para el PR 3: falta
+   medir el escalado de CPU con N procesos reales contra RDS, no sólo contra un Postgres local.
 3. El PR 2 depende del PR 1; el PR 3 depende del PR 2.
 
 ## Criterio de éxito — y qué se puede medir hoy, honestamente
@@ -201,16 +203,56 @@ el código.
       PDFs y un verificador cuadrático (`corpus_piloto.py:132-134`); hay que instrumentar por
       fuera de esos dos o el número no significa nada.
 
+### Datos medidos durante el PR 1 (actualización -- corrige "ningún número se midió")
+
+Con Docker disponible durante la implementación del PR 1 se midieron dos números que antes eran
+estimación. Se documenta el método de cada uno para que sea auditable sin depender de los scripts
+que los produjeron (viven en un scratchpad de sesión, no versionados en este repo -- ver
+"¿Van estos scripts al repo?" más abajo).
+
+- **Latencia mediana a São Paulo: 54,9 ms** (p95: 68,7 ms). Método: 25 conexiones TCP puras
+  (sin round trip de aplicación) contra `s3.sa-east-1.amazonaws.com`, cero fallos. La región se
+  verificó contra los CIDR publicados en `ip-ranges.json` de AWS, no confiando en el nombre del
+  endpoint. Punto de referencia de control: la misma medición contra `us-east-1` dio 193,3 ms,
+  consistente con la distancia geográfica esperada.
+- **6,67 round trips (sentencias SQL) por documento** contra Postgres real. Método: Postgres 16
+  en Docker, esquema creado con `alembic upgrade head` (no `create_all`, para ejercitar el mismo
+  camino de despliegue), 972 documentos publicados del corpus sintético de banco de carga,
+  sentencias capturadas con el hook `before_cursor_execute` de SQLAlchemy. Se confirmó que la
+  captura correspondía al escritor real (no a un doble) porque el SQL capturado nombra las tablas
+  reales (`episodio`, `estudio`, `medicion_ecg`, `medicion_eco`, `resultado_laboratorio`,
+  `texto_seccion_eco`). Desglose: 4,0 sentencias + 1,33 sesiones + 1,33 commits por documento.
+  **Contexto que explica por qué esto no salió antes**: una medición previa contra SQLite había
+  dado 22,0 round trips/documento, y ese número era un artefacto del driver, no del pipeline --
+  SQLAlchemy emite un `INSERT` por fila contra `pysqlite`, mientras que contra `psycopg` agrupa
+  filas con `insertmanyvalues`. El número real es el de Postgres, no el de SQLite.
+
+Con estos dos datos medidos (no la latencia BA-São Paulo de 30-50 ms razonada por distancia de
+fibra que se usaba antes), el presupuesto de red por documento en un solo proceso es
+`6,67 × 54,9 ms ≈ 366 ms`. Esto reemplaza el número de la sección "Intención" en cuanto haya
+oportunidad de recalcular el 82-88% de reducción completo con este dato -- **no se recalculó acá
+todavía**: falta repetir la cuenta de tiempo total con el nuevo RTT medido en vez del estimado.
+
+**¿Van estos scripts de medición al repositorio?** No se decidió todavía. A favor: auditable sin
+depender de la memoria de quien los corrió, reproducible en otra máquina. En contra: son scripts
+de un solo uso, no forman parte del pipeline ni de la suite de tests, y el repo ya tiene una
+categoría de "scripts de prueba manual" (`scripts/procesar_carpeta.py`,
+`scripts/servir_panel.py`) con una función productiva distinta (operar el pipeline, no medirlo).
+Si se decide versionarlos, un lugar candidato es `scripts/medicion/` con su propio README que
+aclare que no corren en CI.
+
 ### NO se puede verificar hoy — y no se va a maquillar
 
-- **La mitad de red (~55% del presupuesto) no es medible sin RDS real.** El banco usa dobles
-  (`_MotorPiiOffline`, `_DestinoMemoria` en `tests/fixtures/corpus_piloto.py:38,176`): **no
-  ejerce ni una sola conexión de red**, así que **no sirve como evidencia de rendimiento real**.
-- **El 82-88% de reducción es una ESTIMACIÓN con rango**, derivada de un RTT Buenos
-  Aires–São Paulo de 30-50 ms razonado por distancia de fibra, **no medido**. El total baja de
-  ~13 h a **~1,6-2,3 h estimadas**.
-- **Ningún número de latencia de esta propuesta se midió.** Cuando haya RDS o Docker, se mide y
-  se corrige.
+- **El 82-88% de reducción sigue siendo una ESTIMACIÓN**: se midió el RTT real (54,9 ms) y los
+  round trips reales (6,67/documento), pero la cuenta completa de "13 h → 1,6-2,3 h" todavía usa
+  el RTT viejo razonado por distancia (30-50 ms) para el resto del presupuesto -- falta
+  recalcularla con el dato medido.
+- **El escalado con N procesos reales contra RDS no está medido.** Lo medido en el PR 1 es
+  round trips y latencia de RED, no throughput con `ProcessPoolExecutor` (eso es PR 3). El banco
+  de carga usa dobles (`_MotorPiiOffline`, `_DestinoMemoria` en
+  `tests/fixtures/corpus_piloto.py:38,176`) para el escalado de CPU con N=1,2,4,8: válido para
+  CPU, no ejerce ninguna conexión de red, así que no sirve como evidencia de la mitad de red del
+  presupuesto con concurrencia real.
 
 ### Cómo evitamos "algo verde que valida un cableado que producción no usa"
 
