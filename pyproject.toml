@@ -32,6 +32,9 @@ packages = ["src/anonimizacion"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "postgres: requiere Postgres real (docker-compose.yml, puerto 5433); se salta solo si no puede conectar",
+]
 
 [tool.coverage.run]
 source = ["src/anonimizacion"]
