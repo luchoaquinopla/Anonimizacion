@@ -150,6 +150,33 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     assert corrida.estado == EstadoCorrida.PROCESANDO.value
 
 
+def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
+    """openspec `paralelismo-de-procesamiento` PR 1: `main()` llamaba
+    `sa.create_engine(args.db_url)` pelado, sin `pool_pre_ping` ni
+    `pool_recycle` -- ver el docstring de `postgres.py::construir_engine_postgres`
+    para el riesgo contra RDS. Wiring de `main()`, no de `ejecutar()`: `ejecutar()`
+    ya recibe el `Engine` inyectado y no ejercita esta línea (por eso los tests
+    de arriba no la hubieran detectado)."""
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["procesar_carpeta.py", "--entrada", "carpeta-cualquiera"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-pool-nunca-real")
+    monkeypatch.setattr(modulo, "MotorPii", lambda: object())
+
+    llamadas: list[str] = []
+
+    def _engine_espia(url: str) -> sa.Engine:
+        llamadas.append(url)
+        return sa.create_engine("sqlite:///:memory:")
+
+    monkeypatch.setattr(modulo, "construir_engine_postgres", _engine_espia, raising=False)
+    monkeypatch.setattr(modulo, "ejecutar", lambda **kwargs: 0)
+
+    codigo = modulo.main()
+
+    assert codigo == 0
+    assert llamadas == [modulo._DB_URL_DEFAULT]
+
+
 def test_el_apartado_por_sobretamano_antes_de_la_huella_queda_atribuido_a_la_corrida(
     tmp_path, motor: MotorPii
 ) -> None:

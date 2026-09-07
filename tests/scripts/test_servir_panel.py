@@ -89,6 +89,37 @@ def test_el_flag_escuchar_red_es_explicito_y_apagado_por_defecto(monkeypatch) ->
     assert args.escuchar_red is False
 
 
+def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
+    """openspec `paralelismo-de-procesamiento` PR 1: `main()` llamaba
+    `sa.create_engine(args.db_url)` pelado -- ver
+    `postgres.py::construir_engine_postgres` para el porqué eso importa
+    contra un panel de larga vida hablando con RDS."""
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+
+    llamadas: list[str] = []
+
+    def _engine_espia(url: str) -> sa.Engine:
+        llamadas.append(url)
+        return sa.create_engine("sqlite:///:memory:")
+
+    monkeypatch.setattr(modulo, "construir_engine_postgres", _engine_espia, raising=False)
+
+    class _ServidorFalso:
+        def serve_forever(self) -> None:
+            raise KeyboardInterrupt()
+
+        def server_close(self) -> None:
+            pass
+
+    monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
+
+    codigo = modulo.main()
+
+    assert codigo == 0
+    assert llamadas == [modulo._DB_URL_DEFAULT]
+
+
 def test_el_servidor_real_responde_una_peticion_http_real(tmp_path, monkeypatch) -> None:
     """10.10/10.11: levanta el servidor en un hilo y le hace una petición HTTP real."""
     # Ver el comentario junto a `_CONNECT_REAL`: este es el único test que

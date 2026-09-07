@@ -1,28 +1,34 @@
 """Escritor del destino Postgres (tasks.md 7.3, design.md decisión Q1: Postgres como sistema de registro).
 
 `EscritorPostgres` recibe un `sqlalchemy.Engine` ya armado (inyección de
-dependencia -- construir ese `Engine` con la URL real de Postgres es
-responsabilidad de la configuración del pipeline; `scripts/procesar_carpeta.py`
-y `scripts/servir_panel.py` ya lo hacen con `sa.create_engine(args.db_url)`).
-En este repo, sin Postgres instalado, los tests lo instancian con
-`sqlite:///:memory:` (ver `tests/salida/destinos/test_postgres.py` para el
-porqué eso es válido acá).
+dependencia). Ese `Engine`, contra Postgres real, se arma con
+`construir_engine_postgres` (este módulo) -- `scripts/procesar_carpeta.py` y
+`scripts/servir_panel.py` lo llaman en vez de `sa.create_engine(args.db_url)`
+pelado (openspec `paralelismo-de-procesamiento` PR 1; antes de este cambio sí
+llamaban a `sa.create_engine` directo, sin pool contra RDS). En los tests de
+este repo, sin Postgres involucrado, se instancia con `sqlite:///:memory:`
+(ver `tests/salida/destinos/test_postgres.py` para el porqué eso es válido
+acá).
 
 `registrar_vinculo` respalda `ResolutorClaves` (Fase 6) contra la tabla real
 `vinculo_paciente`, preservando la MISMA semántica de ambigüedad de
 homónimos documentada en `pseudonimizacion/resolutor_claves.py` --
 deliberadamente NO usa `INSERT ... ON CONFLICT (id_alt_paciente) DO UPDATE`:
 ese patrón pisaría en silencio un puente en conflicto (el bug corregido
-post-PR5, commit 07da933). En su lugar hace SELECT explícito y decide entre
-INSERT / no-op / marcar ambiguo, calcado del método `registrar_puente` de
-`ResolutorClaves`.
+post-PR5, commit 07da933; decisión reafirmada en
+`openspec/changes/escritura-idempotente/design.md`, Decisión 3). En su lugar
+hace SELECT explícito y decide entre INSERT / no-op / marcar ambiguo, calcado
+del método `registrar_puente` de `ResolutorClaves` -- y ahora, además,
+tolera la carrera de dos procesos concurrentes sobre el mismo
+`id_alt_paciente` (ver `registrar_vinculo` más abajo) sin perder esa
+decisión.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,6 +50,89 @@ from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEco
 # parser) -> columna fija. Cualquier medida que no matchee acá cae a
 # `adicionales` en vez de perderse (ver design.md, "Pendientes": el layout
 # real de nombres de medida todavía no está calibrado contra el corpus).
+# --- construir_engine_postgres: pool contra RDS ----------------------------
+#
+# Contra un Postgres local (o SQLite) esto no importa: la conexión vive y
+# muere con el proceso de test. Contra RDS en `sa-east-1` sí importa, porque
+# tanto RDS como los balanceadores/firewalls intermedios cierran conexiones
+# TCP ociosas sin avisarle al cliente -- un proceso de larga vida que reusa
+# del pool una conexión ya muerta recibe un error de conexión, y en este
+# pipeline eso manda el documento a cuarentena por una falla de
+# infraestructura, no por su contenido (falso positivo clínico).
+#
+# `pool_pre_ping=True`: antes de entregar una conexión del pool, SQLAlchemy
+# le hace un "SELECT 1" liviano; si falla, la descarta y abre una nueva en
+# vez de propagar el error al llamador. Cuesta un round-trip de red POR
+# checkout, no por documento. `EscritorPostgres` abre una `Session` (=~ un
+# checkout) por cada `registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`/
+# `escribir_episodio`/`escribir_registro` que se llame -- y el número de
+# checkouts por documento NO es una constante: `escribir_episodio` se
+# deduplica por EPISODIO, no por documento (`pipeline/ejecutor.py:543-553`),
+# y el camino de identidad sin DNI puede necesitar `resolver_vinculo` +
+# `es_ambiguo` (`pseudonimizacion/resolutor_claves.py:218-230`), no sólo uno.
+# En un episodio real de 4 estudios (1 con DNI que abre el puente + 3 sin DNI
+# que lo resuelven, que es la forma del corpus real -- ver proposal.md):
+# el primer documento paga 3 (`registrar_vinculo` + `escribir_episodio` +
+# `escribir_registro`), los otros tres pagan 2 cada uno (`resolver_vinculo` +
+# `escribir_registro`) porque el episodio ya quedó escrito -- 9 checkouts /
+# 4 documentos ≈ 2,25 checkouts/documento en promedio. El piso es 1 (DNI sin
+# fecha de nacimiento, documento que no es el primero de su episodio); el
+# techo sube a 4 cuando `registrar_vinculo` pisa la rama de carrera que este
+# mismo PR agrega más abajo (colisión real de `IntegrityError`: abre una
+# SEGUNDA `Session` para releer y decidir, ver el docstring de
+# `registrar_vinculo`) -- justo el escenario de contención que PR 3 hace
+# común. Con la latencia medida para este cambio (54,9 ms mediana a São
+# Paulo, ver proposal.md para el método) y los 6,67 round trips/documento ya
+# medidos contra Postgres real (~366 ms de red por documento sin pre_ping),
+# el costo de pre_ping en el caso típico (~2,25 checkouts extra) ronda
+# ~124 ms más por documento (~34% más round trips de red); en el peor caso
+# bajo contención (4 checkouts) sube a ~220 ms (~60%). Es un costo real, no
+# gratis -- se acepta a cambio de no perder documentos válidos por una
+# conexión muerta del pool.
+#
+# `pool_recycle`: recicla por EDAD de la conexión desde que se creó, evaluado
+# SÓLO en el momento del checkout (`sqlalchemy/pool/base.py::
+# _ConnectionRecord.get_connection`) -- NO detecta inactividad. Una conexión
+# puede quedar ociosa en el pool y morir por el idle-timeout de un NAT/
+# firewall intermedio (el caso documentado más conocido es el NAT Gateway de
+# AWS, que descarta flujos TCP ociosos a los 350 s sin FIN/RST) mucho antes
+# de llegar a los 270 s de EDAD -- si nadie la saca del pool, `pool_recycle`
+# nunca se evalúa y no hace nada por ella. Con `pool_size=5` y un proceso
+# secuencial, ese escenario (conexión poco usada, ociosa por minutos) es
+# plausible. **La defensa real contra la conexión muerta por inactividad es
+# `pool_pre_ping`** (prueba viva en cada checkout, sin importar la edad ni
+# el tiempo ocioso) -- `pool_recycle` es un complemento, no un sustituto: pone
+# un TOPE DURO a la edad máxima de cualquier conexión (útil si RDS o un
+# proxy intermedio fuerza un ciclo de conexión periódico), pero no cubre el
+# hueco de "murió mientras estaba ociosa y nadie la volvió a pedir". Este
+# repo no documenta la topología de red exacta hacia RDS (VPC/NAT/security
+# groups), así que 270 s (4,5 min) sigue siendo un valor defensivo, no un
+# número derivado de un dato medido de este proyecto.
+#
+# `pool_size`: explícito (5, el default histórico de SQLAlchemy) para que el
+# presupuesto contra `max_connections` de RDS sea legible más adelante: con
+# N procesos (PR 3), el consumo total es N * pool_size + el panel, no un
+# número implícito que hay que ir a buscar en la documentación de SQLAlchemy.
+#
+# SQLite no tiene pool de red: `pool_pre_ping` hace un ping local trivial
+# (sin costo real) y `pool_size` lo ignora `SingletonThreadPool` sin error ni
+# warning (verificado -- ver `test_construir_engine_postgres_no_rompe_con_sqlite`).
+# `pool_recycle` no representa nada porque no hay conexión de red que reciclar.
+POOL_RECYCLE_SEGUNDOS = 270
+POOL_SIZE = 5
+
+
+def construir_engine_postgres(url: str) -> Engine:
+    """Arma el `Engine` de producción con la config de pool contra RDS.
+
+    Punto único de construcción: `scripts/procesar_carpeta.py` y
+    `scripts/servir_panel.py` llaman a esta función en vez de
+    `sa.create_engine(url)` pelado -- ver el docstring del módulo para el
+    razonamiento completo de cada parámetro.
+    """
+    return create_engine(url, pool_pre_ping=True, pool_recycle=POOL_RECYCLE_SEGUNDOS, pool_size=POOL_SIZE)
+
+
 _PIVOTE_MEDIDAS_ECO: dict[str, str] = {
     "AO": "ao",
     "AI": "ai",
@@ -65,22 +154,67 @@ class EscritorPostgres:
     # --- vinculo_paciente: respaldo persistente de ResolutorClaves ---------
 
     def registrar_vinculo(self, id_alt_paciente: str, id_paciente: str) -> None:
-        with Session(self._engine) as sesion, sesion.begin():
-            existente = sesion.get(VinculoPaciente, id_alt_paciente)
+        """Inserta o decide sobre `vinculo_paciente`, tolerando la carrera de N procesos.
 
-            if existente is None:
-                sesion.add(VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False))
+        Con un solo proceso el `SELECT` previo alcanza. Con `ProcessPoolExecutor`
+        (paralelismo-de-procesamiento PR 3) dos procesos pueden resolver el MISMO
+        paciente a la vez: ambos ven "no existe" y ambos intentan insertar. La
+        restricción de clave primaria de `vinculo_paciente.id_alt_paciente` es la
+        autoridad final -- el perdedor recibe `IntegrityError`, NO un
+        `IntegrityError` que se descarta sin más (a diferencia de
+        `escribir_registro`): acá "ya existe" puede significar un homónimo real
+        (el ganador insertó un `id_paciente` DISTINTO), así que hay que releer el
+        estado real y aplicar la MISMA decisión (`_decidir_vinculo`) que el
+        camino sin carrera. Perder esa decisión violaría el invariante "una vez
+        ambiguo, siempre ambiguo": significaría afirmar en silencio que dos
+        pacientes distintos son el mismo.
+        """
+        with Session(self._engine) as sesion:
+            try:
+                with sesion.begin():
+                    existente = self._buscar_vinculo(sesion, id_alt_paciente)
+                    if existente is not None:
+                        self._decidir_vinculo(existente, id_paciente)
+                        return
+                    sesion.add(
+                        VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False)
+                    )
+            except IntegrityError:
+                pass
+            else:
                 return
 
-            if existente.ambiguo:
-                return  # ya ambiguo -- permanece ambiguo, no hay vuelta atrás
+        # Carrera: otro proceso insertó el mismo id_alt_paciente entre nuestro
+        # SELECT y nuestro INSERT. La sesion anterior ya quedo cerrada (y, contra
+        # Postgres real, su transaccion abortada por el IntegrityError) -- se
+        # resuelve en una sesion NUEVA, releyendo el estado real en vez de asumir
+        # que "ya existe" es sinonimo de "nada que hacer".
+        with Session(self._engine) as sesion, sesion.begin():
+            existente = sesion.get(VinculoPaciente, id_alt_paciente)
+            if existente is None:
+                # Defensivo: no deberia pasar (el IntegrityError implica que la
+                # fila ya existe), y este pipeline no borra vinculo_paciente.
+                sesion.add(
+                    VinculoPaciente(id_alt_paciente=id_alt_paciente, id_paciente=id_paciente, ambiguo=False)
+                )
+                return
+            self._decidir_vinculo(existente, id_paciente)
 
-            if existente.id_paciente == id_paciente:
-                return  # reprocesamiento idempotente del mismo laboratorio
+    @staticmethod
+    def _buscar_vinculo(sesion: Session, id_alt_paciente: str) -> VinculoPaciente | None:
+        return sesion.get(VinculoPaciente, id_alt_paciente)
 
-            # mismo id_alt_paciente, id_paciente distinto -> homónimos reales
-            existente.id_paciente = None
-            existente.ambiguo = True
+    @staticmethod
+    def _decidir_vinculo(existente: VinculoPaciente, id_paciente: str) -> None:
+        if existente.ambiguo:
+            return  # ya ambiguo -- permanece ambiguo, no hay vuelta atrás
+
+        if existente.id_paciente == id_paciente:
+            return  # reprocesamiento idempotente del mismo laboratorio
+
+        # mismo id_alt_paciente, id_paciente distinto -> homónimos reales
+        existente.id_paciente = None
+        existente.ambiguo = True
 
     def resolver_vinculo(self, id_alt_paciente: str) -> str | None:
         with Session(self._engine) as sesion:
@@ -102,12 +236,31 @@ class EscritorPostgres:
         A diferencia de `vinculo_paciente`, acá no hay riesgo de ambigüedad:
         el mismo `id_episodio` siempre corresponde al mismo
         `(id_paciente, fecha_ancla)` (ver `pseudonimizacion/claves.py::
-        generar_id_episodio`), así que un insert-si-no-existe es seguro.
+        generar_id_episodio`), así que un insert-si-no-existe es seguro --
+        incluida la carrera de dos procesos escribiendo el mismo episodio a la
+        vez (`paralelismo-de-procesamiento` PR 3): el que pierde la carrera de
+        la restricción de clave primaria no tiene nada que decidir, a
+        diferencia de `registrar_vinculo` -- la fila que ganó es idéntica a la
+        que este proceso hubiera insertado, así que tratar el `IntegrityError`
+        como "ya escrito" (mismo patrón que `escribir_registro`) alcanza.
         """
-        with Session(self._engine) as sesion, sesion.begin():
-            if sesion.get(Episodio, id_episodio) is not None:
-                return
-            sesion.add(Episodio(id_episodio=id_episodio, id_paciente=id_paciente, fecha_ancla=fecha_ancla))
+        with Session(self._engine) as sesion:
+            try:
+                with sesion.begin():
+                    if self._buscar_episodio(sesion, id_episodio) is not None:
+                        return
+                    sesion.add(Episodio(id_episodio=id_episodio, id_paciente=id_paciente, fecha_ancla=fecha_ancla))
+            except IntegrityError:
+                # Carrera: otro proceso inserto el mismo id_episodio entre
+                # nuestro SELECT y nuestro INSERT. Es funcion pura de
+                # (id_paciente, fecha_ancla) -- la fila que gano es identica a
+                # la que hubieramos escrito. La restriccion unica es la
+                # autoridad final; no hay nada mas que hacer.
+                pass
+
+    @staticmethod
+    def _buscar_episodio(sesion: Session, id_episodio: str) -> Episodio | None:
+        return sesion.get(Episodio, id_episodio)
 
     # --- registro anonimizado: dispatch por tipo_documento -------------------
 

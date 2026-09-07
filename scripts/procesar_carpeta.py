@@ -48,7 +48,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-import sqlalchemy as sa
 from sqlalchemy import Engine
 
 from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
@@ -57,7 +56,7 @@ from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostgres
 from anonimizacion.salida.cuarentena import EscritorCuarentena
-from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.destinos.postgres import EscritorPostgres, construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.trabajadores import tareas
 
@@ -182,7 +181,11 @@ def main() -> int:
     motor = MotorPii()
 
     print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
-    engine = sa.create_engine(args.db_url)
+    # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
+    # arma el pool con `pool_pre_ping`/`pool_recycle` contra RDS -- ver el
+    # docstring de esa función para el porqué un `sa.create_engine(url)` pelado
+    # manda documentos válidos a cuarentena por una conexión muerta del pool.
+    engine = construir_engine_postgres(args.db_url)
 
     return ejecutar(entrada=args.entrada, engine=engine, motor=motor, pepper=pepper)
 

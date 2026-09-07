@@ -34,12 +34,12 @@ import sys
 from pathlib import Path
 from wsgiref.simple_server import WSGIServer, make_server
 
-import sqlalchemy as sa
 from sqlalchemy import Engine
 
 from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.cuarentena import EscritorCuarentena
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.web.rutas_corridas import crear_aplicacion_corridas
 from anonimizacion.web.servicio_corridas import ServicioCorridasReal
@@ -107,7 +107,11 @@ def _resolver_host(*, escuchar_red: bool) -> str:
 def main() -> int:
     args = _parsear_args()
     print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
-    engine = sa.create_engine(args.db_url)
+    # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
+    # arma el pool con `pool_pre_ping`/`pool_recycle` contra RDS -- este panel
+    # es un proceso de larga vida, exactamente el perfil que una conexión
+    # muerta del pool afecta (ver docstring de esa función).
+    engine = construir_engine_postgres(args.db_url)
     aplicacion = construir_aplicacion(engine, args.raiz)
 
     host = _resolver_host(escuchar_red=args.escuchar_red)

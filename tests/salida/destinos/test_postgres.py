@@ -1,13 +1,15 @@
 """Tests de `salida/destinos/postgres.py` (tasks.md 7.3, spec `anonymized-output`).
 
 Corren contra SQLite en memoria -- ver `tests/salida/test_migraciones.py`
-para la nota completa de por qué (no hay Postgres en esta máquina de
-desarrollo). `EscritorPostgres` recibe el `Engine` de afuera (inyección de
-dependencia): en producción ese engine se arma con una URL
-`postgresql+psycopg2://...` (Fase 8/9, pipeline/config -- todavía no
-implementada), acá con `sqlite:///:memory:`. El código de este módulo no
-importa `psycopg2` en ningún lado ni depende de sintaxis específica de
-Postgres (nada de `INSERT ... ON CONFLICT`), así que es honestamente
+para la nota completa de por qué (la suite bloquea toda conexión de red real,
+`tests/conftest.py::_bloquear_llamadas_de_red_reales`; Postgres real sólo se
+usa para verificación manual fuera de pytest, ver
+`openspec/changes/paralelismo-de-procesamiento/proposal.md`). `EscritorPostgres`
+recibe el `Engine` de afuera (inyección de dependencia): en producción ese
+engine se arma con `construir_engine_postgres` (mismo módulo) contra una URL
+`postgresql+psycopg://...`, acá con `sqlite:///:memory:`. El código de este
+módulo no importa `psycopg` en ningún lado ni depende de sintaxis específica
+de Postgres (nada de `INSERT ... ON CONFLICT`), así que es honestamente
 portable, no un mock de la lógica real.
 
 El bloque más importante de estos tests es la semántica de ambigüedad de
@@ -36,7 +38,7 @@ from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEc
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
 from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
-from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
 
@@ -442,4 +444,118 @@ def test_un_registro_sin_clave_conserva_el_comportamiento_anterior(
     escritor.escribir_registro(registro)
 
     assert len(_leer_todas(motor, Estudio)) == 2
+
+
+# --- registrar_vinculo / escribir_episodio: la misma tolerancia a carrera ---
+# que ya tiene escribir_registro (openspec `paralelismo-de-procesamiento`
+# PR 1). Sin esto, dos procesos que resuelven el mismo paciente o escriben el
+# mismo episodio a la vez chocan -> `IntegrityError` sin capturar -> el
+# documento se pierde en vez de tratarse como el caso normal que es.
+#
+# Método: igual que `test_la_restriccion_unica_resiste_una_carrera` de más
+# arriba -- se hace mentir a la lectura optimista (`_buscar_vinculo`/
+# `_buscar_episodio`) para que devuelva "no existe" aunque la fila YA fue
+# insertada por fuera, forzando el `IntegrityError` REAL de la restricción de
+# clave primaria en el punto exacto donde ocurriría con dos procesos
+# concurrentes. No es una carrera simulada con dos llamadas en serie: el
+# `INSERT` que dispara la excepción es genuino, sólo el timing de la lectura
+# está controlado para que sea determinístico en vez de depender del
+# scheduler.
+
+
+def test_registrar_vinculo_resiste_una_carrera_del_mismo_par(escritor: EscritorPostgres, motor) -> None:
+    """Dos procesos registran (alt, pid) idéntico a la vez: el perdedor de la
+    carrera no debe fallar ni duplicar la fila."""
+    original = escritor._buscar_vinculo
+
+    def _fingir_que_no_existe(*args, **kwargs):
+        original(*args, **kwargs)
+        return None
+
+    escritor.registrar_vinculo("alt-carrera-par", "pid-1")  # "otro proceso" ya escribió
+    escritor._buscar_vinculo = _fingir_que_no_existe
+    try:
+        escritor.registrar_vinculo("alt-carrera-par", "pid-1")  # no debe propagar IntegrityError
+    finally:
+        escritor._buscar_vinculo = original
+
+    filas = _leer_todas(motor, VinculoPaciente)
+    assert len(filas) == 1
+    assert filas[0].id_paciente == "pid-1"
+    assert filas[0].ambiguo is False
+
+
+def test_registrar_vinculo_resiste_una_carrera_con_homonimo_real(escritor: EscritorPostgres, motor) -> None:
+    """La carrera NO puede tapar un homónimo real: si el que ganó insertó un
+    `id_paciente` DISTINTO, el invariante "una vez ambiguo, siempre ambiguo"
+    tiene que activarse igual -- perderlo acá sería afirmar en silencio que
+    dos pacientes distintos son el mismo."""
+    original = escritor._buscar_vinculo
+
+    def _fingir_que_no_existe(*args, **kwargs):
+        original(*args, **kwargs)
+        return None
+
+    escritor.registrar_vinculo("alt-carrera-homonimo", "pid-A")  # "otro proceso" ganó la carrera
+    escritor._buscar_vinculo = _fingir_que_no_existe
+    try:
+        escritor.registrar_vinculo("alt-carrera-homonimo", "pid-B")  # homónimo real
+    finally:
+        escritor._buscar_vinculo = original
+
+    filas = _leer_todas(motor, VinculoPaciente)
+    assert len(filas) == 1
+    assert filas[0].id_paciente is None
+    assert filas[0].ambiguo is True
+
+
+def test_escribir_episodio_resiste_una_carrera(escritor: EscritorPostgres, motor) -> None:
+    """Dos procesos escriben el mismo episodio a la vez: `id_episodio` es
+    función pura de `(id_paciente, fecha_ancla)`, así que no hay nada que
+    decidir -- tratar "ya existe" como éxito alcanza."""
+    original = escritor._buscar_episodio
+
+    def _fingir_que_no_existe(*args, **kwargs):
+        original(*args, **kwargs)
+        return None
+
+    escritor.escribir_episodio(id_episodio="ep-carrera", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    escritor._buscar_episodio = _fingir_que_no_existe
+    try:
+        escritor.escribir_episodio(
+            id_episodio="ep-carrera", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10)
+        )  # no debe propagar IntegrityError
+    finally:
+        escritor._buscar_episodio = original
+
+    assert len(_leer_todas(motor, Episodio)) == 1
+
+
+# --- construir_engine_postgres: pool contra RDS (paralelismo-de-procesamiento) --
+#
+# `pool_pre_ping`/`pool_recycle` importan sólo contra una base de red real
+# (RDS puede cerrar una conexión ociosa del pool sin avisar); estos tests
+# verifican la CONFIGURACIÓN del engine, no requieren conexión real -- crear
+# un `Engine` con SQLAlchemy es perezoso, no abre socket hasta el primer uso.
+
+
+def test_construir_engine_postgres_activa_pre_ping_y_recycle_explicito() -> None:
+    engine = construir_engine_postgres("postgresql+psycopg://usuario:clave@localhost/base")
+    try:
+        assert engine.pool._pre_ping is True
+        assert engine.pool._recycle == POOL_RECYCLE_SEGUNDOS
+        assert engine.pool.size() == POOL_SIZE
+    finally:
+        engine.dispose()
+
+
+def test_construir_engine_postgres_no_rompe_con_sqlite(motor) -> None:
+    """SQLite no tiene pool de red: la config se acepta pero no representa nada
+    real -- `pool_size` lo ignora `SingletonThreadPool`, sin error ni warning."""
+    engine = construir_engine_postgres("sqlite:///:memory:")
+    try:
+        with sa.orm.Session(engine) as sesion:
+            sesion.execute(sa.text("SELECT 1"))
+    finally:
+        engine.dispose()
 
