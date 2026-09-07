@@ -47,6 +47,47 @@ from .fuente import FuenteLocal, SumideroCuarentena
 from .repositorio_corridas import RepositorioCorridas
 
 
+class _IteradorDeUnSoloUso:
+    """Salvaguarda estructural (revisión adversarial, MEDIO): el docstring de
+    `ResultadoLanzamiento.referencias` ya advertía que es de un solo uso, pero
+    nada impedía que un consumidor futuro lo iterara dos veces y perdiera
+    todos los grupos en silencio la segunda vez (un generador agotado
+    simplemente no produce nada más, sin avisar). Esto lo convierte en un
+    fallo ruidoso: la SEGUNDA vez que algo pide un iterador sobre esta
+    instancia -- via `iter(...)` o `next(...)` directo -- explota con
+    `RuntimeError` en vez de devolver una secuencia vacía silenciosa.
+
+    Deliberadamente NO resuelve el caso de que un consumidor guarde el
+    resultado de la PRIMERA `iter()` (el generador real, ya desenvuelto) y lo
+    reitere por su cuenta -- eso excede lo que una envoltura puede prevenir
+    sin materializar la secuencia, que es justo lo que este cambio evita. Es
+    una defensa barata contra el error más común (llamar `list(...)` o iterar
+    dos veces sobre el objeto que devolvió `lanzar()`), no una garantía total.
+    """
+
+    def __init__(self, generador: Iterator[tuple[dict[str, str], ...]]) -> None:
+        self._generador = generador
+        self._entregado = False
+
+    def _marcar_entregado_o_fallar(self) -> Iterator[tuple[dict[str, str], ...]]:
+        if self._entregado:
+            raise RuntimeError(
+                "ResultadoLanzamiento.referencias ya fue consumido -- es un iterador de "
+                "un solo uso (ver su docstring). Iterarlo una segunda vez perdería todos "
+                "los grupos en silencio (un generador agotado no produce nada más sin "
+                "avisar); se prefiere fallar ruidoso. Si necesitás la cuenta total, "
+                "contá mientras iterás la única vez que lo consumís."
+            )
+        self._entregado = True
+        return self._generador
+
+    def __iter__(self) -> Iterator[tuple[dict[str, str], ...]]:
+        return self._marcar_entregado_o_fallar()
+
+    def __next__(self) -> tuple[dict[str, str], ...]:
+        return next(self._marcar_entregado_o_fallar())
+
+
 @dataclass(frozen=True)
 class CuarentenaDeCorrida:
     """Estampa la corrida en cada error antes de delegar en el sumidero real.
@@ -135,7 +176,7 @@ class LanzadorCorrida:
             cuarentena=sumidero,
             **({"tope_bytes": self.tope_bytes} if self.tope_bytes is not None else {}),
         )
-        referencias = self._inventariar_y_generar_referencias(fuente, corrida_id)
+        referencias = _IteradorDeUnSoloUso(self._inventariar_y_generar_referencias(fuente, corrida_id))
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
 
     def _inventariar_y_generar_referencias(

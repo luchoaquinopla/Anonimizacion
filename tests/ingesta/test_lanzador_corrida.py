@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
@@ -214,6 +215,27 @@ def test_lanzar_es_perezoso_no_materializa_la_particion_completa(
     next(resultado.referencias)  # consumir SOLO el primer grupo
 
     assert not any("paciente-c" in ruta for ruta in llamados)
+
+
+def test_lanzar_referencias_iterada_dos_veces_falla_ruidoso(tmp_path) -> None:
+    """Salvaguarda estructural (revisión adversarial, MEDIO): antes de esto,
+    nada impedía que un consumidor futuro iterara `resultado.referencias` dos
+    veces y perdiera todos los grupos en silencio la segunda vez (un
+    generador agotado simplemente no produce nada más). Ahora la segunda
+    iteración explota con `RuntimeError` en vez de devolver una secuencia
+    vacía sin avisar."""
+    (tmp_path / "paciente-a").mkdir()
+    _pdf(tmp_path / "paciente-a", "lab.pdf", b"contenido-a-lab")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)  # primer consumo: agota el iterador
+
+    with pytest.raises(RuntimeError, match="un solo uso"):
+        list(resultado.referencias)  # segundo consumo: debe fallar, no devolver []
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:
