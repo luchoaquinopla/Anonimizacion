@@ -43,10 +43,23 @@ def test_control_pii_detecta_cada_categoria_sintetica() -> None:
     assert contar_coincidencias_pii(registros_con_fuga, valores) == len(valores)
 
 
+_CAMPOS_DE_TIEMPO = (
+    "tiempo_preparacion_segundos",
+    "tiempo_procesamiento_segundos",
+    "tiempo_verificacion_segundos",
+)
+
+
+def _sin_tiempos(resumen: dict[str, object]) -> dict[str, object]:
+    return {clave: valor for clave, valor in resumen.items() if clave not in _CAMPOS_DE_TIEMPO}
+
+
 def test_piloto_es_repetible_y_su_oraculo_no_contiene_pii_ni_red(corridas_piloto) -> None:
     primero, segundo = (resultado.como_dict() for resultado in corridas_piloto)
 
-    assert primero == segundo
+    # El oraculo (conteos, estados) debe ser identico entre corridas; los
+    # tiempos de reloj, por naturaleza, no lo son.
+    assert _sin_tiempos(primero) == _sin_tiempos(segundo)
     serializado = repr(primero).casefold()
     assert "dni" not in serializado
     assert "nombre" not in serializado
