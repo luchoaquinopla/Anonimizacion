@@ -13,6 +13,7 @@ inventario: es el inventario más el sobretamaño").
 
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
@@ -23,7 +24,15 @@ from sqlalchemy.orm import Session
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
 from anonimizacion.ingesta.lanzador_corrida import CuarentenaDeCorrida, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
-from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm, Estudio
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm, Episodio, Estudio
+
+# Ver el comentario junto a `_CONNECT_REAL` en
+# `tests/scripts/test_procesar_carpeta.py`: captura la implementación real
+# ANTES de que `tests/conftest.py::_bloquear_llamadas_de_red_reales` la
+# parchee a nivel de sesión.
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 
 
 @dataclass
@@ -395,7 +404,19 @@ def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso
     # corrida -- sin que NADA haya llamado marcar_finalizada/marcar_fallida,
     # exactamente el estado en el que procesar_carpeta.py deja la corrida
     # mientras sigue corriendo.
+    #
+    # CORRECCIÓN (revisión adversarial, ronda 3): la versión anterior
+    # insertaba este `Estudio` SIN crear su `Episodio` padre primero.
+    # `Estudio.id_episodio` es un FK real contra `episodio.id_episodio`
+    # (`modelos_orm.py`) -- SQLite no impone claves foráneas por defecto y lo
+    # dejaba pasar en silencio, así que este test JAMÁS podía correr contra
+    # Postgres real (`ForeignKeyViolation`). El test que respalda la
+    # corrección de un crítico tiene que poder correr en el motor que la
+    # corrección dice proteger -- ver
+    # `test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso_postgres_real`
+    # más abajo, la misma reproducción contra Postgres de verdad.
     with Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-viva-1", id_paciente="paciente-viva-1", fecha_ancla=date(2024, 1, 1)))
         sesion.add(
             Estudio(
                 id_episodio="ep-viva-1",
@@ -418,6 +439,74 @@ def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso
     with Session(motor) as sesion:
         fila = sesion.get(CorridaOrm, resultado.corrida_id)
     assert fila.estado == "procesando", "el arranque del panel no puede pisar el trabajo real de otro proceso"
+
+
+@pytest.fixture()
+def _engine_postgres_real(monkeypatch: pytest.MonkeyPatch):
+    """Motor contra el Postgres real de `docker-compose.yml`, o `skip` si no
+    responde -- mismo patrón que `tests/scripts/test_procesar_carpeta.py`."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexion es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_recuperar_corridas_abandonadas_no_toca_una_corrida_viva_en_otro_proceso_postgres_real(
+    tmp_path, _engine_postgres_real
+) -> None:
+    """Revisión adversarial, ronda 3: la misma reproducción de arriba, pero
+    contra Postgres real -- exactamente el motor que la corrección dice
+    proteger, con sus claves foráneas reales impuestas. "Antes de decir que
+    algo está probado, correlo contra Postgres": si este test no hubiera
+    existido, el bug de fixture (Estudio sin Episodio) habría quedado
+    invisible para siempre detrás de SQLite."""
+    from anonimizacion.ingesta.lanzador_corrida import recuperar_corridas_abandonadas
+
+    motor = _engine_postgres_real
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    _materializar(resultado)
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    ahora = datetime.now(timezone.utc)
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(
+            Episodio(id_episodio="ep-viva-pg-1", id_paciente="paciente-viva-pg-1", fecha_ancla=date(2024, 1, 1))
+        )
+        sesion.add(
+            Estudio(
+                id_episodio="ep-viva-pg-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2024, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-corrida-viva-pg-1",
+                corrida_id=resultado.corrida_id,
+                creado_en=ahora - timedelta(minutes=2),
+            )
+        )
+
+    recuperados = recuperar_corridas_abandonadas(
+        repositorio, margen_inactividad=_MARGEN_PRUEBA, ahora=ahora + timedelta(minutes=5)
+    )
+
+    assert recuperados == [], "una corrida con evidencia reciente de otro proceso NO se toca (Postgres real)"
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.estado == "procesando"
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:
