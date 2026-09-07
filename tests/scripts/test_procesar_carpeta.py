@@ -57,7 +57,15 @@ def _resetear_fabrica_ejecutor():
     tareas._fabrica_ejecutor = None
 
 
-def _grupo_completo(directorio, sufijo: str):
+def _grupo_completo(
+    directorio,
+    sufijo: str,
+    *,
+    dni: str = "20555888",
+    nombre: str = "Ana Sintetica Grupo",
+    fecha_nac_lab: str = "05/05/1992",
+    fecha_nac_ecg: str = "05-MAY-1992",
+):
     """Los tres estudios de un mismo paciente sintético: un episodio completo.
 
     Prefijos numéricos en el nombre de archivo (no `lab-`/`ecg-`/`eco-` solos):
@@ -67,15 +75,29 @@ def _grupo_completo(directorio, sufijo: str):
     el puente que solo registra el laboratorio (con DNI) al resolverse primero
     (`resolutor_claves.py::resolver_claves`). Sin el prefijo, "ecg-" ordena antes
     que "lab-" y el ECG cae en `CLAVE_PII_NO_RESUELTA` antes de que el
-    laboratorio del mismo lote llegue a registrar el puente."""
+    laboratorio del mismo lote llegue a registrar el puente.
+
+    `dni`/`nombre`/`fecha_nac_*` son parametrizables (revisión adversarial):
+    antes `dni` estaba hardcodeado a "20555888" sin importar `sufijo`, así que
+    dos llamadas a esta función para "dos pacientes distintos" en realidad
+    describían AL MISMO paciente (mismo DNI -> mismo HMAC -> mismo
+    `id_paciente`). Un test que interpretó esa colisión de fixture como un
+    hallazgo de producción quedó corregido -- ver
+    `test_el_script_despacha_dos_pacientes_distintos_en_grupos_separados`.
+    `nombre`/`fecha_nac_*` también deben variar junto con `dni` para dos
+    pacientes genuinamente distintos: el ECG (sin DNI) resuelve su identidad
+    por nombre+fecha_nac contra el puente que dejó el laboratorio -- si dos
+    DNI distintos comparten nombre+fecha_nac, son homónimos para el
+    resolutor (`CLAVE_PII_AMBIGUA`), no personas distinguibles.
+    """
     return [
         documentos.escribir_pdf(
             directorio,
             f"01-lab-{sufijo}",
             documentos.texto_laboratorio(
-                nombre="Ana Sintetica Grupo",
-                dni="20555888",
-                fecha_nac="05/05/1992",
+                nombre=nombre,
+                dni=dni,
+                fecha_nac=fecha_nac_lab,
                 numero_peticion=f"PET-{sufijo}",
                 fecha="10/01/2024",
             ),
@@ -84,10 +106,10 @@ def _grupo_completo(directorio, sufijo: str):
             directorio,
             f"02-ecg-{sufijo}",
             documentos.texto_ecg(
-                nombre="Ana Sintetica Grupo",
+                nombre=nombre,
                 id_estudio=f"ECG-{sufijo}",
                 fecha="11-JAN-2024",
-                fecha_nac="05-MAY-1992",
+                fecha_nac=fecha_nac_ecg,
                 edad_anios=31,
                 sexo="Female",
             ),
@@ -96,8 +118,8 @@ def _grupo_completo(directorio, sufijo: str):
             directorio,
             f"03-eco-{sufijo}",
             documentos.texto_eco(
-                nombre="Ana Sintetica Grupo",
-                dni="20555888",
+                nombre=nombre,
+                dni=dni,
                 numero_estudio=f"ECO-{sufijo}",
                 fecha="12/01/2024",
             ),
@@ -150,18 +172,37 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     assert corrida.estado == EstadoCorrida.PROCESANDO.value
 
 
-def test_el_script_despacha_un_grupo_por_subcarpeta_no_la_carpeta_entera(
+def test_el_script_despacha_dos_pacientes_distintos_en_grupos_separados(
     tmp_path, motor: MotorPii, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """openspec `paralelismo-de-procesamiento` PR 2: el script usa
-    `lanzamiento.referencias` como una tupla de GRUPOS (uno por subcarpeta),
+    `lanzamiento.referencias` como un iterador de GRUPOS (uno por subcarpeta),
     y llama `procesar_grupo` una vez POR GRUPO -- no una sola vez con la
-    corrida entera. Con dos pacientes en subcarpetas separadas, `procesar_grupo`
-    tiene que ejecutarse dos veces, cada una con su propio lote de 3 documentos."""
+    corrida entera. Con dos pacientes GENUINAMENTE distintos (DNI distinto)
+    en subcarpetas separadas, `procesar_grupo` se ejecuta dos veces, cada una
+    con su propio lote de 3 documentos, y AMBOS terminan en éxito de forma
+    independiente.
+
+    Corrección de revisión adversarial: la versión anterior de este test
+    usaba `_grupo_completo` con el DNI hardcodeado (no parametrizado por
+    sufijo), así que "dos pacientes" eran en realidad EL MISMO paciente
+    (mismo DNI -> mismo HMAC -> mismo `id_paciente`, misma fecha -> mismo
+    `id_episodio`). El resultado observado entonces no era un hallazgo de
+    producción: era la fixture, no el código, produciendo una colisión de
+    identidad. Con DNI genuinamente distintos, el comportamiento correcto es
+    6 éxito, 0 cuarentena -- eso es lo que este test verifica ahora.
+    """
     (tmp_path / "paciente-1").mkdir()
     (tmp_path / "paciente-2").mkdir()
-    _grupo_completo(tmp_path / "paciente-1", "p1")
-    _grupo_completo(tmp_path / "paciente-2", "p2")
+    _grupo_completo(tmp_path / "paciente-1", "p1", dni="20555888", nombre="Ana Sintetica Uno")
+    _grupo_completo(
+        tmp_path / "paciente-2",
+        "p2",
+        dni="20666999",
+        nombre="Beatriz Sintetica Dos",
+        fecha_nac_lab="10/10/1985",
+        fecha_nac_ecg="10-OCT-1985",
+    )
 
     modulo = _cargar_script()
     engine = sa.create_engine("sqlite:///:memory:")
@@ -183,7 +224,65 @@ def test_el_script_despacha_un_grupo_por_subcarpeta_no_la_carpeta_entera(
 
     with Session(engine) as sesion:
         estudios = sesion.scalars(sa.select(Estudio)).all()
+        cuarentenas = sesion.scalars(sa.select(Cuarentena)).all()
     assert len(estudios) == 6, "particion exhaustiva: ambos pacientes se publican"
+    assert len(cuarentenas) == 0, "dos pacientes genuinamente distintos: ninguno va a cuarentena"
+
+
+def test_el_script_despacha_el_primer_grupo_antes_de_inventariar_los_siguientes(
+    tmp_path, motor: MotorPii, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Centinela de pereza a nivel de script (revisión adversarial, BAJO):
+    `LanzadorCorrida.lanzar()` ya tiene su propio test de pereza
+    (`test_lanzador_corrida.py`), pero nada garantizaba que
+    `scripts/procesar_carpeta.py::ejecutar` preservara esa pereza -- el
+    patrón `next()` + `itertools.chain` se puede "simplificar" a
+    `list(lanzamiento.referencias)` sin que ningún test existente lo note,
+    porque los tests anteriores sólo verifican el RESULTADO final, no CUÁNDO
+    se inventaría cada grupo.
+
+    Se espía `tareas.procesar_grupo` para capturar, en el momento exacto del
+    PRIMER despacho, cuántos archivos ya se hashearon -- si el script
+    materializara todo antes de despachar, ya estarían hasheados los 3
+    pacientes; si es perezoso, sólo el primero (más el lookahead mínimo de
+    `itertools.groupby`, igual que en `FuenteLocal.listar_grupos`)."""
+    from anonimizacion.ingesta.fuente import FuenteLocal
+
+    for indice, sufijo in enumerate(("p1", "p2", "p3")):
+        carpeta = tmp_path / f"paciente-{indice}"
+        carpeta.mkdir()
+        _grupo_completo(carpeta, sufijo, dni=f"2055500{indice}", nombre=f"Paciente Sintetico {indice}")
+
+    original_huella = FuenteLocal._calcular_huella
+    llamados: list[str] = []
+
+    def _huella_contada(ruta):
+        llamados.append(str(ruta))
+        return original_huella(ruta)
+
+    monkeypatch.setattr(FuenteLocal, "_calcular_huella", staticmethod(_huella_contada))
+
+    snapshot_en_primer_despacho: list[int] = []
+    original_procesar_grupo = tareas.procesar_grupo
+
+    def _procesar_grupo_espia(corrida_id, referencias):
+        if not snapshot_en_primer_despacho:
+            snapshot_en_primer_despacho.append(len(llamados))
+        return original_procesar_grupo(corrida_id, referencias)
+
+    modulo = _cargar_script()
+    monkeypatch.setattr(modulo.tareas, "procesar_grupo", _procesar_grupo_espia)
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 0
+    (hasheados_en_primer_despacho,) = snapshot_en_primer_despacho
+    assert hasheados_en_primer_despacho < len(llamados), (
+        "el script materializo todo el inventario antes de despachar el primer grupo -- "
+        "revisa que ejecutar() siga consumiendo lanzamiento.referencias de forma perezosa"
+    )
 
 
 def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
