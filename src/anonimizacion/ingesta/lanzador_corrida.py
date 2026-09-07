@@ -34,6 +34,7 @@ administrativa de las transiciones que sí ocurren de verdad.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
@@ -44,6 +45,47 @@ from anonimizacion.dominio.estados_corrida import EstadoCorrida
 
 from .fuente import FuenteLocal, SumideroCuarentena
 from .repositorio_corridas import RepositorioCorridas
+
+
+class _IteradorDeUnSoloUso:
+    """Salvaguarda estructural (revisión adversarial, MEDIO): el docstring de
+    `ResultadoLanzamiento.referencias` ya advertía que es de un solo uso, pero
+    nada impedía que un consumidor futuro lo iterara dos veces y perdiera
+    todos los grupos en silencio la segunda vez (un generador agotado
+    simplemente no produce nada más, sin avisar). Esto lo convierte en un
+    fallo ruidoso: la SEGUNDA vez que algo pide un iterador sobre esta
+    instancia -- via `iter(...)` o `next(...)` directo -- explota con
+    `RuntimeError` en vez de devolver una secuencia vacía silenciosa.
+
+    Deliberadamente NO resuelve el caso de que un consumidor guarde el
+    resultado de la PRIMERA `iter()` (el generador real, ya desenvuelto) y lo
+    reitere por su cuenta -- eso excede lo que una envoltura puede prevenir
+    sin materializar la secuencia, que es justo lo que este cambio evita. Es
+    una defensa barata contra el error más común (llamar `list(...)` o iterar
+    dos veces sobre el objeto que devolvió `lanzar()`), no una garantía total.
+    """
+
+    def __init__(self, generador: Iterator[tuple[dict[str, str], ...]]) -> None:
+        self._generador = generador
+        self._entregado = False
+
+    def _marcar_entregado_o_fallar(self) -> Iterator[tuple[dict[str, str], ...]]:
+        if self._entregado:
+            raise RuntimeError(
+                "ResultadoLanzamiento.referencias ya fue consumido -- es un iterador de "
+                "un solo uso (ver su docstring). Iterarlo una segunda vez perdería todos "
+                "los grupos en silencio (un generador agotado no produce nada más sin "
+                "avisar); se prefiere fallar ruidoso. Si necesitás la cuenta total, "
+                "contá mientras iterás la única vez que lo consumís."
+            )
+        self._entregado = True
+        return self._generador
+
+    def __iter__(self) -> Iterator[tuple[dict[str, str], ...]]:
+        return self._marcar_entregado_o_fallar()
+
+    def __next__(self) -> tuple[dict[str, str], ...]:
+        return next(self._marcar_entregado_o_fallar())
 
 
 @dataclass(frozen=True)
@@ -68,10 +110,32 @@ class CuarentenaDeCorrida:
 
 @dataclass(frozen=True)
 class ResultadoLanzamiento:
-    """Lo mínimo que necesita el despachador para encolar el grupo."""
+    """Lo mínimo que necesita el despachador para encolar los grupos.
+
+    `referencias` es un ITERADOR de GRUPOS -- no una tupla plana, y desde la
+    revisión adversarial que encontró el hallazgo crítico 2, tampoco una
+    tupla de grupos ya materializada. Cada grupo es a su vez una tupla de
+    referencias `{id_documento, uri, sha256}`, en la forma exacta que exige
+    `trabajadores.tareas.procesar_grupo`. Antes de este cambio la carpeta
+    entera viajaba como un solo lote (`tareas.py` documentaba "un paciente,
+    un episodio" de forma aspiracional, sin que ningún código lo garantizara
+    -- `procesar_lote` terminaba acumulando en RAM los resueltos de la
+    corrida completa). Ver `ingesta/fuente.py::FuenteLocal.listar_grupos`
+    para el criterio de agrupamiento real.
+
+    **Consumo de UN SOLO USO**: `referencias` es un generador, no una
+    colección. `list(resultado.referencias)` o iterarlo dos veces pierde
+    exactamente la propiedad que lo motiva -- si necesitás la cuenta total,
+    contá mientras iterás una única vez, no materialices para despues medir.
+    `LanzadorCorrida.lanzar()` hacía `list(fuente.listar_grupos())` ANTES de
+    construir esta tupla (revisión adversarial, hallazgo crítico 2): eso
+    retenía la partición completa en memoria antes de despachar el primer
+    grupo, mudando a este punto el mismo problema de RAM que motiva
+    `listar_grupos()`. Ver `LanzadorCorrida._inventariar_y_generar_referencias`
+    para cómo se resolvió."""
 
     corrida_id: str
-    referencias: tuple[dict[str, str], ...]
+    referencias: Iterator[tuple[dict[str, str], ...]]
 
 
 @dataclass(frozen=True)
@@ -112,23 +176,61 @@ class LanzadorCorrida:
             cuarentena=sumidero,
             **({"tope_bytes": self.tope_bytes} if self.tope_bytes is not None else {}),
         )
-        artefactos = list(fuente.listar())
-
-        documentos = [
-            DocumentoCorrida.inventariado(
-                corrida_id=corrida_id,
-                huella_contenido=artefacto.sha256,
-                ruta_autorizada=artefacto.uri,
-            )
-            for artefacto in artefactos
-        ]
-        self.repositorio.registrar_documentos(documentos, tamano_lote=self.tamano_lote_inventario)
-
-        referencias = tuple(
-            {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
-            for artefacto in artefactos
-        )
+        referencias = _IteradorDeUnSoloUso(self._inventariar_y_generar_referencias(fuente, corrida_id))
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
+
+    def _inventariar_y_generar_referencias(
+        self, fuente: FuenteLocal, corrida_id: str
+    ) -> Iterator[tuple[dict[str, str], ...]]:
+        """Genera las referencias GRUPO A GRUPO -- no materializa la partición
+        completa antes de despachar la primera (revisión adversarial,
+        hallazgo crítico 2: la versión anterior hacía
+        `grupos = list(fuente.listar_grupos())`, retenía TODA la partición en
+        memoria antes de que el llamador pudiera empezar a procesar el primer
+        grupo, mudando a este punto exacto el mismo problema de RAM que este
+        cambio existe para resolver).
+
+        El registro en `documento_corrida` (`RepositorioCorridas.registrar_documentos`)
+        se buffer-iza hasta `tamano_lote_inventario` documentos, no hasta el
+        final de la corrida entera: memoria acotada a un múltiplo chico y
+        constante de ese tamaño (el mismo tamaño de lote que ya usaba el
+        registro flat), nunca al tamaño del corpus. `entraron` (consumido por
+        el embudo vía `RepositorioCorridas`) sigue naciendo acá, en un solo
+        proceso -- lo único que cambia es CUÁNDO se persiste cada tramo del
+        inventario, no CUÁNTOS documentos entran en total.
+
+        Costo aceptado y explícito: antes, si `registrar_documentos` fallaba,
+        `lanzar()` completo fallaba ANTES de que el llamador pudiera despachar
+        ningún grupo (todo o nada). Ahora un grupo puede despacharse y
+        procesarse antes de que su propia fila `documento_corrida` esté
+        commiteada (se persiste cuando el buffer llega al tope, o al agotar
+        el generador). Si el proceso muere a mitad de una corrida, algunos
+        documentos ya escritos en `estudio`/`cuarentena` (con `corrida_id`
+        propio) pueden faltar en `documento_corrida` -- no se pierde ningún
+        documento clínico, sólo un renglón de trazabilidad administrativa
+        (la misma tabla que este módulo ya declara "trazabilidad
+        administrativa de las transiciones que sí ocurren de verdad", no la
+        autoridad de qué se publicó).
+        """
+        buffer: list[DocumentoCorrida] = []
+        for grupo in fuente.listar_grupos():
+            for artefacto in grupo:
+                buffer.append(
+                    DocumentoCorrida.inventariado(
+                        corrida_id=corrida_id,
+                        huella_contenido=artefacto.sha256,
+                        ruta_autorizada=artefacto.uri,
+                    )
+                )
+            if len(buffer) >= self.tamano_lote_inventario:
+                self.repositorio.registrar_documentos(buffer, tamano_lote=self.tamano_lote_inventario)
+                buffer = []
+            yield tuple(
+                {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
+                for artefacto in grupo
+            )
+        if buffer:
+            self.repositorio.registrar_documentos(buffer, tamano_lote=self.tamano_lote_inventario)
 
     def marcar_procesando(self, corrida_id: str) -> None:
         """Avanza `corrida_id` a `PROCESANDO` y persiste -- o falla ruidoso.

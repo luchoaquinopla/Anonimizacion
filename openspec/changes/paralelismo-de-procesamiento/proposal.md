@@ -162,6 +162,51 @@ un lote de 100k.
 | Cuarentena falsa por carrera en el puente de paciente | **Alta sin el punto 4** | Por eso el `IntegrityError` va en el **PR 1**, antes de que exista el segundo proceso. |
 | RAM: N copias de `es_core_news_lg` | Media | Tope duro `2 × núcleos`; se mide el pico antes de subir el default. |
 | RDS agota `max_connections` | Baja | `pool_size` explícito; presupuesto = N × `pool_size` + el panel. |
+| **Colisión de identidad entre grupos despachados por separado** | Media | **NO mitigado en este cambio.** Ver la sección dedicada abajo. |
+
+### Riesgo conocido, no mitigado en este cambio: colisión de identidad entre grupos
+
+Descubierto en revisión adversarial del PR 2, y deliberadamente dejado sin resolver acá tras un
+segundo round de revisión: la política que lo cerraría (una restricción de unicidad
+`(id_episodio, tipo_documento)` en `estudio`, más una verificación en escritura) **revierte el
+Requisito 7 de `openspec/changes/escritura-idempotente/specs/escritura-idempotente/spec.md`**
+("si un documento se corrige y se reprocesa... **MUST** escribirse como un documento nuevo"; "el
+sistema **MUST NOT** intentar decidir cuál de las dos versiones es la vigente") sin que ese
+requisito esté siendo enmendado en este cambio. Enmendar una spec RFC 2119 ratificada, con su
+propia Fase de implementación y su propio test de integración, no es una decisión que este PR
+pueda tomar unilateralmente — depende de si el instituto reemite informes corregidos, algo que
+sólo el usuario puede resolver con el codirector médico.
+
+**El escenario concreto, para que no se pierda:**
+
+1. `scripts/procesar_carpeta.py` despacha `procesar_grupo` una vez por subcarpeta (PR 2).
+2. El coordinador de completitud de episodio (`pipeline/coordinador_episodios.py`) sólo ve los
+   documentos de UN grupo a la vez — nunca puede comparar contra otro grupo ya despachado.
+3. Si dos carpetas distintas resuelven el MISMO `id_episodio` (mismo DNI separado en dos
+   carpetas por error del instituto, o un DNI mal tipeado que coincide con otro paciente), cada
+   grupo individualmente parece completo y válido.
+4. **La base termina con dos laboratorios (o dos ECG, o dos ecocardiogramas) bajo un mismo
+   episodio, sin que nadie se entere.** El primer grupo despachado publica su documento; el
+   segundo publica el suyo encima, silenciosamente, porque no hay ninguna restricción que lo
+   impida.
+
+Esto ya era estructuralmente posible antes del PR 2 (dos procesos concurrentes escribiendo el
+mismo episodio), pero era de probabilidad baja y estaba fuera del camino normal (un lote único
+por corrida hacía que el coordinador viera todo junto). El PR 2 lo vuelve **mucho más probable**,
+porque divide deliberadamente la corrida en unidades más chicas que el coordinador nunca ve
+juntas.
+
+**Qué se necesita para cerrarlo, y por qué no es parte de este cambio:**
+
+- Un cambio openspec propio que enmiende el Requisito 7 con el trade-off escrito explícitamente:
+  "corrección legítima" y "colisión de identidad real" son observacionalmente idénticas para la
+  base (mismo episodio, mismo tipo, distinta `clave_documento`) salvo que se investigue una señal
+  adicional no probada todavía (`fecha_estudio`: una corrección legítima probablemente conserva
+  la fecha original; una colisión real tendría fechas independientes — no se sabe si alcanza).
+- La implementación completa (migración + verificación en escritura + tests) ya existe, revisada
+  y verificada end-to-end contra el camino real (`scripts/procesar_carpeta.py`), en la rama
+  `feat/colision-de-identidad-entre-grupos` — sin PR abierto, a la espera de que el usuario decida
+  el trade-off de spec con el codirector médico.
 
 ## Plan de reversión
 

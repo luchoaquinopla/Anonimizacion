@@ -91,7 +91,22 @@ class ServicioCorridasReal:
     motor: Engine
 
     def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
+        """Crea la corrida e inventaría COMPLETO antes de responder.
+
+        `LanzadorCorrida.lanzar().referencias` es un generador de UN SOLO USO
+        (openspec `paralelismo-de-procesamiento` PR 2, revisión adversarial
+        hallazgo crítico 2): el registro en `documento_corrida` ocurre A
+        MEDIDA que se consume, grupo a grupo, no antes. Este servicio no
+        despacha ningún grupo -- el despachador de producción que encola
+        grupos sigue fuera de alcance, ver docstring del módulo -- así que
+        tiene que drenar el generador explícitamente él mismo, o el
+        inventario queda vacío y `embudo.entraron` miente en 0. Se descarta
+        el resultado a propósito: `consultar_corrida` ya relee el embudo real
+        desde la base.
+        """
         resultado = self.lanzador.lanzar(Path(ruta_autorizada))
+        for _ in resultado.referencias:
+            pass  # agota el generador: efecto secundario deseado es el registro en DB
         return self.consultar_corrida(resultado.corrida_id)
 
     def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:

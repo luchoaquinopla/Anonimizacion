@@ -157,6 +157,15 @@ def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) ->
     solo documento nunca contiene los tres tipos requeridos y terminaria mandando
     el 100 % a cuarentena.
 
+    Nota de honestidad (openspec `paralelismo-de-procesamiento` PR 2): esta
+    afirmacion era ASPIRACIONAL hasta este cambio -- ningun llamador de
+    produccion armaba "un grupo" real, `scripts/procesar_carpeta.py` le pasaba
+    la carpeta ENTERA (potencialmente ~400.000 documentos) en una sola llamada.
+    Quien construye el grupo real es `ingesta/fuente.py::FuenteLocal.listar_grupos()`
+    (una carpeta = un paciente, por subdirectorio inmediato) via
+    `LanzadorCorrida.lanzar()`; `scripts/procesar_carpeta.py` despacha esta tarea
+    una vez POR GRUPO, no una vez con la corrida entera.
+
     El mensaje transporta SOLO referencias -- `{id_documento, uri, sha256}` por
     documento, nunca contenido ni PII. Se transporta la lista y no la ruta del
     directorio a proposito: si el trabajador enumerara la carpeta, el `sha256` se

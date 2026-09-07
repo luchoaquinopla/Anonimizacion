@@ -43,9 +43,12 @@ class _CuarentenaFalsa:
 
 
 class _FuenteDobleCompleta:
-    """Doble mínimo que satisface `listar()` y `abrir()`."""
+    """Doble mínimo que satisface `listar()`, `listar_grupos()` y `abrir()`."""
 
     def listar(self) -> Iterator[ArtefactoCrudo]:
+        yield from ()
+
+    def listar_grupos(self) -> Iterator[tuple[ArtefactoCrudo, ...]]:
         yield from ()
 
     def abrir(self, artefacto: ArtefactoCrudo) -> BinaryIO:  # pragma: no cover - no se invoca
@@ -375,3 +378,167 @@ def test_fuente_local_abrir_rechaza_sha256_que_no_coincide_con_contenido_real(tm
 
     with pytest.raises(ValueError, match="sha256"):
         fuente.abrir(artefacto_falsificado)
+
+
+# --- Fase 6: `listar_grupos()` -- agrupamiento real (paralelismo-de-procesamiento PR 2) --
+
+
+def test_fuente_local_listar_grupos_un_grupo_por_subdirectorio_inmediato(tmp_path: Path) -> None:
+    """Criterio del instituto (reunión 2026-08-21): una carpeta por paciente."""
+    entrada = tmp_path / "entrada"
+    (entrada / "paciente-a").mkdir(parents=True)
+    (entrada / "paciente-b").mkdir(parents=True)
+    _crear_pdf_falso(entrada / "paciente-a" / "lab.pdf", b"contenido-a-lab")
+    _crear_pdf_falso(entrada / "paciente-a" / "ecg.pdf", b"contenido-a-ecg")
+    _crear_pdf_falso(entrada / "paciente-b" / "eco.pdf", b"contenido-b-eco")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    grupos = list(fuente.listar_grupos())
+
+    assert len(grupos) == 2
+    tamanos = sorted(len(grupo) for grupo in grupos)
+    assert tamanos == [1, 2]
+
+
+def test_fuente_local_listar_grupos_corpus_plano_es_un_solo_grupo(tmp_path: Path) -> None:
+    """Advertencia del proposal: si el corpus llega sin subcarpetas, el
+    agrupamiento real degrada a un solo grupo -- el paralelismo del tramo 3
+    rendiría cero, pero la partición sigue siendo correcta."""
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    _crear_pdf_falso(entrada / "uno.pdf", b"contenido-uno")
+    _crear_pdf_falso(entrada / "dos.pdf", b"contenido-dos")
+    _crear_pdf_falso(entrada / "tres.pdf", b"contenido-tres")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    grupos = list(fuente.listar_grupos())
+
+    assert len(grupos) == 1
+    assert len(grupos[0]) == 3
+
+
+def test_fuente_local_listar_grupos_corpus_plano_grande_no_se_trocea(tmp_path: Path) -> None:
+    """Centinela de correctitud (revisión adversarial, hallazgo crítico 2):
+    una versión anterior de esta función troceaba un corpus plano grande en
+    sub-grupos sintéticos de tamaño fijo para acotar RAM -- eso partía
+    pacientes entre dos cortes por orden alfabético de ruta, sin ningún
+    criterio clínico, y cada paciente partido terminaba en
+    `EPISODIO_INCOMPLETO` en ambos cortes. Se revirtió: un corpus plano,
+    sin importar cuántos archivos tenga, es SIEMPRE un solo grupo -- la
+    memoria no está acotada en ese caso degenerado, a propósito (ver
+    docstring del módulo). Si esto vuelve a fallar, alguien reintrodujo el
+    troceo sin agregar de nuevo esta protección."""
+    entrada = tmp_path / "entrada"
+    entrada.mkdir()
+    total_archivos = 1005  # mayor al viejo _TOPE_SUBGRUPO_RAIZ (1000), a propósito
+    for indice in range(total_archivos):
+        _crear_pdf_falso(entrada / f"doc-{indice:05d}.pdf", f"contenido-{indice}".encode())
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    grupos = list(fuente.listar_grupos())
+
+    assert len(grupos) == 1
+    assert len(grupos[0]) == total_archivos
+
+
+def test_fuente_local_listar_grupos_particion_es_disjunta_y_exhaustiva(tmp_path: Path) -> None:
+    """La invariante del embudo (`residuo = entraron - con_desenlace`) exige que
+    ningún documento se cuente dos veces ni se pierda: la unión de los grupos
+    debe ser exactamente igual al conjunto que devuelve `listar()`."""
+    entrada = tmp_path / "entrada"
+    (entrada / "paciente-a").mkdir(parents=True)
+    (entrada / "paciente-b").mkdir(parents=True)
+    _crear_pdf_falso(entrada / "suelto.pdf", b"contenido-suelto")
+    _crear_pdf_falso(entrada / "paciente-a" / "lab.pdf", b"contenido-a-lab")
+    _crear_pdf_falso(entrada / "paciente-b" / "eco.pdf", b"contenido-b-eco")
+
+    fuente_plana = FuenteLocal(raices=(entrada,), directorio=entrada)
+    shas_planos = {artefacto.sha256 for artefacto in fuente_plana.listar()}
+
+    fuente_agrupada = FuenteLocal(raices=(entrada,), directorio=entrada)
+    grupos = list(fuente_agrupada.listar_grupos())
+    shas_agrupados = [artefacto.sha256 for grupo in grupos for artefacto in grupo]
+
+    # Exhaustiva: la unión de los grupos cubre todo lo que ve `listar()`.
+    assert set(shas_agrupados) == shas_planos
+    # Disjunta: nada se cuenta dos veces entre grupos.
+    assert len(shas_agrupados) == len(set(shas_agrupados))
+
+
+def test_fuente_local_listar_grupos_hereda_tope_de_tamano_y_cuarentena(tmp_path: Path) -> None:
+    entrada = tmp_path / "entrada"
+    (entrada / "paciente-a").mkdir(parents=True)
+    _crear_pdf_falso(entrada / "paciente-a" / "grande.pdf", b"x" * 20)
+    sha_valido = _crear_pdf_falso(entrada / "paciente-a" / "chico.pdf", b"x" * 5)
+
+    cuarentena = _CuarentenaFalsa()
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada, tope_bytes=10, cuarentena=cuarentena)
+
+    (grupo,) = list(fuente.listar_grupos())
+
+    assert len(grupo) == 1
+    assert grupo[0].sha256 == sha_valido
+    assert len(cuarentena.errores) == 1
+
+
+def test_fuente_local_listar_grupos_hereda_dedup_por_contenido(tmp_path: Path) -> None:
+    """Gotcha documentado (design.md): la dedup es global a la enumeración --
+    un PDF idéntico repetido en dos carpetas se descarta en la segunda."""
+    entrada = tmp_path / "entrada"
+    (entrada / "paciente-a").mkdir(parents=True)
+    (entrada / "paciente-b").mkdir(parents=True)
+    _crear_pdf_falso(entrada / "paciente-a" / "original.pdf", b"contenido-repetido")
+    _crear_pdf_falso(entrada / "paciente-b" / "copia.pdf", b"contenido-repetido")
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    grupos = list(fuente.listar_grupos())
+
+    total = sum(len(grupo) for grupo in grupos)
+    assert total == 1
+
+
+def test_fuente_local_listar_grupos_valida_ansiosamente_sin_iterar(tmp_path: Path) -> None:
+    entrada_autorizada = tmp_path / "entrada"
+    entrada_autorizada.mkdir()
+    ruta_no_autorizada = tmp_path / "otra_entrada"
+    ruta_no_autorizada.mkdir()
+
+    fuente = FuenteLocal(raices=(entrada_autorizada,), directorio=ruta_no_autorizada)
+
+    with pytest.raises(PermissionError):
+        fuente.listar_grupos()
+
+
+def test_fuente_local_listar_grupos_es_perezoso_no_hashea_mas_de_lo_necesario(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No debe materializar la partición completa antes de entregar el primer
+    grupo -- perezoso, no ansioso (ver docstring del módulo y el gotcha de
+    `puerto-de-ingesta` sobre generadores perezosos).
+
+    `itertools.groupby` necesita mirar UN elemento del grupo siguiente para
+    saber que el grupo actual terminó (es inherente a cómo detecta el borde
+    de un grupo) -- por eso el tercer paciente ("paciente-c") nunca se toca,
+    pero un archivo de "paciente-b" sí, como lookahead mínimo."""
+    entrada = tmp_path / "entrada"
+    for nombre_paciente in ("paciente-a", "paciente-b", "paciente-c"):
+        carpeta = entrada / nombre_paciente
+        carpeta.mkdir(parents=True)
+        for indice in range(2):
+            _crear_pdf_falso(carpeta / f"doc{indice}.pdf", f"contenido-{nombre_paciente}-{indice}".encode())
+
+    original = FuenteLocal._calcular_huella
+    llamados: list[Path] = []
+
+    def _huella_contada(ruta: Path) -> str:
+        llamados.append(ruta)
+        return original(ruta)
+
+    monkeypatch.setattr(FuenteLocal, "_calcular_huella", staticmethod(_huella_contada))
+
+    fuente = FuenteLocal(raices=(entrada,), directorio=entrada)
+    iterador = fuente.listar_grupos()
+    next(iterador)
+
+    assert not any("paciente-c" in str(ruta) for ruta in llamados)
+    assert len(llamados) < 6  # 3 pacientes x 2 docs: no se hashea el corpus entero
