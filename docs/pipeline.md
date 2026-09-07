@@ -27,7 +27,6 @@ flowchart LR
     PSEUDO --> LINK["Vinculación<br/>±7 días por patient_id"]
 
     LINK --> PG[("Postgres<br/>relacional")]
-    LINK --> PARQUET[("Parquet<br/>entrenamiento DL")]
 ```
 
 **Lectura del diagrama**: los tres tipos de documento solo se tocan en su parser — todo lo que
@@ -206,27 +205,36 @@ El detalle completo de la comparación está en Engram
   - RabbitMQ como broker — Celery lo soporta, pero Redis alcanza para este volumen y ya se usa
     en otras partes del proyecto; se puede migrar sin cambiar la lógica de tareas si hiciera falta.
 
-### PostgreSQL (vía SQLAlchemy) + Parquet (vía PyArrow)
+### PostgreSQL (vía SQLAlchemy)
 
-- **Qué son**: PostgreSQL es la base relacional donde vive el catálogo de episodios, la tabla de
-  vinculación (`patient_link`) y los resultados normalizados. Parquet es un formato de archivo
-  columnar; PyArrow es la librería que lo lee/escribe desde Python.
-- **Cómo los usamos**: Postgres es el "sistema de registro" — impone integridad referencial sobre
+- **Qué es**: la base relacional donde vive el catálogo de episodios, la tabla de vinculación
+  (`patient_link`) y los resultados normalizados. Es la ÚNICA salida del pipeline — fuente de
+  verdad, no un destino entre varios.
+- **Cómo la usamos**: Postgres es el "sistema de registro" — impone integridad referencial sobre
   el linkage, que es la parte más delicada del diseño. El laboratorio, que tiene un panel de
   analitos variable, se modela en formato **largo/EAV** (`episodio, analito, valor, unidad,
-  referencia`) en vez de una columna por analito. Desde Postgres se exporta a Parquet particionado
-  (`tipo_documento/año`) como capa de consumo para el entrenamiento del modelo de deep learning.
+  referencia`) en vez de una columna por analito.
 - **Por qué**: la forma real del dato es mixta, no "documental" — ECG y ecocardiograma tienen
   esquema fijo, y lo único variable es qué analitos de laboratorio están presentes en cada caso,
   que es un problema clásico de tabla larga, no de documentos sin esquema. 100k registros es un
-  volumen trivial para Postgres. Parquet cubre lo que Postgres hace mal: lecturas columnares
-  repetidas, una por época de entrenamiento.
+  volumen trivial para Postgres.
 - **Alternativas descartadas**:
   - SQL con el laboratorio en tabla ancha (una columna por analito) — rechazado: extremadamente
     disperso (sparse) y requiere una migración de esquema cada vez que aparece un analito nuevo.
   - Base NoSQL documental (MongoDB) — absorbe la forma variable del laboratorio, pero sin
     validación de esquema, con los joins de vinculación resueltos en la aplicación (no en la base)
-    y con lecturas más lentas a 100k documentos para entrenamiento.
+    y con lecturas más lentas a 100k documentos.
+  - **Parquet vía PyArrow (eliminado en `chore/resolver-codigo-desconectado`)**: existió una
+    proyección columnar exportada desde Postgres (`salida/destinos/parquet.py`,
+    `salida/publicador_bundles.py`) pensada como capa de consumo para entrenamiento de un modelo de
+    deep learning. Nunca tuvo llamador de producción — ningún script ni el ejecutor del pipeline la
+    invocaba, solo sus propios tests — así que se retiró junto con `pyarrow` como dependencia. Si en
+    el futuro hace falta exportar a Parquet para entrenamiento, es una consulta de lectura sobre
+    Postgres (`pg_dump`, `COPY TO`, o un job de export batch), no una segunda ruta de escritura
+    paralela al pipeline: mantener una salida sin consumidor es superficie donde los defectos viven
+    sin que nadie los vea (ver el defecto de idempotencia documentado en
+    `openspec/changes/escritura-idempotente/`, que nunca importó en producción precisamente porque
+    nadie usaba esta salida).
 
 ### Pydantic
 

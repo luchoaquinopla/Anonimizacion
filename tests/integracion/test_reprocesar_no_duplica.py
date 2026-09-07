@@ -1,21 +1,21 @@
-"""Los dos defectos de `escritura-idempotente`, cerrados de punta a punta.
+"""El defecto de duplicación de `escritura-idempotente`, cerrado de punta a punta.
 
-El primero era duplicación: procesar el mismo documento N veces dejaba N filas.
-El segundo era pérdida: publicar un episodio de tres documentos dejaba uno solo.
+Procesar el mismo documento N veces dejaba N filas. El camino se ejercita **por
+la raíz de composición de producción** (`tareas.construir_fabrica_ejecutor`),
+no armando el ejecutor a mano. Ésa es la lección de un bug anterior de este
+repo: un test que ensambla su propio cableado valida algo que producción no
+usa.
 
-El camino de la duplicación se ejercita **por la raíz de composición de
-producción** (`tareas.construir_fabrica_ejecutor`), no armando el ejecutor a
-mano. Ésa es la lección de un bug anterior de este repo: un test que ensambla su
-propio cableado valida algo que producción no usa.
+Nota (`chore/resolver-codigo-desconectado`): este archivo tenía un cuarto test
+sobre `PublicadorBundles`/`EscritorParquet` (la pérdida de documentos al
+publicar un episodio). Se eliminó junto con esos módulos: no tenían llamador
+de producción -- ver `docs/pipeline.md`.
 """
 from __future__ import annotations
 
 import os
-import tempfile
 from datetime import date
-from pathlib import Path
 
-import pyarrow.parquet as pq
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
@@ -26,10 +26,8 @@ from anonimizacion.dominio.tipos_documento import TipoDocumento  # noqa: E402
 from anonimizacion.pii.motor import MotorPii  # noqa: E402
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves  # noqa: E402
 from anonimizacion.salida.cuarentena import EscritorCuarentena  # noqa: E402
-from anonimizacion.salida.destinos.parquet import EscritorParquet  # noqa: E402
 from anonimizacion.salida.destinos.postgres import EscritorPostgres  # noqa: E402
 from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio  # noqa: E402
-from anonimizacion.salida.publicador_bundles import PublicadorBundles  # noqa: E402
 from anonimizacion.trabajadores import tareas  # noqa: E402
 
 from ..fixtures.v1 import documentos  # noqa: E402
@@ -161,46 +159,6 @@ def test_reprocesar_el_mismo_grupo_no_duplica_la_cuarentena(tmp_path, motor: Mot
 
     assert len(filas) == 1, "reprocesar la misma corrida no debe duplicar el apartado"
     assert filas[0].corrida_id == "corrida-idem-cuarentena"
-
-
-def test_publicar_un_episodio_de_tres_documentos_los_conserva_a_los_tres() -> None:
-    """Antes del arreglo sobrevivia uno solo: `escribir_episodio` sobrescribia."""
-    base = Path(tempfile.mkdtemp())
-    publicador = PublicadorBundles(base / "bundles", EscritorParquet(base / "parquet"))
-
-    registros = [
-        RegistroAnonimizado(
-            id_paciente="pid-1",
-            id_episodio="ep-1",
-            tipo_documento=tipo,
-            version_esquema=1,
-            fecha_estudio=date(2024, 1, 10),
-            contenido=None,
-            clave_documento=clave,
-        )
-        for tipo, clave in (
-            (TipoDocumento.ECG, "clave-sintetica-ecg"),
-            (TipoDocumento.LABORATORIO, "clave-sintetica-lab"),
-            (TipoDocumento.ECOCARDIOGRAMA, "clave-sintetica-eco"),
-        )
-    ]
-
-    publicador.publicar(registros, version_pipeline="v1")
-
-    filas = pq.read_table(base / "parquet" / "episodios" / "ep-1.parquet").to_pylist()
-    assert len(filas) == 3
-    assert sorted(fila["tipo_documento"] for fila in filas) == [
-        "ecg",
-        "ecocardiograma",
-        "laboratorio",
-    ]
-
-    # Republicar no agrega ni pierde nada.
-    publicador.publicar(registros, version_pipeline="v1")
-    filas_tras_republicar = pq.read_table(
-        base / "parquet" / "episodios" / "ep-1.parquet"
-    ).to_pylist()
-    assert len(filas_tras_republicar) == 3
 
 
 def test_un_documento_corregido_entra_como_documento_nuevo() -> None:
