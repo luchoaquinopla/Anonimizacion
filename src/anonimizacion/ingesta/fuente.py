@@ -39,21 +39,29 @@ _TOPE_BYTES_PROVISIONAL = 50 * 1024 * 1024
 # directamente bajo la raíz, sin subcarpeta propia (corpus plano o sueltos
 # mezclados con carpetas -- ver docstring de `listar_grupos`).
 _CLAVE_RAIZ = "__raiz__"
+# Tope de artefactos por sub-grupo SINTÉTICO bajo `_CLAVE_RAIZ` (revisión
+# adversarial, hallazgo alto): sin este tope, un corpus plano de N archivos
+# sueltos hashea los N antes de entregar el único grupo -- `itertools.groupby`
+# necesita agotar el resto del flujo para saber que la clave constante no
+# cambia. Eso anula el objetivo de memoria acotada de este módulo exactamente
+# en el escenario que el proposal marca como incierto (corpus sin
+# subcarpetas). Estos sub-grupos NO representan pacientes -- son cortes de
+# tamaño fijo sin ningún criterio clínico, puramente para acotar RAM. La
+# validación de completitud de episodio ya podía fallar en un corpus plano
+# (no hay forma de saber dónde empieza/termina un paciente sin subcarpetas);
+# trocear no empeora esa incertidumbre, sólo evita que además reviente la
+# memoria.
+_TOPE_SUBGRUPO_RAIZ = 1000
 
-
-@dataclass(frozen=True)
-class GrupoArtefactos:
-    """Partición de `listar()` en unidades de trabajo (spec
-    `procesamiento-por-grupo`, openspec `paralelismo-de-procesamiento`).
-
-    `id_grupo` es un HASH, nunca la ruta ni el nombre de la subcarpeta: el
-    nombre de carpeta puede llevar PII (nombre del paciente), igual que la
-    `uri` de un `ArtefactoCrudo` apartado por sobretamaño
-    (`_apartar_por_sobretamano`, más abajo).
-    """
-
-    id_grupo: str
-    artefactos: tuple[ArtefactoCrudo, ...]
+# Un "grupo" es una tupla de artefactos que comparten agrupamiento (spec
+# `procesamiento-por-grupo`, openspec `paralelismo-de-procesamiento`). No es
+# una clase propia: la revisión adversarial encontró que un `id_grupo`
+# hasheado (versión anterior de este módulo) no tenía ningún llamador de
+# producción -- sólo lo tocaban tests. Se elimina en vez de mergear código
+# muerto; si una necesidad real de identificar grupos aparece (por ejemplo,
+# para llevar la cuenta de futuros en el `ProcessPoolExecutor` del tramo 3),
+# se reintroduce entonces, con su llamador en el mismo cambio.
+_GrupoArtefactos = tuple[ArtefactoCrudo, ...]
 
 
 @runtime_checkable
@@ -69,7 +77,7 @@ class FuenteDeArtefactos(Protocol):
         el inicio del procesamiento hasta terminar de inventariar todo)."""
         ...
 
-    def listar_grupos(self) -> Iterator[GrupoArtefactos]:
+    def listar_grupos(self) -> Iterator[_GrupoArtefactos]:
         """Partición disjunta y exhaustiva de `listar()` en grupos -- el
         criterio de agrupamiento lo define el adaptador (para `FuenteLocal`,
         el subdirectorio inmediato). Perezoso igual que `listar()`: un
@@ -208,7 +216,7 @@ class FuenteLocal:
                 continue
             yield ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato)
 
-    def listar_grupos(self) -> Iterator[GrupoArtefactos]:
+    def listar_grupos(self) -> Iterator[_GrupoArtefactos]:
         """Agrupa `listar()` por subdirectorio inmediato bajo `directorio`.
 
         Criterio del instituto (reunión 2026-08-21, citada en el proposal
@@ -218,36 +226,50 @@ class FuenteLocal:
         hecho confirmado.
 
         Perezoso, no ansioso: reutiliza `_listar_generador`, que ya produce
-        artefactos ordenados por ruta completa (`sorted(rglob(...))`). Ese
-        orden hace que todo el subárbol de una misma subcarpeta quede
-        contiguo en el flujo -- el separador de path ('/', 0x2F en ASCII)
-        ordena antes que cualquier caracter de nombre de archivo o carpeta,
-        así que dos subcarpetas nunca intercalan sus artefactos entre sí.
-        Eso permite agrupar con `itertools.groupby` sin materializar la
-        partición completa: cada grupo se cierra y se entrega apenas cambia
-        la clave, nunca se retiene más de un grupo en memoria a la vez (es
-        exactamente la propiedad que evita que `procesar_lote` acumule en
-        RAM los resueltos de la corrida entera).
+        artefactos ordenados por ruta completa (`sorted(rglob(...))`). La
+        contigüidad de una misma subcarpeta en ese orden NO viene de que el
+        separador de path ordene como un caracter especial -- `sorted()`
+        sobre `Path` compara TUPLAS de partes (`PurePath._cparts`), no el
+        string crudo. Lo que garantiza la contigüidad es una propiedad más
+        simple del orden lexicográfico de tuplas: todas las rutas que
+        comparten el mismo primer elemento quedan agrupadas entre sí, sin
+        importar qué venga después. Dos subcarpetas nunca intercalan sus
+        artefactos entre sí por esa razón. Eso permite agrupar con
+        `itertools.groupby` sin materializar la partición completa: cada
+        grupo se cierra y se entrega apenas cambia la clave, nunca se retiene
+        más de un grupo en memoria a la vez (es exactamente la propiedad que
+        evita que `procesar_lote` acumule en RAM los resueltos de la corrida
+        entera).
 
         Corpus plano (honesto sobre la incertidumbre real -- ver proposal.md
         "Antes de leer"): si no hay subcarpetas, todos los archivos sueltos
-        bajo `directorio` comparten la clave sentinel `_CLAVE_RAIZ` y, al no
-        haber ninguna subcarpeta que los separe, forman un único grupo
-        contiguo. El paralelismo del tramo 3 rendiría cero en ese caso -- es
-        el comportamiento esperado, no un bug de esta función.
+        bajo `directorio` comparten la clave sentinel `_CLAVE_RAIZ`. Sin nada
+        más, `itertools.groupby` tendría que agotar TODO el resto del listado
+        para confirmar que la clave constante no cambia -- exactamente el
+        problema de memoria que este módulo existe para evitar, resucitado
+        para el escenario que el proposal marca como incierto. Por eso ese
+        caso se trocea en sub-grupos SINTÉTICOS de a lo sumo
+        `_TOPE_SUBGRUPO_RAIZ` artefactos (ver `_trocear`): no representan
+        pacientes, son cortes de tamaño fijo sin ningún criterio clínico. El
+        paralelismo del tramo 3 rendiría igual de mal en ese caso (los cortes
+        no respetan episodios) -- lo que este chunking preserva es sólo el
+        acotamiento de RAM, no la correctud de la agrupación clínica, que ya
+        era imposible de garantizar sin subcarpetas.
 
         Advertencia documentada, no maquillada: en un corpus MIXTO -- algunas
         subcarpetas y ADEMÁS archivos sueltos intercalados alfabéticamente
         entre ellas -- los archivos sueltos pueden partirse en más de un
         grupo con la misma clave sentinel, si una subcarpeta los separa en el
-        orden alfabético. La partición sigue siendo disjunta y exhaustiva
-        (ningún archivo se pierde ni se cuenta dos veces: cada `ArtefactoCrudo`
-        que `listar()` produce cae en EXACTAMENTE un grupo), sólo dejan de
-        terminar todos con el mismo `id_grupo`. El corpus real descripto por
-        el instituto no tiene esa mezcla (o todo tiene subcarpetas, o nada
-        las tiene); resolver el caso mixto exigiría des-perezar la función
-        (acumular todos los archivos sueltos hasta agotar el listado), y no
-        hay hoy ningún corpus real que lo requiera.
+        orden alfabético (además del troceo por tamaño de arriba). La
+        partición sigue siendo disjunta y exhaustiva (ningún archivo se
+        pierde ni se cuenta dos veces: cada `ArtefactoCrudo` que `listar()`
+        produce cae en EXACTAMENTE un grupo), sólo dejan de agruparse todos
+        los sueltos entre sí. El corpus real descripto por el instituto no
+        tiene esa mezcla (o todo tiene subcarpetas, o nada las tiene); si
+        además los sueltos fueran del mismo paciente, la validación de
+        completitud de episodio (`pipeline/coordinador_episodios.py`) los
+        vería como grupos independientes incompletos -- riesgo que no se
+        resuelve acá porque no hay hoy ningún corpus real que lo ejercite.
         """
         ruta_raiz = self.directorio.resolve()
         if not ruta_raiz.is_dir():
@@ -256,20 +278,29 @@ class FuenteLocal:
             raise PermissionError("la ruta de ingesta no esta autorizada")
         return self._listar_grupos_generador(ruta_raiz)
 
-    def _listar_grupos_generador(self, ruta_raiz: Path) -> Iterator[GrupoArtefactos]:
+    def _listar_grupos_generador(self, ruta_raiz: Path) -> Iterator[_GrupoArtefactos]:
         def _clave(artefacto: ArtefactoCrudo) -> str:
             partes = Path(artefacto.uri).relative_to(ruta_raiz).parts
             return partes[0] if len(partes) > 1 else _CLAVE_RAIZ
 
         for clave, artefactos_del_grupo in itertools.groupby(self._listar_generador(ruta_raiz), key=_clave):
-            artefactos = tuple(artefactos_del_grupo)
-            # Hash de la clave de agrupamiento (subcarpeta o sentinel de raíz)
-            # junto con la `uri` del primer artefacto: nunca la ruta cruda
-            # (design.md `procesamiento-por-grupo`, Decisión 2 -- el nombre de
-            # carpeta puede ser PII), y distingue dos instancias de grupo que
-            # compartieran la misma clave (ver advertencia del corpus mixto).
-            id_grupo = hashlib.sha256(f"{clave}:{artefactos[0].uri}".encode("utf-8")).hexdigest()
-            yield GrupoArtefactos(id_grupo=id_grupo, artefactos=artefactos)
+            if clave == _CLAVE_RAIZ:
+                yield from self._trocear(artefactos_del_grupo, _TOPE_SUBGRUPO_RAIZ)
+            else:
+                yield tuple(artefactos_del_grupo)
+
+    @staticmethod
+    def _trocear(artefactos: Iterator[ArtefactoCrudo], tamano: int) -> Iterator[_GrupoArtefactos]:
+        """Parte un iterador perezoso en tuplas de a lo sumo `tamano` -- sin
+        acumular más de un trozo en memoria a la vez."""
+        trozo: list[ArtefactoCrudo] = []
+        for artefacto in artefactos:
+            trozo.append(artefacto)
+            if len(trozo) >= tamano:
+                yield tuple(trozo)
+                trozo = []
+        if trozo:
+            yield tuple(trozo)
 
     def _apartar_por_sobretamano(self, ruta: Path, tamano_bytes: int) -> None:
         # `id_documento` es el sha256 de la RUTA, no del contenido: el nombre

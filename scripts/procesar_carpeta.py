@@ -44,6 +44,7 @@ que los ejecutara fuera de la suite.
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 from collections import Counter
 from pathlib import Path
@@ -125,7 +126,15 @@ def ejecutar(
     print(f"Lanzando corrida sobre {entrada}...", file=sys.stderr)
     lanzamiento = lanzador.lanzar(entrada)
 
-    if not lanzamiento.referencias:
+    # `lanzamiento.referencias` es un GENERADOR de un solo uso (openspec
+    # `paralelismo-de-procesamiento` PR 2, revisión adversarial hallazgo
+    # crítico 2): ni `len()` ni un `bool()` directo funcionan sin consumirlo,
+    # y consumirlo dos veces (una para contar, otra para despachar) lo
+    # agotaría antes de procesar nada. `next(..., None)` extrae el primer
+    # grupo -- o confirma que no hay ninguno -- sin renunciar a la pereza.
+    iterador_grupos = iter(lanzamiento.referencias)
+    primer_grupo = next(iterador_grupos, None)
+    if primer_grupo is None:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
         return 1
 
@@ -136,12 +145,7 @@ def ejecutar(
     # `procesar_grupo` a continuación, así que es quien debe marcarlo.
     lanzador.marcar_procesando(lanzamiento.corrida_id)
 
-    total_documentos = sum(len(grupo) for grupo in lanzamiento.referencias)
-    print(
-        f"Corrida {lanzamiento.corrida_id}: procesando {total_documentos} documento(s) "
-        f"en {len(lanzamiento.referencias)} grupo(s)...",
-        file=sys.stderr,
-    )
+    print(f"Corrida {lanzamiento.corrida_id}: procesando por grupo...", file=sys.stderr)
     # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
     # PR 2 -- el PR 3 paraleliza esto mismo con `ProcessPoolExecutor`, todavía
     # no acá). `procesar_grupo` es la MISMA tarea Celery real que despachara
@@ -150,12 +154,18 @@ def ejecutar(
     # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
     # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
     # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una
-    # vez POR GRUPO acota ese pico al tamaño de un grupo (un paciente), sin
+    # vez POR GRUPO, iterando el generador en una sola pasada (nunca contando
+    # de antemano), acota ese pico al tamaño de un grupo (un paciente) sin
     # cambiar el resultado: cada grupo sigue siendo un lote independiente con
     # su propio aislamiento de fallo.
     resultados: list[dict[str, object]] = []
-    for grupo in lanzamiento.referencias:
+    total_documentos = 0
+    total_grupos = 0
+    for grupo in itertools.chain([primer_grupo], iterador_grupos):
+        total_documentos += len(grupo)
+        total_grupos += 1
         resultados.extend(tareas.procesar_grupo(lanzamiento.corrida_id, grupo))
+    print(f"Corrida {lanzamiento.corrida_id}: {total_documentos} documento(s) en {total_grupos} grupo(s).", file=sys.stderr)
 
     exitos = [r for r in resultados if r["estado"] == "exito"]
     fallos = [r for r in resultados if r["estado"] != "exito"]

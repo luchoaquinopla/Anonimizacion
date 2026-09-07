@@ -36,11 +36,21 @@ def _pdf(directorio, nombre: str, contenido: bytes) -> None:
     (directorio / nombre).write_bytes(contenido)
 
 
+def _materializar(resultado) -> list[tuple[dict, ...]]:
+    """`resultado.referencias` es un ITERADOR de grupos de UN SOLO USO
+    (revisión adversarial, hallazgo crítico 2 -- ya no es ni siquiera una
+    tupla materializada). Los tests SÍ pueden pagar el costo de
+    materializarlo una vez para poder asertar `len()`/indexar varias veces
+    sobre el resultado -- lo que no puede hacer es el LLAMADOR DE PRODUCCIÓN
+    (`scripts/procesar_carpeta.py`), que consume cada grupo a medida que lo
+    despacha. Ver docstring de `ResultadoLanzamiento`."""
+    return list(resultado.referencias)
+
+
 def _aplanar(resultado) -> list[dict]:
-    """`resultado.referencias` es ahora una tupla de grupos (cada uno una
-    tupla de referencias) -- no una tupla plana. Ver docstring de
-    `ResultadoLanzamiento` y openspec `paralelismo-de-procesamiento`."""
-    return [referencia for grupo in resultado.referencias for referencia in grupo]
+    """Igual que `_materializar`, pero además aplana los grupos en una sola
+    lista de referencias -- para tests que sólo necesitan el conteo total."""
+    return [referencia for grupo in _materializar(resultado) for referencia in grupo]
 
 
 def _motor_con_esquema():
@@ -59,12 +69,13 @@ def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) ->
     lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
 
     resultado = lanzador.lanzar(tmp_path)
-    referencias = _aplanar(resultado)
+    grupos = _materializar(resultado)
+    referencias = [referencia for grupo in grupos for referencia in grupo]
 
     assert resultado.corrida_id
     # Ambos PDFs quedan sueltos directamente bajo `tmp_path` (sin subcarpeta
     # propia): forman UN solo grupo, corpus plano (ver `listar_grupos`).
-    assert len(resultado.referencias) == 1
+    assert len(grupos) == 1
     assert len(referencias) == 2
     assert all(set(referencia) == {"id_documento", "uri", "sha256"} for referencia in referencias)
 
@@ -84,7 +95,9 @@ def test_lanzar_dos_veces_produce_dos_corridas_independientes(tmp_path) -> None:
     lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
 
     primero = lanzador.lanzar(tmp_path)
+    _materializar(primero)  # drena el generador: dispara el registro en DB (ver docstring)
     segundo = lanzador.lanzar(tmp_path)
+    _materializar(segundo)
 
     assert primero.corrida_id != segundo.corrida_id
     with Session(motor) as sesion:
@@ -149,12 +162,13 @@ def test_lanzar_agrupa_por_subdirectorio_y_la_particion_es_disjunta(tmp_path) ->
     lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
 
     resultado = lanzador.lanzar(tmp_path)
+    grupos = _materializar(resultado)
 
-    assert len(resultado.referencias) == 2
-    tamanos = sorted(len(grupo) for grupo in resultado.referencias)
+    assert len(grupos) == 2
+    tamanos = sorted(len(grupo) for grupo in grupos)
     assert tamanos == [1, 2]
 
-    ids_documento = [referencia["id_documento"] for grupo in resultado.referencias for referencia in grupo]
+    ids_documento = [referencia["id_documento"] for grupo in grupos for referencia in grupo]
     assert len(ids_documento) == len(set(ids_documento)), "particion disjunta: sin duplicados entre grupos"
 
     with Session(motor) as sesion:
@@ -162,6 +176,44 @@ def test_lanzar_agrupa_por_subdirectorio_y_la_particion_es_disjunta(tmp_path) ->
             sa.select(DocumentoCorridaOrm).where(DocumentoCorridaOrm.corrida_id == resultado.corrida_id)
         ).all()
     assert len(documentos) == 3, "particion exhaustiva: el inventario sigue viendo los 3 documentos"
+
+
+def test_lanzar_es_perezoso_no_materializa_la_particion_completa(
+    tmp_path, monkeypatch
+) -> None:
+    """Revisión adversarial, hallazgo crítico 2: `lanzar()` hacía
+    `grupos = list(fuente.listar_grupos())` antes de devolver
+    `ResultadoLanzamiento` -- retenía la partición COMPLETA en memoria antes
+    de que el llamador pudiera despachar el primer grupo, mudando a este
+    punto el mismo problema de RAM que `listar_grupos()` resuelve. Consumir
+    sólo el primer grupo de `resultado.referencias` NO debe hashear los
+    archivos de carpetas posteriores (salvo el lookahead mínimo de
+    `itertools.groupby`, igual que en `FuenteLocal.listar_grupos`)."""
+    from anonimizacion.ingesta.fuente import FuenteLocal
+
+    for nombre_paciente in ("paciente-a", "paciente-b", "paciente-c"):
+        carpeta = tmp_path / nombre_paciente
+        carpeta.mkdir()
+        for indice in range(2):
+            _pdf(carpeta, f"doc{indice}.pdf", f"contenido-{nombre_paciente}-{indice}".encode())
+
+    original = FuenteLocal._calcular_huella
+    llamados: list[str] = []
+
+    def _huella_contada(ruta):
+        llamados.append(str(ruta))
+        return original(ruta)
+
+    monkeypatch.setattr(FuenteLocal, "_calcular_huella", staticmethod(_huella_contada))
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+    next(resultado.referencias)  # consumir SOLO el primer grupo
+
+    assert not any("paciente-c" in ruta for ruta in llamados)
 
 
 def test_cuarentena_de_corrida_estampa_corrida_id_sin_pisar_el_resto_del_error() -> None:

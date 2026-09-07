@@ -34,6 +34,7 @@ administrativa de las transiciones que sí ocurren de verdad.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
@@ -70,18 +71,30 @@ class CuarentenaDeCorrida:
 class ResultadoLanzamiento:
     """Lo mínimo que necesita el despachador para encolar los grupos.
 
-    `referencias` es una tupla de GRUPOS -- no una tupla plana (openspec
-    `paralelismo-de-procesamiento` PR 2): cada grupo es a su vez una tupla de
+    `referencias` es un ITERADOR de GRUPOS -- no una tupla plana, y desde la
+    revisión adversarial que encontró el hallazgo crítico 2, tampoco una
+    tupla de grupos ya materializada. Cada grupo es a su vez una tupla de
     referencias `{id_documento, uri, sha256}`, en la forma exacta que exige
     `trabajadores.tareas.procesar_grupo`. Antes de este cambio la carpeta
     entera viajaba como un solo lote (`tareas.py` documentaba "un paciente,
     un episodio" de forma aspiracional, sin que ningún código lo garantizara
     -- `procesar_lote` terminaba acumulando en RAM los resueltos de la
     corrida completa). Ver `ingesta/fuente.py::FuenteLocal.listar_grupos`
-    para el criterio de agrupamiento real."""
+    para el criterio de agrupamiento real.
+
+    **Consumo de UN SOLO USO**: `referencias` es un generador, no una
+    colección. `list(resultado.referencias)` o iterarlo dos veces pierde
+    exactamente la propiedad que lo motiva -- si necesitás la cuenta total,
+    contá mientras iterás una única vez, no materialices para despues medir.
+    `LanzadorCorrida.lanzar()` hacía `list(fuente.listar_grupos())` ANTES de
+    construir esta tupla (revisión adversarial, hallazgo crítico 2): eso
+    retenía la partición completa en memoria antes de despachar el primer
+    grupo, mudando a este punto el mismo problema de RAM que motiva
+    `listar_grupos()`. Ver `LanzadorCorrida._inventariar_y_generar_referencias`
+    para cómo se resolvió."""
 
     corrida_id: str
-    referencias: tuple[tuple[dict[str, str], ...], ...]
+    referencias: Iterator[tuple[dict[str, str], ...]]
 
 
 @dataclass(frozen=True)
@@ -122,39 +135,61 @@ class LanzadorCorrida:
             cuarentena=sumidero,
             **({"tope_bytes": self.tope_bytes} if self.tope_bytes is not None else {}),
         )
-        # Agrupamiento real (openspec `paralelismo-de-procesamiento` PR 2):
-        # `listar_grupos()` particiona por subdirectorio inmediato -- una
-        # carpeta por paciente, según el criterio del instituto (ver su
-        # docstring para la incertidumbre honesta sobre el corpus real).
-        # Se materializa en una lista igual que antes se hacía con
-        # `list(fuente.listar())`: el inventario sigue siendo una sola
-        # pasada, en un solo proceso, y de acá sale `entraron`
-        # (`RepositorioCorridas.registrar_documentos`) -- ese contrato no
-        # cambia. Lo que cambia es que la estructura resultante conserva la
-        # partición por grupo en vez de aplanarla, para que el llamador
-        # (`scripts/procesar_carpeta.py`) pueda despachar un grupo a la vez
-        # en vez de pasarle la corrida entera a `procesar_grupo`.
-        grupos = list(fuente.listar_grupos())
-
-        documentos = [
-            DocumentoCorrida.inventariado(
-                corrida_id=corrida_id,
-                huella_contenido=artefacto.sha256,
-                ruta_autorizada=artefacto.uri,
-            )
-            for grupo in grupos
-            for artefacto in grupo.artefactos
-        ]
-        self.repositorio.registrar_documentos(documentos, tamano_lote=self.tamano_lote_inventario)
-
-        referencias = tuple(
-            tuple(
-                {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
-                for artefacto in grupo.artefactos
-            )
-            for grupo in grupos
-        )
+        referencias = self._inventariar_y_generar_referencias(fuente, corrida_id)
         return ResultadoLanzamiento(corrida_id=corrida_id, referencias=referencias)
+
+    def _inventariar_y_generar_referencias(
+        self, fuente: FuenteLocal, corrida_id: str
+    ) -> Iterator[tuple[dict[str, str], ...]]:
+        """Genera las referencias GRUPO A GRUPO -- no materializa la partición
+        completa antes de despachar la primera (revisión adversarial,
+        hallazgo crítico 2: la versión anterior hacía
+        `grupos = list(fuente.listar_grupos())`, retenía TODA la partición en
+        memoria antes de que el llamador pudiera empezar a procesar el primer
+        grupo, mudando a este punto exacto el mismo problema de RAM que este
+        cambio existe para resolver).
+
+        El registro en `documento_corrida` (`RepositorioCorridas.registrar_documentos`)
+        se buffer-iza hasta `tamano_lote_inventario` documentos, no hasta el
+        final de la corrida entera: memoria acotada a un múltiplo chico y
+        constante de ese tamaño (el mismo tamaño de lote que ya usaba el
+        registro flat), nunca al tamaño del corpus. `entraron` (consumido por
+        el embudo vía `RepositorioCorridas`) sigue naciendo acá, en un solo
+        proceso -- lo único que cambia es CUÁNDO se persiste cada tramo del
+        inventario, no CUÁNTOS documentos entran en total.
+
+        Costo aceptado y explícito: antes, si `registrar_documentos` fallaba,
+        `lanzar()` completo fallaba ANTES de que el llamador pudiera despachar
+        ningún grupo (todo o nada). Ahora un grupo puede despacharse y
+        procesarse antes de que su propia fila `documento_corrida` esté
+        commiteada (se persiste cuando el buffer llega al tope, o al agotar
+        el generador). Si el proceso muere a mitad de una corrida, algunos
+        documentos ya escritos en `estudio`/`cuarentena` (con `corrida_id`
+        propio) pueden faltar en `documento_corrida` -- no se pierde ningún
+        documento clínico, sólo un renglón de trazabilidad administrativa
+        (la misma tabla que este módulo ya declara "trazabilidad
+        administrativa de las transiciones que sí ocurren de verdad", no la
+        autoridad de qué se publicó).
+        """
+        buffer: list[DocumentoCorrida] = []
+        for grupo in fuente.listar_grupos():
+            for artefacto in grupo:
+                buffer.append(
+                    DocumentoCorrida.inventariado(
+                        corrida_id=corrida_id,
+                        huella_contenido=artefacto.sha256,
+                        ruta_autorizada=artefacto.uri,
+                    )
+                )
+            if len(buffer) >= self.tamano_lote_inventario:
+                self.repositorio.registrar_documentos(buffer, tamano_lote=self.tamano_lote_inventario)
+                buffer = []
+            yield tuple(
+                {"id_documento": artefacto.sha256, "uri": artefacto.uri, "sha256": artefacto.sha256}
+                for artefacto in grupo
+            )
+        if buffer:
+            self.repositorio.registrar_documentos(buffer, tamano_lote=self.tamano_lote_inventario)
 
     def marcar_procesando(self, corrida_id: str) -> None:
         """Avanza `corrida_id` a `PROCESANDO` y persiste -- o falla ruidoso.
