@@ -144,69 +144,10 @@ def test_procesar_grupo_via_delay_no_requiere_broker_real() -> None:
 
     assert async_result.get()[0]["id_documento"] == "doc-2"
 
-class _ExtractorFake:
-    def __init__(self) -> None:
-        self.minimas = 0
 
-    def extraer_minimo(self, artefacto) -> None:
-        self.minimas += 1
-
-
-class _RepositorioFake:
-    def __init__(self) -> None:
-        from anonimizacion.dominio.corridas import DocumentoCorrida
-
-        self.version_persistida = 0
-        self.documento = DocumentoCorrida.inventariado(
-            corrida_id="corrida-1", huella_contenido="c" * 64, ruta_autorizada="entrada.pdf"
-        )
-
-    def documentos_para_reanudar(self, corrida_id):
-        return [self.documento]
-
-    def actualizar_documento(self, documento, *, version_esperada):
-        if self.version_persistida != version_esperada:
-            return False
-        self.documento = documento
-        return True
-
-
-def test_extraccion_minima_reanuda_sin_ejecutar_ni_duplicar_documento() -> None:
-    extractor = _ExtractorFake()
-    repositorio = _RepositorioFake()
-    tareas.configurar_extractor(lambda: extractor, repositorio)
-
-    primero = tareas.procesar_extraccion_minima("corrida-1", "entrada.pdf", "c" * 64)
-    segundo = tareas.procesar_extraccion_minima("corrida-1", "entrada.pdf", "c" * 64)
-
-    assert primero["estado"] == "extraido_minimo"
-    assert segundo["estado"] == "extraido_minimo"
-    assert extractor.minimas == 1
-
-
-def test_extraccion_completa_persiste_sin_publicar() -> None:
-    from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
-
-    class ExtractorCompleto(_ExtractorFake):
-        def __init__(self) -> None:
-            super().__init__()
-            self.completas = 0
-
-        def extraer_completo(self, artefacto) -> None:
-            self.completas += 1
-
-    extractor = ExtractorCompleto()
-    repositorio = _RepositorioFake()
-    for estado in (
-        EstadoDocumentoCorrida.CLASIFICADO,
-        EstadoDocumentoCorrida.EXTRAIDO_MINIMO,
-        EstadoDocumentoCorrida.ASOCIADO,
-    ):
-        repositorio.documento.avanzar_a(estado)
-    repositorio.version_persistida = repositorio.documento.version
-    tareas.configurar_extractor(lambda: extractor, repositorio)
-
-    resultado = tareas.procesar_extraccion_completa("corrida-1", "entrada.pdf", "c" * 64)
-
-    assert resultado == {"estado": "extraido_completo"}
-    assert extractor.completas == 1
+# Nota (`chore/resolver-codigo-desconectado`): este archivo tenía tests para
+# `configurar_extractor`, `procesar_extraccion_minima` y
+# `procesar_extraccion_completa`. Se eliminaron junto con ese código en
+# `tareas.py`: nada en `src/` los invocaba -- ver el comentario en
+# `tareas.py` sobre por qué la extracción por etapas no encaja con
+# `procesar_grupo`.

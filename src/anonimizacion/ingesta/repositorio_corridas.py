@@ -1,4 +1,12 @@
-"""Repositorio SQL para recuperar corridas y documentos luego de una interrupción."""
+"""Repositorio SQL para recuperar corridas y documentos luego de una interrupción.
+
+Producción hoy sólo llama `registrar_documentos` (vía `LanzadorCorrida.lanzar`)
+y `obtener_corrida`/`actualizar_corrida` (marcar `PROCESANDO`, ver
+`servicio_corridas.py`). `documentos_para_reanudar` y `actualizar_documento`
+no tienen llamador de producción todavía -- son la mitad de la reanudación
+que falta conectar. Ver `dominio/estados_corrida.py` para el detalle completo
+de qué existe, qué falta y qué decisión lo desbloquea.
+"""
 
 from __future__ import annotations
 

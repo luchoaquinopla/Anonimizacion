@@ -1,3 +1,8 @@
+"""Máquina de transiciones de corrida y documento -- ver `estados_corrida.py`
+para por qué existe, qué le falta para conectarse a producción y qué
+decisión lo desbloquea.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
