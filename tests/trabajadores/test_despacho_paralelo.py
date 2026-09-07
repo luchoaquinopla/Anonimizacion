@@ -12,6 +12,8 @@ simulado) y recuperación ante `BrokenProcessPool` sin tumbar la corrida.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import pytest
@@ -27,6 +29,7 @@ from ._dobles_despacho_paralelo import (
     referencia,
     trabajo_cuenta_intentos_y_muere_siempre,
     trabajo_devuelve_pid,
+    trabajo_marca_completado_tras_una_pausa,
     trabajo_marca_completado_y_devuelve_pid,
     trabajo_muere_la_primera_vez_por_grupo,
     trabajo_muere_siempre_o_tarda_un_poco,
@@ -424,3 +427,63 @@ def test_las_metricas_de_despacho_cuentan_recreaciones_y_reprocesos():
         "recreaciones_de_pool_principal": metricas.recreaciones_de_pool_principal,
         "reprocesos_en_aislamiento": metricas.reprocesos_en_aislamiento,
     }
+
+
+# --- cancelación (revisión adversarial crítico 2) ---------------------------
+
+
+def test_despachar_en_paralelo_deja_de_tomar_grupos_nuevos_cuando_se_pide_detener(tmp_path, monkeypatch):
+    """Ctrl+C en el servidor (`scripts/servir_panel.py`) necesita poder
+    frenar un despacho de HORAS sin esperar a que TODOS los grupos
+    pendientes terminen -- sólo drenar lo que ya estaba en vuelo. `detener`
+    (un `threading.Event`) es la señal: una vez seteado, `_reponer` deja de
+    tomar grupos NUEVOS del iterador, tanto en la ventana inicial como al
+    reponer un hueco -- lo ya en vuelo se deja terminar normalmente.
+
+    Real, no simulado: `ProcessPoolExecutor` real con 2 workers, 10 grupos
+    disponibles -- si `detener` no tuviera efecto, los 10 se procesarían.
+    """
+    directorio_completados = tmp_path / "completados"
+    directorio_completados.mkdir()
+    monkeypatch.setenv(VAR_ENV_MARCADOR_COMPLETADOS, str(directorio_completados))
+
+    detener = threading.Event()
+    total_grupos_disponibles = 10
+    grupos = ((referencia(f"doc-cancelacion-{i}"),) for i in range(total_grupos_disponibles))
+
+    resultado: dict[str, object] = {}
+
+    def _correr() -> None:
+        resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
+            corrida_id="corrida-cancelacion",
+            grupos=grupos,
+            crear_pool=_crear_pool,
+            procesos=2,
+            cuarentena=CuarentenaEnMemoria(),
+            funcion_trabajo=trabajo_marca_completado_tras_una_pausa,
+            detener=detener,
+        )
+        resultado["resultados"] = resultados
+        resultado["total_documentos"] = total_documentos
+        resultado["total_grupos"] = total_grupos
+
+    hilo = threading.Thread(target=_correr)
+    hilo.start()
+
+    # Espera a que al menos UN grupo termine de verdad (marcador en disco,
+    # no una suposición de timing) antes de pedir la detención.
+    limite = time.monotonic() + 20
+    while not any(directorio_completados.iterdir()):
+        if time.monotonic() > limite:
+            hilo.join(timeout=5)
+            pytest.fail("ningún grupo completó a tiempo -- el test no puede seguir")
+        time.sleep(0.01)
+
+    detener.set()
+    hilo.join(timeout=30)
+
+    assert not hilo.is_alive(), "despachar_en_paralelo no retornó a tiempo tras pedir detener"
+    assert resultado["total_grupos"] < total_grupos_disponibles, (
+        "detener() no tuvo efecto: se procesaron TODOS los grupos disponibles"
+    )
+    assert resultado["total_grupos"] >= 1, "lo que ya estaba en vuelo tiene que haberse dejado terminar"

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import itertools
 import os
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
@@ -377,6 +378,7 @@ class _EstadoDespacho:
     cuarentena: DestinoCuarentena
     funcion_trabajo: FuncionTrabajo
     metricas: MetricasDespacho = field(default_factory=MetricasDespacho)
+    detener: threading.Event | None = None
 
     resultados: list[dict[str, object]] = field(default_factory=list)
     total_documentos: int = 0
@@ -387,6 +389,16 @@ class _EstadoDespacho:
     pool: ProcessPoolExecutor | None = None
 
     def _reponer(self) -> None:
+        # Revisión adversarial crítico 2: si se pidió detener (Ctrl+C en el
+        # servidor), NO se toma ningún grupo NUEVO del iterador -- ni en la
+        # ventana inicial ni al reponer un hueco que dejó un grupo terminado.
+        # Lo que ya estaba en vuelo se deja terminar normalmente (drena solo,
+        # el `while self.en_vuelo:` de `ejecutar()` sale cuando no queda
+        # nada pendiente). Esto acota el tiempo de apagado al de los grupos
+        # YA en curso -- segundos a bajas decenas de segundos por grupo, no
+        # las horas que dura la corrida completa.
+        if self.detener is not None and self.detener.is_set():
+            return
         grupo = next(self.grupos, None)
         if grupo is None:
             return
@@ -551,9 +563,19 @@ def despachar_en_paralelo(
     cuarentena: DestinoCuarentena,
     funcion_trabajo: FuncionTrabajo = procesar_grupo_en_trabajador,
     metricas: MetricasDespacho | None = None,
+    detener: threading.Event | None = None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Despacha `grupos` a un `ProcessPoolExecutor`, con recuperación ante un
     hijo muerto y sin materializar la partición completa en memoria.
+
+    `detener` (revisión adversarial crítico 2, feature `despachador-desde-el-panel`):
+    un `threading.Event` opcional que, una vez seteado por el LLAMADOR (desde
+    otro hilo -- p. ej. `scripts/servir_panel.py::main` ante `KeyboardInterrupt`),
+    hace que esta función deje de tomar grupos NUEVOS del iterador `grupos` y
+    retorne apenas termine lo que ya estaba en vuelo. No cancela futuros ya
+    sometidos ni mata procesos hijos a la fuerza -- `pool.shutdown(wait=True)`
+    al final sigue esperando a que el pool termine limpio, sin huérfanos.
+    `None` (default): comportamiento sin cambios, corre hasta agotar `grupos`.
 
     `metricas` (`None` = se crea una instancia descartable, mismo convenio
     que `dormir`/`resolver_claves` en `tareas.construir_fabrica_ejecutor`):
@@ -668,4 +690,5 @@ def despachar_en_paralelo(
         cuarentena=cuarentena,
         funcion_trabajo=funcion_trabajo,
         metricas=metricas if metricas is not None else MetricasDespacho(),
+        detener=detener,
     ).ejecutar()

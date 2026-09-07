@@ -106,6 +106,23 @@ def trabajo_marca_completado_y_devuelve_pid(corrida_id: str, grupo) -> list[dict
     return resultado
 
 
+def trabajo_marca_completado_tras_una_pausa(corrida_id: str, grupo) -> list[dict[str, object]]:
+    """Como `trabajo_marca_completado_y_devuelve_pid`, pero con una pausa
+    fija -- para tests de cancelación (`detener`, revisión adversarial
+    crítico 2) que necesitan una ventana confiable entre "el primer grupo
+    terminó" y "todos los grupos disponibles terminaron", sin la cual el
+    test sería una carrera contra trabajo instantáneo."""
+    import time
+
+    time.sleep(0.3)
+    directorio = Path(os.environ[VAR_ENV_MARCADOR_COMPLETADOS])
+    resultado = [
+        {"id_documento": referencia["id_documento"], "estado": "exito", "pid": os.getpid()} for referencia in grupo
+    ]
+    (directorio / f"listo-{grupo[0]['id_documento']}").touch()
+    return resultado
+
+
 def trabajo_cuenta_intentos_y_muere_siempre(corrida_id: str, grupo) -> list[dict[str, object]]:
     """Muere en TODO intento -- como `trabajo_muere_siempre_si_esta_marcado`,
     pero además deja un archivo con nombre único (PID + monotonic) en
