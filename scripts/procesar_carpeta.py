@@ -136,15 +136,26 @@ def ejecutar(
     # `procesar_grupo` a continuación, así que es quien debe marcarlo.
     lanzador.marcar_procesando(lanzamiento.corrida_id)
 
+    total_documentos = sum(len(grupo) for grupo in lanzamiento.referencias)
     print(
-        f"Corrida {lanzamiento.corrida_id}: procesando {len(lanzamiento.referencias)} documento(s)...",
+        f"Corrida {lanzamiento.corrida_id}: procesando {total_documentos} documento(s) "
+        f"en {len(lanzamiento.referencias)} grupo(s)...",
         file=sys.stderr,
     )
-    # `procesar_grupo` es la MISMA tarea Celery real que despachara producción
-    # (llamada en directo, no `.delay()`: este script corre sincrónico, sin
-    # broker) -- el único llamador que hace real `corrida_id` de punta a punta
-    # hasta `estudio`/`cuarentena`.
-    resultados = tareas.procesar_grupo(lanzamiento.corrida_id, lanzamiento.referencias)
+    # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
+    # PR 2 -- el PR 3 paraleliza esto mismo con `ProcessPoolExecutor`, todavía
+    # no acá). `procesar_grupo` es la MISMA tarea Celery real que despachara
+    # producción (llamada en directo, no `.delay()`: este script corre
+    # sincrónico, sin broker). Antes se le pasaba `lanzamiento.referencias`
+    # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
+    # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
+    # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una
+    # vez POR GRUPO acota ese pico al tamaño de un grupo (un paciente), sin
+    # cambiar el resultado: cada grupo sigue siendo un lote independiente con
+    # su propio aislamiento de fallo.
+    resultados: list[dict[str, object]] = []
+    for grupo in lanzamiento.referencias:
+        resultados.extend(tareas.procesar_grupo(lanzamiento.corrida_id, grupo))
 
     exitos = [r for r in resultados if r["estado"] == "exito"]
     fallos = [r for r in resultados if r["estado"] != "exito"]

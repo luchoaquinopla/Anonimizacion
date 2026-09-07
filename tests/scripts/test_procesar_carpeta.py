@@ -150,6 +150,42 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     assert corrida.estado == EstadoCorrida.PROCESANDO.value
 
 
+def test_el_script_despacha_un_grupo_por_subcarpeta_no_la_carpeta_entera(
+    tmp_path, motor: MotorPii, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """openspec `paralelismo-de-procesamiento` PR 2: el script usa
+    `lanzamiento.referencias` como una tupla de GRUPOS (uno por subcarpeta),
+    y llama `procesar_grupo` una vez POR GRUPO -- no una sola vez con la
+    corrida entera. Con dos pacientes en subcarpetas separadas, `procesar_grupo`
+    tiene que ejecutarse dos veces, cada una con su propio lote de 3 documentos."""
+    (tmp_path / "paciente-1").mkdir()
+    (tmp_path / "paciente-2").mkdir()
+    _grupo_completo(tmp_path / "paciente-1", "p1")
+    _grupo_completo(tmp_path / "paciente-2", "p2")
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    llamadas: list[int] = []
+    original = tareas.procesar_grupo
+
+    def _procesar_grupo_espia(corrida_id, referencias):
+        llamadas.append(len(referencias))
+        return original(corrida_id, referencias)
+
+    monkeypatch.setattr(modulo.tareas, "procesar_grupo", _procesar_grupo_espia)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 0
+    assert sorted(llamadas) == [3, 3], "un grupo por subcarpeta, no un unico lote de 6"
+
+    with Session(engine) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+    assert len(estudios) == 6, "particion exhaustiva: ambos pacientes se publican"
+
+
 def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
     """openspec `paralelismo-de-procesamiento` PR 1: `main()` llamaba
     `sa.create_engine(args.db_url)` pelado, sin `pool_pre_ping` ni
