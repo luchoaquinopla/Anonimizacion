@@ -1,7 +1,7 @@
 """Ensamblaje final: `DocumentoParseado` + `ClavesPaciente` -> `RegistroAnonimizado` (tasks.md 7.2).
 
-Última parada antes de cualquier destino de escritura (`destinos/postgres.py`,
-`destinos/parquet.py`). Responsabilidades de `construir_registro`:
+Última parada antes de escribir a Postgres (`destinos/postgres.py`, único
+destino del pipeline). Responsabilidades de `construir_registro`:
 
 1. Reemplazar `id_paciente`/`id_alt_paciente` crudos por los ya resueltos en
    `ClavesPaciente` (Fase 6) y adjuntar `id_episodio` (ya resuelto por

@@ -56,8 +56,10 @@ def downgrade() -> None:
     """Revertir descarta la fecha y la hora por estudio ya persistidas.
 
     Las mediciones y los episodios sobreviven, pero el momento de cada documento
-    se pierde: recuperarlo exige reprocesar los originales o releer el Parquet,
-    que conserva los mismos campos.
+    se pierde: recuperarlo exige reprocesar los originales desde `cuarentena`/
+    almacenamiento cifrado. (La proyección Parquet que conservaba los mismos
+    campos como respaldo de lectura se eliminó en
+    `chore/resolver-codigo-desconectado`: no tenía llamador de producción.)
     """
     for tabla in _TABLAS_CON_MEDICIONES:
         with op.batch_alter_table(tabla) as lote:

@@ -73,11 +73,10 @@ No existe un período de retención decidido en el código; definirlo con el pro
 1. Deshabilitar la creación de nuevas corridas en el portal.
 2. Dejar finalizar o detener workers de forma controlada; no borrar la base ni la cuarentena.
 3. Conservar estados, auditoría y originales cifrados para poder investigar/reanudar.
-4. Desactivar la proyección nueva de bundles/Parquet si la versión presenta un defecto.
-5. Revertir la versión del servicio sólo después de verificar migraciones y compatibilidad de estados.
-6. Volver a habilitar corridas únicamente tras una prueba controlada con datos sintéticos.
+4. Revertir la versión del servicio sólo después de verificar migraciones y compatibilidad de estados.
+5. Volver a habilitar corridas únicamente tras una prueba controlada con datos sintéticos.
 
-Los bundles se escriben temporalmente y se renombran al finalizar; las salidas aprobadas no deben sobrescribirse sin una nueva versión explícita.
+Postgres es la única salida del pipeline: no hay una segunda proyección (bundles/Parquet) que desactivar por separado -- ver `docs/pipeline.md` sobre por qué se eliminó (`chore/resolver-codigo-desconectado`).
 
 ## Lista de salida a producción
 

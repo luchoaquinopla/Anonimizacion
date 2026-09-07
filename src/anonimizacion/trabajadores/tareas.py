@@ -27,7 +27,6 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria, RegistroDeHuellas
 from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
@@ -197,63 +196,29 @@ def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) ->
         resultado.resumen_trazable() for resultado in ejecutor.procesar_lote(items, corrida_id=corrida_id)
     ]
 
-FabricaExtractor = Callable[[], object]
 
-_fabrica_extractor: FabricaExtractor | None = None
-_repositorio_corridas: object | None = None
-
-
-def configurar_extractor(fabrica: FabricaExtractor, repositorio: object) -> None:
-    """Configura la extracción por etapas y su persistencia durable."""
-    global _fabrica_extractor, _repositorio_corridas
-    _fabrica_extractor = fabrica
-    _repositorio_corridas = repositorio
-
-
-@app.task(name="anonimizacion.procesar_extraccion_minima")
-def procesar_extraccion_minima(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
-    """Extrae lo mínimo una sola vez y conserva el estado para reanudar."""
-    if _fabrica_extractor is None or _repositorio_corridas is None:
-        raise RuntimeError("extractor de documentos no configurado")
-    documento = next(
-        documento
-        for documento in _repositorio_corridas.documentos_para_reanudar(corrida_id)
-        if documento.huella_contenido == sha256
-    )
-    if documento.estado.value == "extraido_minimo":
-        return {"estado": documento.estado.value}
-    if documento.estado.value != "inventariado":
-        raise RuntimeError("estado no apto para extraccion minima")
-
-    version = documento.version
-    documento.avanzar_a(EstadoDocumentoCorrida.CLASIFICADO)
-    if not _repositorio_corridas.actualizar_documento(documento, version_esperada=version):
-        return {"estado": "en_progreso"}
-    _fabrica_extractor().extraer_minimo(ArtefactoCrudo(uri=uri, sha256=sha256, formato=FormatoArtefacto.PDF))
-    version = documento.version
-    documento.avanzar_a(EstadoDocumentoCorrida.EXTRAIDO_MINIMO)
-    _repositorio_corridas.actualizar_documento(documento, version_esperada=version)
-    return {"estado": documento.estado.value}
-
-
-@app.task(name="anonimizacion.procesar_extraccion_completa")
-def procesar_extraccion_completa(corrida_id: str, uri: str, sha256: str) -> dict[str, str]:
-    """Persiste extracción completa de un documento ya asociado, sin publicarlo."""
-    if _fabrica_extractor is None or _repositorio_corridas is None:
-        raise RuntimeError("extractor de documentos no configurado")
-    documento = next(
-        documento
-        for documento in _repositorio_corridas.documentos_para_reanudar(corrida_id)
-        if documento.huella_contenido == sha256
-    )
-    if documento.estado is EstadoDocumentoCorrida.EXTRAIDO_COMPLETO:
-        return {"estado": documento.estado.value}
-    if documento.estado is not EstadoDocumentoCorrida.ASOCIADO:
-        raise RuntimeError("estado no apto para extraccion completa")
-
-    _fabrica_extractor().extraer_completo(ArtefactoCrudo(uri=uri, sha256=sha256, formato=FormatoArtefacto.PDF))
-    version = documento.version
-    documento.avanzar_a(EstadoDocumentoCorrida.EXTRAIDO_COMPLETO)
-    if not _repositorio_corridas.actualizar_documento(documento, version_esperada=version):
-        return {"estado": "en_progreso"}
-    return {"estado": documento.estado.value}
+# Nota (`chore/resolver-codigo-desconectado`): este módulo tuvo `configurar_extractor`
+# y dos tareas Celery (`procesar_extraccion_minima`, `procesar_extraccion_completa`)
+# que modelaban una extracción por etapas con persistencia durable vía
+# `EstadoDocumentoCorrida` (CLASIFICADO -> EXTRAIDO_MINIMO -> ASOCIADO ->
+# EXTRAIDO_COMPLETO). Se eliminaron: nadie las invocaba (ni `.delay()` ni
+# `.apply_async()` en `src/`, solo `tests/trabajadores/test_tareas.py`), y
+# `openspec/changes/procesamiento-por-grupo/exploration.md` documenta por qué
+# quedaron desconectadas -- "viven en una pista paralela que no se comunica
+# con `EjecutorPipeline`". La unidad de trabajo real es el GRUPO
+# (`procesar_grupo` arriba): todos los documentos de un episodio se extraen,
+# parsean, reconcilian y escriben en una sola llamada síncrona a
+# `EjecutorPipeline.procesar_lote`, sin fases intermedias que una tarea
+# separada pueda retomar. Un extractor de "mínimo" que no sabe si el episodio
+# está completo no puede decidir nada por sí solo en ese modelo.
+#
+# La reanudación de una corrida cortada (pendiente real: `POST
+# /corridas/{id}/reintentar` devuelve 501 a propósito, ver
+# `web/rutas_corridas.py`) sigue sin resolverse, pero a nivel de GRUPO, no de
+# documento por etapa: `RepositorioCorridas.documentos_para_reanudar` ya
+# filtra estados no terminales, así que el camino natural es que
+# `procesar_grupo` persista el estado final de cada documento (`APROBADO`,
+# `CUARENTENA` o `ERROR_FINAL`) al terminar, y que el relanzador salte los
+# grupos cuyos documentos ya están en estado terminal. Eso es trabajo nuevo,
+# fuera de alcance de esta limpieza -- la decisión que lo desbloquea es
+# diseñar esa integración, no revivir esta extracción por etapas.
