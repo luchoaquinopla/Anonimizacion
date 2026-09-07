@@ -33,7 +33,11 @@ from pathlib import Path
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from anonimizacion.ingesta.lanzador_corrida import MARGEN_INACTIVIDAD_DEFAULT, LanzadorCorrida
+from anonimizacion.ingesta.lanzador_corrida import (
+    MARGEN_INACTIVIDAD_DEFAULT,
+    CorridaEnCursoError,
+    LanzadorCorrida,
+)
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import CorridaOrm
 from anonimizacion.trabajadores import despacho_paralelo
@@ -53,26 +57,6 @@ FuncionDespacho = Callable[..., tuple[list[dict[str, object]], int, int]]
 # abandonada, para tolerar que un latido puntual se demore o falle sin que
 # el margen entero dependa de uno solo.
 LATIDO_INTERVALO_SEG_DEFAULT = MARGEN_INACTIVIDAD_DEFAULT.total_seconds() / 3
-
-
-class CorridaEnCursoError(RuntimeError):
-    """Ya hay otra corrida activa -- ver `ServicioCorridasReal.crear_corrida`.
-
-    Decisión "dos corridas a la vez" (feature `despachador-desde-el-panel`):
-    cada corrida despachada reserva su propio presupuesto de memoria (~875 MB
-    medidos por proceso de `MotorPii`, `despacho_paralelo.py`) para
-    `procesos` workers -- dos corridas concurrentes lo duplicarían sin que
-    nada repartiera ese presupuesto entre ambas. Este panel es para UN
-    operador (el codirector médico corriendo su propio corpus), no una cola
-    multi-tenant: serializar corridas es la opción segura y la que coincide
-    con el uso real, no una limitación aceptada a regañadientes.
-    """
-
-    def __init__(self, id_corrida_activa: str) -> None:
-        self.id_corrida_activa = id_corrida_activa
-        super().__init__(
-            f"ya hay una corrida activa ({id_corrida_activa}) -- esperá a que termine antes de lanzar otra"
-        )
 
 
 def _emitir_latidos(
@@ -120,6 +104,7 @@ def _despachar_y_cerrar(
     despachador: FuncionDespacho,
     detener: threading.Event,
     latido_intervalo_seg: float = LATIDO_INTERVALO_SEG_DEFAULT,
+    registro_de_pool: despacho_paralelo.RegistroDePool | None = None,
 ) -> None:
     """Corre en un HILO en segundo plano, lanzado por `ServicioCorridasReal.crear_corrida`.
 
@@ -197,6 +182,7 @@ def _despachar_y_cerrar(
             procesos=procesos,
             cuarentena=lanzador.cuarentena,
             detener=detener,
+            registro_de_pool=registro_de_pool,
         )
     except Exception:
         try:
@@ -329,6 +315,10 @@ class ServicioCorridasReal:
     _hilos_en_curso: list[threading.Thread] = field(default_factory=list)
     _evento_apagado: threading.Event = field(default_factory=threading.Event)
     _lock_creacion: threading.Lock = field(default_factory=threading.Lock)
+    # Revisión adversarial ronda 3, hallazgo 3: referencia al pool ACTUAL del
+    # despacho en curso, para poder terminarlo a la fuerza si el apagado
+    # cooperativo se agota -- ver `terminar_despachos_a_la_fuerza`.
+    _registro_de_pool: despacho_paralelo.RegistroDePool = field(default_factory=despacho_paralelo.RegistroDePool)
 
     def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
         """Crea la corrida, inventaría el primer grupo, y despacha el resto
@@ -382,24 +372,37 @@ class ServicioCorridasReal:
                     "despachador": self.despachador,
                     "detener": self._evento_apagado,
                     "latido_intervalo_seg": self.latido_intervalo_seg,
+                    "registro_de_pool": self._registro_de_pool,
                 },
-                # `daemon=True`: backstop, no el mecanismo principal de
-                # apagado (revisión adversarial crítico 2 -- la versión
-                # anterior de este comentario afirmaba que `daemon=True`
-                # alcanzaba para que el proceso saliera al toque; es FALSO:
-                # `ProcessPoolExecutor` registra su propio `atexit` que
-                # espera a que el pool activo termine, sin importar que el
-                # hilo dueño sea daemon -- medido, ~8 s de proceso colgado
-                # con un hilo daemon de 8 s de trabajo). El mecanismo real es
-                # cooperativo: `scripts/servir_panel.py::main` llama
-                # `solicitar_apagado()` + `esperar_despachos_en_curso(timeout=...)`
-                # ante `KeyboardInterrupt`, lo que hace que `despachar_en_paralelo`
-                # deje de tomar grupos nuevos y el `ProcessPoolExecutor` se
-                # cierre solo, sin hijos huérfanos. `daemon=True` sólo cubre
-                # el caso límite en que ese apagado cooperativo se agota
-                # (`timeout`) o el proceso muere de otra forma (crash, `kill
-                # -9`): ahí sí, que el hilo no bloquee la salida es mejor que
-                # colgar para siempre -- la corrida queda abandonada y
+                # `daemon=True`: NO es el mecanismo de apagado acotado --
+                # revisión adversarial ronda 3, hallazgo 3, corrigiendo una
+                # afirmación falsa de este mismo comentario en una revisión
+                # anterior ("que el hilo no bloquee la salida es mejor que
+                # colgar para siempre" -- FALSO: medido con `timeout=0,2`,
+                # el proceso quedó colgado ~114 s de todos modos, EXACTAMENTE
+                # igual que sin `daemon=True`). La razón es la misma que ya
+                # explica el párrafo de abajo: `ProcessPoolExecutor` registra
+                # su propio `atexit` que espera al pool ACTIVO sin importar
+                # el estado daemon del hilo dueño -- `daemon=True` no cambia
+                # eso en absoluto mientras el pool siga vivo.
+                #
+                # Lo que sí acota el apagado es un mecanismo de DOS pasos,
+                # ambos en `scripts/servir_panel.py::main`, ante
+                # `KeyboardInterrupt`: (1) `solicitar_apagado()` +
+                # `esperar_despachos_en_curso(timeout=...)` -- cooperativo,
+                # deja de tomar grupos nuevos y espera a que el pool drene
+                # solo; (2) si eso se agota, `terminar_despachos_a_la_fuerza()`
+                # (`RegistroDePool.terminar_a_la_fuerza`) manda `.terminate()`
+                # a cada worker vivo -- el trabajo en vuelo se pierde, y la
+                # corrida cierra `FALLIDA` (nunca `COMPLETADA`), honesto
+                # sobre que no terminó. `daemon=True` acá sólo cubre el caso
+                # en que el proceso entero muere de otra forma (crash, `kill
+                # -9` externo) ANTES de que ese mecanismo de dos pasos
+                # llegue a correr: ahí no hay ningún `atexit` que esperar
+                # (el proceso ya no existe), así que el estado daemon del
+                # hilo es irrelevante para el bloqueo -- sólo evita que
+                # Python intente unirse a un hilo que de todos modos ya no
+                # importa. La corrida queda abandonada y
                 # `recuperar_corridas_abandonadas` la recupera en el próximo
                 # arranque si de verdad no hay evidencia de trabajo.
                 daemon=True,
@@ -446,9 +449,43 @@ class ServicioCorridasReal:
 
         No cancela trabajo YA en vuelo ni mata procesos hijos a la fuerza --
         drena lo que está corriendo y corta ahí (ver el docstring de
-        `despacho_paralelo.despachar_en_paralelo`, parámetro `detener`).
+        `despacho_paralelo.despachar_en_paralelo`, parámetro `detener`). Si
+        eso no alcanza dentro de un tiempo acotado, ver
+        `terminar_despachos_a_la_fuerza`.
         """
         self._evento_apagado.set()
+
+    def terminar_despachos_a_la_fuerza(self) -> int:
+        """Termina a la fuerza (`.terminate()`, sin cierre limpio) los
+        procesos hijos VIVOS del despacho en curso -- revisión adversarial
+        ronda 3, hallazgo 3: "el resguardo del timeout es una ilusión".
+
+        Por qué hace falta: `solicitar_apagado()` (cooperativo) sólo evita
+        tomar grupos NUEVOS -- nunca interrumpe un worker que YA está
+        ocupado (cargando `MotorPii`, procesando un documento). Medido: con
+        un `timeout` corto en el apagado cooperativo, el proceso quedó
+        colgado igual, ~114 s, porque el `atexit` de
+        `concurrent.futures.process` espera al pool ACTIVO sin importar qué
+        tan cooperativo haya sido el pedido. Esto es el escalón siguiente,
+        para cuando ese timeout se agota.
+
+        Costo aceptado y explícito: el trabajo en vuelo en los procesos
+        terminados se PIERDE -- ningún documento a medio procesar en ese
+        instante llega a escribirse. `_despachar_y_cerrar` ya sabe cerrar la
+        corrida `FALLIDA` (nunca `COMPLETADA`) cuando `detener` está seteado,
+        así que la base queda honesta: no hay que hacer nada adicional acá
+        para eso.
+
+        Llamador de producción: `scripts/servir_panel.py::main`, sólo
+        DESPUÉS de que `esperar_despachos_en_curso(timeout=...)` (apagado
+        cooperativo) se agotó sin que el despacho terminara solo.
+
+        Devuelve la cantidad de procesos a los que se les mandó la señal de
+        terminación (ver `despacho_paralelo.RegistroDePool.terminar_a_la_fuerza`
+        para el porqué usa una API privada de `concurrent.futures.process`,
+        y por qué es best-effort).
+        """
+        return self._registro_de_pool.terminar_a_la_fuerza()
 
     def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
         estado = _leer_estado_corrida(self.motor, id_corrida)

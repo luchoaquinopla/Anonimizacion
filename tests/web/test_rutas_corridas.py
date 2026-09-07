@@ -13,7 +13,7 @@ from anonimizacion.dominio.corridas import Corrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import Base, Estudio
 from anonimizacion.web.rutas_corridas import EstadoCorridaPortal, crear_aplicacion_corridas
-from anonimizacion.web.servicio_corridas import CorridaEnCursoError
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
 
 
 @dataclass

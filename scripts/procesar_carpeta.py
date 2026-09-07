@@ -52,7 +52,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
@@ -285,7 +285,18 @@ def ejecutar(
         **({"tope_bytes": tope_bytes} if tope_bytes is not None else {}),
     )
     print(f"Lanzando corrida sobre {entrada}...", file=sys.stderr)
-    lanzamiento = lanzador.lanzar(entrada)
+    try:
+        lanzamiento = lanzador.lanzar(entrada)
+    except CorridaEnCursoError as error:
+        # Revisión adversarial ronda 3, hallazgo 4: este script no tenía
+        # ningún gate propio -- la única protección real contra dos
+        # corridas simultáneas (esta y, por ejemplo, una lanzada desde el
+        # panel) es la que la BASE impone (`ux_corrida_una_activa`,
+        # `modelos_orm.py`). Traducir la excepción a un mensaje claro y un
+        # código de salida propio, en vez de dejar que el traceback crudo
+        # le llegue al operador.
+        print(f"No se puede lanzar esta corrida: {error}", file=sys.stderr)
+        return 2
 
     # `lanzamiento.referencias` es un GENERADOR de un solo uso (openspec
     # `paralelismo-de-procesamiento` PR 2, revisión adversarial hallazgo

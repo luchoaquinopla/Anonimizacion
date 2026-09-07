@@ -40,6 +40,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
+
 from anonimizacion.dominio.corridas import Corrida, DocumentoCorrida
 from anonimizacion.dominio.errores import ErrorDocumento
 from anonimizacion.dominio.estados_corrida import EstadoCorrida
@@ -87,6 +89,34 @@ class _IteradorDeUnSoloUso:
 
     def __next__(self) -> tuple[dict[str, str], ...]:
         return next(self._marcar_entregado_o_fallar())
+
+
+class CorridaEnCursoError(RuntimeError):
+    """Ya hay otra corrida activa -- gate a nivel de BASE (revisión
+    adversarial ronda 3, hallazgo 4, feature `despachador-desde-el-panel`).
+
+    Movida acá desde `web/servicio_corridas.py` (donde vivía como chequeo de
+    sólo un `threading.Lock` de UN proceso): confirmado que
+    `scripts/procesar_carpeta.py` NO llama `listar_corridas_no_terminales`
+    en ningún punto -- no tiene gate propio. Un lock en memoria del panel
+    jamás podría proteger contra ese script (otro proceso) lanzando una
+    corrida real mientras el panel ya procesa una -- las dos convivirían sin
+    que nada las detecte hasta agotar la memoria (~875 MB × `procesos` cada
+    una).
+
+    `LanzadorCorrida.lanzar()` es el único punto donde nace una corrida
+    (design.md, "Recorrido") -- así que es el lugar correcto para traducir
+    el rechazo de `ux_corrida_una_activa` (`modelos_orm.py`, índice único
+    parcial: `WHERE activa`, `activa` mantenida por `RepositorioCorridas` en
+    cada escritura de `corrida.estado`) en un error de dominio legible. La
+    base decide atómicamente, sin importar qué proceso llame `lanzar()` ni
+    en qué orden -- no un lock en memoria de un solo proceso.
+    """
+
+    def __init__(self, id_corrida_activa: str | None) -> None:
+        self.id_corrida_activa = id_corrida_activa
+        detalle = f" ({id_corrida_activa})" if id_corrida_activa else ""
+        super().__init__(f"ya hay una corrida activa{detalle} -- esperá a que termine antes de lanzar otra")
 
 
 @dataclass(frozen=True)
@@ -165,9 +195,23 @@ class LanzadorCorrida:
     tamano_lote_inventario: int = 1000
 
     def lanzar(self, ruta: Path) -> ResultadoLanzamiento:
+        """Crea la corrida -- o falla con `CorridaEnCursoError` si la base
+        rechaza una segunda corrida activa (`ux_corrida_una_activa`, revisión
+        adversarial ronda 3, hallazgo 4). Este `try` es lo único que hace que
+        el gate de "una corrida a la vez" alcance a `scripts/procesar_carpeta.py`:
+        ese script no tiene ningún chequeo propio, así que la única
+        protección real que le llega es la que la BASE le impone acá mismo,
+        sin importar qué otro proceso (p. ej. el panel) haya lanzado la
+        corrida que sigue activa.
+        """
         corrida_id = str(uuid4())
         corrida = Corrida.crear(corrida_id)
-        self.repositorio.crear_corrida(corrida)
+        try:
+            self.repositorio.crear_corrida(corrida)
+        except IntegrityError as error:
+            activas = self.repositorio.listar_corridas_no_terminales()
+            id_activa = activas[0].id_corrida if activas else None
+            raise CorridaEnCursoError(id_activa) from error
         self._avanzar_y_persistir(corrida, EstadoCorrida.INVENTARIANDO)
 
         sumidero = CuarentenaDeCorrida(interna=self.cuarentena, corrida_id=corrida_id)

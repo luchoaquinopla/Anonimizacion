@@ -257,31 +257,43 @@ def main() -> int:
         servidor.serve_forever()
     except KeyboardInterrupt:
         # Decisión "Ctrl+C a mitad de una corrida" (revisión adversarial
-        # crítico 2): `daemon=True` en el hilo de despacho NO alcanza --
-        # `ProcessPoolExecutor` registra su propio `atexit` que espera a que
-        # el pool activo termine sin importar si el hilo dueño es daemon
-        # (medido: ~8 s de proceso colgado con un hilo daemon de 8 s de
-        # trabajo). El apagado real es COOPERATIVO: `solicitar_apagado()`
-        # hace que cada despacho en curso deje de tomar grupos NUEVOS
+        # crítico 2, corregida en ronda 3, hallazgo 3): apagado en DOS
+        # escalones.
+        #
+        # (1) COOPERATIVO: `solicitar_apagado()` hace que cada despacho en
+        # curso deje de tomar grupos NUEVOS
         # (`despacho_paralelo.despachar_en_paralelo`, parámetro `detener`) y
-        # drene lo que ya estaba en vuelo -- acotado al tiempo de esos
-        # grupos, no a las horas que dura la corrida completa.
+        # drene lo que ya estaba en vuelo. Acota el apagado al tiempo de
+        # ESOS grupos (segundos a bajas decenas de segundos) mientras nada
+        # esté ya trabado -- pero NO interrumpe un worker que ya está
+        # ocupado: medido, con el cooperativo agotado, el proceso quedaba
+        # colgado igual (~114 s con un timeout de 0,2 s) porque
+        # `ProcessPoolExecutor` registra su propio `atexit` que espera al
+        # pool ACTIVO sin importar `daemon=True`.
+        #
+        # (2) FORZADO: si el cooperativo se agota, `terminar_despachos_a_la_fuerza()`
+        # manda `.terminate()` a cada worker vivo. El trabajo en vuelo en
+        # ESE momento se pierde -- ningún documento a medio procesar llega a
+        # escribirse -- pero `_despachar_y_cerrar` ya cierra esa corrida
+        # `FALLIDA` (nunca `COMPLETADA`) cuando `detener` está seteado: la
+        # base queda honesta sobre que no terminó, no silenciosamente
+        # colgada ni mintiendo un desenlace que nunca ocurrió.
         print(
             "Apagando: si hay una corrida activa, se espera a que termine el grupo en curso "
-            f"(hasta {_TIMEOUT_APAGADO_SEG} s) antes de salir -- no se matan procesos hijos a la fuerza "
-            "para no perder trabajo a medio escribir.",
+            f"(hasta {_TIMEOUT_APAGADO_SEG} s) antes de salir.",
             file=sys.stderr,
         )
         servicio.solicitar_apagado()
         servicio.esperar_despachos_en_curso(timeout=_TIMEOUT_APAGADO_SEG)
         if servicio.hay_despachos_en_curso():
             print(
-                "Un despacho no terminó dentro del tiempo de espera -- el proceso puede tardar "
-                "en salir de todos modos. La corrida queda para revisar en el próximo arranque "
-                "(recuperar_corridas_abandonadas la cerrará FALLIDA si de verdad no hay evidencia "
-                "de trabajo).",
+                "El despacho no terminó dentro del tiempo de espera -- terminando los procesos "
+                "hijos a la fuerza. El trabajo en vuelo en ese grupo se pierde; la corrida queda "
+                "marcada FALLIDA (no completada) para que el próximo arranque no la confunda con "
+                "una corrida viva.",
                 file=sys.stderr,
             )
+            servicio.terminar_despachos_a_la_fuerza()
     finally:
         servidor.server_close()
     return 0

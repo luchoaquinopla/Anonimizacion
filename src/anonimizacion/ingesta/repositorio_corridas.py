@@ -37,6 +37,15 @@ _ESTADOS_CORRIDA_TERMINALES = {
 }
 
 
+def _es_activa(estado: EstadoCorrida) -> bool:
+    """`CorridaOrm.activa` -- ver su docstring en `modelos_orm.py` para el
+    porqué (revisión adversarial ronda 3, hallazgo 4: el gate de "una
+    corrida a la vez" tiene que vivir en la BASE, no sólo en un lock de un
+    proceso, para que `scripts/procesar_carpeta.py` (otro proceso) también
+    lo respete)."""
+    return estado not in _ESTADOS_CORRIDA_TERMINALES
+
+
 class RepositorioCorridas:
     """Persiste la unidad administrativa y permite reanudar documentos no terminales."""
 
@@ -44,6 +53,11 @@ class RepositorioCorridas:
         self._motor = motor
 
     def crear_corrida(self, corrida: Corrida) -> None:
+        """Inserta la fila -- o deja que la BASE la rechace si ya hay otra
+        corrida activa (`ux_corrida_una_activa`, revisión adversarial ronda
+        3): `IntegrityError` se propaga sin atrapar acá, `LanzadorCorrida.lanzar`
+        es quien la traduce a `CorridaEnCursoError`, porque es quien tiene
+        acceso a `listar_corridas_no_terminales` para armar un mensaje útil."""
         with Session(self._motor) as sesion, sesion.begin():
             if sesion.get(CorridaOrm, corrida.id_corrida) is None:
                 sesion.add(
@@ -51,6 +65,7 @@ class RepositorioCorridas:
                         id_corrida=corrida.id_corrida,
                         estado=corrida.estado.value,
                         version=corrida.version,
+                        activa=_es_activa(corrida.estado),
                     )
                 )
 
@@ -281,7 +296,7 @@ class RepositorioCorridas:
                     CorridaOrm.id_corrida == corrida.id_corrida,
                     CorridaOrm.version == version_esperada,
                 )
-                .values(estado=corrida.estado.value, version=corrida.version)
+                .values(estado=corrida.estado.value, version=corrida.version, activa=_es_activa(corrida.estado))
             )
             return resultado.rowcount == 1
 

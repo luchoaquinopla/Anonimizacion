@@ -114,39 +114,39 @@ def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> No
     assert llamadas == [], "no debe conectar a Postgres si el pepper no esta configurado"
 
 
-def test_keyboardinterrupt_pide_apagado_cooperativo_antes_de_cerrar(monkeypatch) -> None:
-    """Revisión adversarial crítico 2: `daemon=True` en el hilo de despacho
-    NO alcanza -- `ProcessPoolExecutor` registra su propio `atexit` que
-    espera a que el pool activo termine, sin importar que el hilo dueño sea
-    daemon (medido: ~8 s de proceso colgado con un hilo daemon de 8 s de
-    trabajo, y dos procesos hijos huérfanos al matar el padre a la fuerza).
+class _ServicioEspia:
+    """Espía de `ServicioCorridasReal` para los tests de `KeyboardInterrupt`
+    de `main()` -- `hay_despachos_en_curso` configurable para simular tanto
+    el camino feliz (apagado cooperativo alcanza) como el de escalada
+    (se agota y hace falta terminar a la fuerza)."""
 
-    El apagado real es cooperativo: `main()` tiene que llamar
-    `servicio.solicitar_apagado()` ANTES de `esperar_despachos_en_curso`
-    (para que el despacho tenga la señal antes de que alguien se quede
-    esperando), avisar al operador en castellano llano, y sólo entonces
-    cerrar el servidor -- nunca matar procesos hijos a la fuerza."""
+    def __init__(self, *, sigue_en_curso_tras_cooperativo: bool = False) -> None:
+        self.llamadas: list[str] = []
+        self._sigue_en_curso = sigue_en_curso_tras_cooperativo
+
+    def solicitar_apagado(self) -> None:
+        self.llamadas.append("solicitar_apagado")
+
+    def esperar_despachos_en_curso(self, timeout=None) -> None:
+        self.llamadas.append(f"esperar_despachos_en_curso(timeout={timeout})")
+
+    def hay_despachos_en_curso(self) -> bool:
+        self.llamadas.append("hay_despachos_en_curso")
+        return self._sigue_en_curso
+
+    def terminar_despachos_a_la_fuerza(self) -> int:
+        self.llamadas.append("terminar_despachos_a_la_fuerza")
+        self._sigue_en_curso = False  # simula que la terminacion forzada libero al hilo
+        return 2
+
+
+def _preparar_main_con_servicio_espia(monkeypatch: pytest.MonkeyPatch, servicio_espia, llamadas: list[str]):
     modulo = _cargar_script()
     monkeypatch.setattr("sys.argv", ["servir_panel.py"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite:///:memory:"), raising=False
     )
-
-    llamadas: list[str] = []
-
-    class _ServicioEspia:
-        def solicitar_apagado(self) -> None:
-            llamadas.append("solicitar_apagado")
-
-        def esperar_despachos_en_curso(self, timeout=None) -> None:
-            llamadas.append(f"esperar_despachos_en_curso(timeout={timeout})")
-
-        def hay_despachos_en_curso(self) -> bool:
-            llamadas.append("hay_despachos_en_curso")
-            return False
-
-    servicio_espia = _ServicioEspia()
     monkeypatch.setattr(
         modulo,
         "construir_aplicacion",
@@ -161,17 +161,59 @@ def test_keyboardinterrupt_pide_apagado_cooperativo_antes_de_cerrar(monkeypatch)
             llamadas.append("server_close")
 
     monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
+    return modulo
+
+
+def test_keyboardinterrupt_pide_apagado_cooperativo_antes_de_cerrar(monkeypatch) -> None:
+    """Revisión adversarial crítico 2 (y corrección ronda 3, hallazgo 3):
+    `daemon=True` en el hilo de despacho NO alcanza -- `ProcessPoolExecutor`
+    registra su propio `atexit` que espera a que el pool activo termine, sin
+    importar que el hilo dueño sea daemon.
+
+    El apagado tiene DOS escalones: (1) cooperativo -- `main()` llama
+    `servicio.solicitar_apagado()` ANTES de `esperar_despachos_en_curso`, y
+    si el despacho drena solo dentro del timeout, listo, sin tocar ningún
+    proceso hijo. Este test cubre el camino FELIZ (el cooperativo alcanza) --
+    `terminar_despachos_a_la_fuerza` NUNCA se llama acá."""
+    servicio_espia = _ServicioEspia(sigue_en_curso_tras_cooperativo=False)
+    modulo = _preparar_main_con_servicio_espia(monkeypatch, servicio_espia, servicio_espia.llamadas)
 
     codigo = modulo.main()
 
     assert codigo == 0
     # Orden: pedir apagado ANTES de esperar, y cerrar el servidor AL FINAL --
     # nunca al revés (cerrar el servidor mientras un despacho sigue en vuelo
-    # dejaría esa corrida sin que nadie la haya avisado).
-    assert llamadas == [
+    # dejaría esa corrida sin que nadie la haya avisado). Sin escalada:
+    # `terminar_despachos_a_la_fuerza` no aparece en la lista.
+    assert servicio_espia.llamadas == [
         "solicitar_apagado",
         f"esperar_despachos_en_curso(timeout={modulo._TIMEOUT_APAGADO_SEG})",
         "hay_despachos_en_curso",
+        "server_close",
+    ]
+
+
+def test_keyboardinterrupt_escala_a_terminacion_forzada_si_el_cooperativo_se_agota(monkeypatch) -> None:
+    """Revisión adversarial ronda 3, hallazgo 3: "el resguardo del timeout es
+    una ilusión" -- medido, con el apagado cooperativo agotado, el proceso
+    quedaba colgado ~114 s de todos modos porque nada terminaba los workers.
+
+    Segundo escalón: si `hay_despachos_en_curso()` sigue `True` después del
+    apagado cooperativo, `main()` tiene que llamar
+    `terminar_despachos_a_la_fuerza()` -- y avisar al operador, en
+    castellano llano, que el trabajo en vuelo se perdió (no "puede tardar en
+    salir de todos modos" sin decir qué se hace al respecto)."""
+    servicio_espia = _ServicioEspia(sigue_en_curso_tras_cooperativo=True)
+    modulo = _preparar_main_con_servicio_espia(monkeypatch, servicio_espia, servicio_espia.llamadas)
+
+    codigo = modulo.main()
+
+    assert codigo == 0
+    assert servicio_espia.llamadas == [
+        "solicitar_apagado",
+        f"esperar_despachos_en_curso(timeout={modulo._TIMEOUT_APAGADO_SEG})",
+        "hay_despachos_en_curso",
+        "terminar_despachos_a_la_fuerza",
         "server_close",
     ]
 

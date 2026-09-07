@@ -135,11 +135,11 @@ def test_listar_corridas_no_terminales_excluye_estados_cerrados() -> None:
     Base.metadata.create_all(motor)
     repositorio = RepositorioCorridas(motor)
 
-    activa = Corrida.crear("corrida-activa")
-    activa.avanzar_a(EstadoCorrida.INVENTARIANDO)
-    repositorio.crear_corrida(activa)
-    repositorio.actualizar_corrida(activa, version_esperada=0)
-
+    # `completada` se crea y se cierra PRIMERO, de punta a punta -- el gate
+    # de "una corrida a la vez" (`ux_corrida_una_activa`, revisión
+    # adversarial ronda 3) rechaza una segunda fila `activa=True` mientras
+    # exista una; ambas corridas no pueden coexistir NO terminales al mismo
+    # tiempo, ni siquiera en este test.
     completada = Corrida.crear("corrida-completada")
     repositorio.crear_corrida(completada)
     completada.avanzar_a(EstadoCorrida.INVENTARIANDO)
@@ -148,6 +148,11 @@ def test_listar_corridas_no_terminales_excluye_estados_cerrados() -> None:
     repositorio.actualizar_corrida(completada, version_esperada=1)
     completada.avanzar_a(EstadoCorrida.COMPLETADA)
     repositorio.actualizar_corrida(completada, version_esperada=2)
+
+    activa = Corrida.crear("corrida-activa")
+    activa.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    repositorio.crear_corrida(activa)
+    repositorio.actualizar_corrida(activa, version_esperada=0)
 
     no_terminales = repositorio.listar_corridas_no_terminales()
 

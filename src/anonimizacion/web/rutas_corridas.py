@@ -89,11 +89,13 @@ def _crear_corrida(
     ruta = Path(solicitud["ruta"]).resolve()
     if not any(_esta_dentro_de(ruta, raiz) for raiz in raices):
         return _responder(iniciar_respuesta, "403 Forbidden", {"codigo": "ruta_no_autorizada"})
-    # Import diferido: `servicio_corridas.py` importa `EstadoCorridaPortal`
-    # DESDE este módulo a nivel de módulo -- un import a nivel de módulo acá
-    # sería un ciclo (mismo motivo que `_embudo_corrida`/`_panel_corrida` ya
-    # difieren su import de `construir_payload_embudo` más abajo).
-    from anonimizacion.web.servicio_corridas import CorridaEnCursoError
+    # `CorridaEnCursoError` vive en `ingesta/lanzador_corrida.py` (revisión
+    # adversarial ronda 3: es el gate a nivel de BASE, no sólo del panel --
+    # `LanzadorCorrida.lanzar()` es quien la lanza de verdad). Import a nivel
+    # de módulo acá sería seguro (no hay ciclo con `ingesta`), pero se
+    # mantiene diferido por coherencia con el resto de los imports
+    # perezosos de este módulo (`_embudo_corrida`/`_panel_corrida` más abajo).
+    from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
 
     try:
         return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))

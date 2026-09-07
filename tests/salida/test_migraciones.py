@@ -1,6 +1,7 @@
 """Pruebas de migraciones Alembic contra SQLite, incluido el estado durable de corridas."""
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,14 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+
+# Ver el comentario junto a `_CONNECT_REAL` en
+# `tests/scripts/test_procesar_carpeta.py`: captura la implementación real
+# ANTES de que `tests/conftest.py::_bloquear_llamadas_de_red_reales` la
+# parchee a nivel de sesión.
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_ADMIN = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+_NOMBRE_BASE_SCRATCH = "migracion_scratch_test"
 
 _RAIZ_REPO = Path(__file__).resolve().parent.parent.parent
 _TABLAS_ESPERADAS = {
@@ -349,3 +358,77 @@ def test_ciclo_upgrade_downgrade_upgrade_de_0008_es_estructuralmente_idempotente
     restricciones_cuarentena = {r["name"] for r in inspector.get_unique_constraints("cuarentena")}
     assert "uq_cuarentena_corrida_documento" in restricciones_cuarentena
 
+
+
+@pytest.fixture()
+def _url_postgres_scratch(monkeypatch: pytest.MonkeyPatch):
+    """Base de datos Postgres real, DESCARTABLE, para correr la migración
+    completa de punta a punta -- no la base compartida `anonimizacion` que
+    usan otros tests (que la manejan con `Base.metadata.create_all`/`drop_all`
+    directo, sin Alembic; correr `alembic upgrade head` ahí chocaría con
+    tablas ya creadas por ese otro camino). `skip` si Postgres real no
+    responde -- mismo patrón que el resto de los tests marcados `postgres`.
+    """
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    motor_admin = sa.create_engine(_URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT")
+    try:
+        with motor_admin.connect() as conexion:
+            conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH}"))
+            conexion.execute(sa.text(f"CREATE DATABASE {_NOMBRE_BASE_SCRATCH}"))
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexion es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_ADMIN}: {excepcion}")
+
+    url_scratch = _URL_POSTGRES_ADMIN.rsplit("/", 1)[0] + f"/{_NOMBRE_BASE_SCRATCH}"
+    try:
+        yield url_scratch
+    finally:
+        motor_admin.dispose()
+        with sa.create_engine(_URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT").connect() as conexion:
+            conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH}"))
+
+
+@pytest.mark.postgres
+def test_migracion_0009_impone_el_gate_de_una_corrida_activa_en_postgres_real(_url_postgres_scratch: str) -> None:
+    """Revisión adversarial ronda 3, hallazgo 4: `postgresql_where`/`sqlite_where`
+    son sintaxis DISTINTA por dialecto -- que el índice compile y funcione
+    contra SQLite (`Base.metadata.create_all`, resto de la suite) no prueba
+    nada sobre Postgres real, que es el motor de producción. Migra de punta
+    a punta contra una base Postgres real y descartable, e intenta violar el
+    índice único parcial con SQL crudo -- no una suposición sobre sintaxis."""
+    command.upgrade(_config_alembic(_url_postgres_scratch), "head")
+
+    motor = sa.create_engine(_url_postgres_scratch)
+    with motor.begin() as conexion:
+        indices = {indice["name"] for indice in sa.inspect(motor).get_indexes("corrida")}
+        assert "ux_corrida_una_activa" in indices
+
+        conexion.execute(
+            sa.text("INSERT INTO corrida (id_corrida, estado, version, activa) VALUES ('a', 'creada', 0, true)")
+        )
+
+    with motor.connect() as conexion, pytest.raises(sa.exc.IntegrityError):
+        conexion.execute(
+            sa.text("INSERT INTO corrida (id_corrida, estado, version, activa) VALUES ('b', 'creada', 0, true)")
+        )
+        conexion.commit()
+
+    # DOS corridas INACTIVAS (terminales) tienen que poder coexistir -- el
+    # índice parcial sólo mira las filas `activa=true`. Con una sola fila
+    # inactiva esta aserción no distingue un índice parcial real de uno
+    # completo sobre `activa` (un índice único completo también aceptaría
+    # UNA fila `false` sola) -- confirmado revirtiendo `postgresql_where` en
+    # la migración: sin la cláusula parcial, Postgres compila un índice
+    # único COMPLETO sobre `activa`, que de hecho rechaza una SEGUNDA fila
+    # inactiva con `UniqueViolation` -- el mismo error, por la razón
+    # equivocada. Dos filas inactivas es el mínimo que expone esa diferencia.
+    with motor.begin() as conexion:
+        conexion.execute(
+            sa.text("INSERT INTO corrida (id_corrida, estado, version, activa) VALUES ('c', 'fallida', 0, false)")
+        )
+        conexion.execute(
+            sa.text(
+                "INSERT INTO corrida (id_corrida, estado, version, activa) "
+                "VALUES ('d', 'completada', 0, false)"
+            )
+        )
+    motor.dispose()

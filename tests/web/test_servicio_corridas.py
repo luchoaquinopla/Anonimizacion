@@ -20,7 +20,8 @@ from anonimizacion.dominio.errores import ErrorDocumento
 from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import Base
-from anonimizacion.web.servicio_corridas import CorridaEnCursoError, ServicioCorridasReal, construir_payload_embudo
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
+from anonimizacion.web.servicio_corridas import ServicioCorridasReal, construir_payload_embudo
 
 _DB_URL_NUNCA_REAL = "postgresql+psycopg://no-se-conecta-en-estos-tests/db"
 
@@ -72,7 +73,9 @@ class _DespachadorFake:
     resultados: list[dict[str, object]] = field(default_factory=list)
     llamadas: list[dict[str, object]] = field(default_factory=list)
 
-    def __call__(self, *, corrida_id, grupos, crear_pool, procesos, cuarentena, detener=None, **_kwargs):
+    def __call__(
+        self, *, corrida_id, grupos, crear_pool, procesos, cuarentena, detener=None, registro_de_pool=None, **_kwargs
+    ):
         grupos_consumidos = list(grupos)
         self.llamadas.append(
             {
@@ -81,6 +84,7 @@ class _DespachadorFake:
                 "procesos": procesos,
                 "cuarentena": cuarentena,
                 "detener": detener,
+                "registro_de_pool": registro_de_pool,
             }
         )
         total_documentos = sum(len(grupo) for grupo in grupos_consumidos)
@@ -287,6 +291,26 @@ def test_crear_corrida_le_pasa_al_despachador_el_evento_de_apagado_del_servicio(
 
     (llamada,) = despachador.llamadas
     assert llamada["detener"] is servicio._evento_apagado
+
+
+def test_crear_corrida_le_pasa_al_despachador_el_registro_de_pool_del_servicio(tmp_path) -> None:
+    """Revisión adversarial ronda 3, hallazgo 3: `terminar_despachos_a_la_fuerza`
+    necesita el `RegistroDePool` del SERVICIO -- el mismo que recibe el
+    despachador real, para que quede apuntando al pool vigente mientras el
+    despacho está en curso."""
+    (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    despachador = _DespachadorFake()
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=despachador
+    )
+
+    servicio.crear_corrida(str(tmp_path))
+    servicio.esperar_despachos_en_curso()
+
+    (llamada,) = despachador.llamadas
+    assert llamada["registro_de_pool"] is servicio._registro_de_pool
 
 
 def test_solicitar_apagado_marca_fallida_una_corrida_cuyo_despacho_se_corto(tmp_path) -> None:

@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
-from anonimizacion.ingesta.lanzador_corrida import CuarentenaDeCorrida, LanzadorCorrida
+from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError, CuarentenaDeCorrida, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base, CorridaOrm, DocumentoCorridaOrm, Episodio, Estudio
@@ -70,6 +70,34 @@ def _motor_con_esquema():
     return motor
 
 
+def test_lanzar_rechaza_una_segunda_corrida_mientras_la_primera_sigue_activa(tmp_path) -> None:
+    """Revisión adversarial ronda 3, hallazgo 4: `scripts/procesar_carpeta.py`
+    no llama `listar_corridas_no_terminales` en ningún punto -- no tiene gate
+    propio. El `threading.Lock` de `ServicioCorridasReal` sólo protege al
+    panel contra SUS PROPIAS peticiones concurrentes; el gate real tiene que
+    vivir donde AMBOS procesos lo vean: la base (`ux_corrida_una_activa`,
+    `modelos_orm.py`). Dos `LanzadorCorrida` INDEPENDIENTES (simulando panel
+    y CLI) contra la MISMA base -- ninguno sabe del otro, y aun así la
+    segunda llamada a `lanzar` tiene que fallar."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+    motor = _motor_con_esquema()
+
+    lanzador_panel = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    lanzador_cli = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    activa = lanzador_panel.lanzar(tmp_path)
+    _materializar(activa)  # queda en INVENTARIANDO -- activa, nadie la cerró
+
+    with pytest.raises(CorridaEnCursoError) as excinfo:
+        lanzador_cli.lanzar(tmp_path)
+
+    assert excinfo.value.id_corrida_activa == activa.corrida_id
+    # La corrida rechazada NUNCA debe quedar a medio crear en la base.
+    with Session(motor) as sesion:
+        corridas = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert [c.id_corrida for c in corridas] == [activa.corrida_id]
+
+
 def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) -> None:
     """6.4: falla porque `LanzadorCorrida` no existe."""
     _pdf(tmp_path, "uno.pdf", b"contenido-uno")
@@ -99,6 +127,11 @@ def test_lanzador_crea_la_corrida_inventaria_y_devuelve_referencias(tmp_path) ->
 
 
 def test_lanzar_dos_veces_produce_dos_corridas_independientes(tmp_path) -> None:
+    """La segunda corrida sólo puede lanzarse DESPUÉS de que la primera
+    cierre -- el gate de "una corrida a la vez" (`ux_corrida_una_activa`,
+    revisión adversarial ronda 3) rechaza una segunda fila activa mientras
+    exista una; dos corridas no terminales nunca pueden coexistir, ni
+    siquiera en este test."""
     _pdf(tmp_path, "uno.pdf", b"contenido-uno")
 
     motor = _motor_con_esquema()
@@ -107,6 +140,9 @@ def test_lanzar_dos_veces_produce_dos_corridas_independientes(tmp_path) -> None:
 
     primero = lanzador.lanzar(tmp_path)
     _materializar(primero)  # drena el generador: dispara el registro en DB (ver docstring)
+    lanzador.marcar_procesando(primero.corrida_id)
+    lanzador.marcar_finalizada(primero.corrida_id, hubo_cuarentena=False)
+
     segundo = lanzador.lanzar(tmp_path)
     _materializar(segundo)
 
