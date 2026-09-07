@@ -20,6 +20,7 @@ SumideroCuarentena`, satisfecho por tipado estructural por
 from __future__ import annotations
 
 import hashlib
+import itertools
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,25 @@ _TAMANO_BLOQUE_HUELLA = 1024 * 1024
 # distribución real de tamaños de PDF del instituto. Ajustar acá cuando esa
 # medición exista -- es lo único que hay que tocar.
 _TOPE_BYTES_PROVISIONAL = 50 * 1024 * 1024
+# Sentinel de `listar_grupos()`: clave compartida por los archivos que están
+# directamente bajo la raíz, sin subcarpeta propia (corpus plano o sueltos
+# mezclados con carpetas -- ver docstring de `listar_grupos`).
+_CLAVE_RAIZ = "__raiz__"
+
+
+@dataclass(frozen=True)
+class GrupoArtefactos:
+    """Partición de `listar()` en unidades de trabajo (spec
+    `procesamiento-por-grupo`, openspec `paralelismo-de-procesamiento`).
+
+    `id_grupo` es un HASH, nunca la ruta ni el nombre de la subcarpeta: el
+    nombre de carpeta puede llevar PII (nombre del paciente), igual que la
+    `uri` de un `ArtefactoCrudo` apartado por sobretamaño
+    (`_apartar_por_sobretamano`, más abajo).
+    """
+
+    id_grupo: str
+    artefactos: tuple[ArtefactoCrudo, ...]
 
 
 @runtime_checkable
@@ -47,6 +67,14 @@ class FuenteDeArtefactos(Protocol):
     def listar(self) -> Iterator[ArtefactoCrudo]:
         """Descubre artefactos crudos de forma perezosa (spec: sin bloquear
         el inicio del procesamiento hasta terminar de inventariar todo)."""
+        ...
+
+    def listar_grupos(self) -> Iterator[GrupoArtefactos]:
+        """Partición disjunta y exhaustiva de `listar()` en grupos -- el
+        criterio de agrupamiento lo define el adaptador (para `FuenteLocal`,
+        el subdirectorio inmediato). Perezoso igual que `listar()`: un
+        adaptador conforme NO debe materializar la partición completa antes
+        de entregar el primer grupo."""
         ...
 
     def abrir(self, artefacto: ArtefactoCrudo) -> BinaryIO:
@@ -179,6 +207,69 @@ class FuenteLocal:
             if not self.huellas.es_nueva(sha256):
                 continue
             yield ArtefactoCrudo(uri=str(ruta), sha256=sha256, formato=formato)
+
+    def listar_grupos(self) -> Iterator[GrupoArtefactos]:
+        """Agrupa `listar()` por subdirectorio inmediato bajo `directorio`.
+
+        Criterio del instituto (reunión 2026-08-21, citada en el proposal
+        `paralelismo-de-procesamiento`): una carpeta por paciente, con los
+        estudios del episodio adentro. **Todavía no llegó ninguna muestra
+        real** -- este criterio es la mejor hipótesis verificable hoy, no un
+        hecho confirmado.
+
+        Perezoso, no ansioso: reutiliza `_listar_generador`, que ya produce
+        artefactos ordenados por ruta completa (`sorted(rglob(...))`). Ese
+        orden hace que todo el subárbol de una misma subcarpeta quede
+        contiguo en el flujo -- el separador de path ('/', 0x2F en ASCII)
+        ordena antes que cualquier caracter de nombre de archivo o carpeta,
+        así que dos subcarpetas nunca intercalan sus artefactos entre sí.
+        Eso permite agrupar con `itertools.groupby` sin materializar la
+        partición completa: cada grupo se cierra y se entrega apenas cambia
+        la clave, nunca se retiene más de un grupo en memoria a la vez (es
+        exactamente la propiedad que evita que `procesar_lote` acumule en
+        RAM los resueltos de la corrida entera).
+
+        Corpus plano (honesto sobre la incertidumbre real -- ver proposal.md
+        "Antes de leer"): si no hay subcarpetas, todos los archivos sueltos
+        bajo `directorio` comparten la clave sentinel `_CLAVE_RAIZ` y, al no
+        haber ninguna subcarpeta que los separe, forman un único grupo
+        contiguo. El paralelismo del tramo 3 rendiría cero en ese caso -- es
+        el comportamiento esperado, no un bug de esta función.
+
+        Advertencia documentada, no maquillada: en un corpus MIXTO -- algunas
+        subcarpetas y ADEMÁS archivos sueltos intercalados alfabéticamente
+        entre ellas -- los archivos sueltos pueden partirse en más de un
+        grupo con la misma clave sentinel, si una subcarpeta los separa en el
+        orden alfabético. La partición sigue siendo disjunta y exhaustiva
+        (ningún archivo se pierde ni se cuenta dos veces: cada `ArtefactoCrudo`
+        que `listar()` produce cae en EXACTAMENTE un grupo), sólo dejan de
+        terminar todos con el mismo `id_grupo`. El corpus real descripto por
+        el instituto no tiene esa mezcla (o todo tiene subcarpetas, o nada
+        las tiene); resolver el caso mixto exigiría des-perezar la función
+        (acumular todos los archivos sueltos hasta agotar el listado), y no
+        hay hoy ningún corpus real que lo requiera.
+        """
+        ruta_raiz = self.directorio.resolve()
+        if not ruta_raiz.is_dir():
+            raise FileNotFoundError(f"directorio de ingesta inexistente: {self.directorio}")
+        if not self._es_ruta_autorizada(ruta_raiz):
+            raise PermissionError("la ruta de ingesta no esta autorizada")
+        return self._listar_grupos_generador(ruta_raiz)
+
+    def _listar_grupos_generador(self, ruta_raiz: Path) -> Iterator[GrupoArtefactos]:
+        def _clave(artefacto: ArtefactoCrudo) -> str:
+            partes = Path(artefacto.uri).relative_to(ruta_raiz).parts
+            return partes[0] if len(partes) > 1 else _CLAVE_RAIZ
+
+        for clave, artefactos_del_grupo in itertools.groupby(self._listar_generador(ruta_raiz), key=_clave):
+            artefactos = tuple(artefactos_del_grupo)
+            # Hash de la clave de agrupamiento (subcarpeta o sentinel de raíz)
+            # junto con la `uri` del primer artefacto: nunca la ruta cruda
+            # (design.md `procesamiento-por-grupo`, Decisión 2 -- el nombre de
+            # carpeta puede ser PII), y distingue dos instancias de grupo que
+            # compartieran la misma clave (ver advertencia del corpus mixto).
+            id_grupo = hashlib.sha256(f"{clave}:{artefactos[0].uri}".encode("utf-8")).hexdigest()
+            yield GrupoArtefactos(id_grupo=id_grupo, artefactos=artefactos)
 
     def _apartar_por_sobretamano(self, ruta: Path, tamano_bytes: int) -> None:
         # `id_documento` es el sha256 de la RUTA, no del contenido: el nombre
