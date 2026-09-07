@@ -5,9 +5,9 @@ from datetime import date, datetime, timedelta, timezone
 import sqlalchemy as sa
 
 from anonimizacion.dominio.corridas import Corrida, DocumentoCorrida
-from anonimizacion.dominio.estados_corrida import EstadoDocumentoCorrida
+from anonimizacion.dominio.estados_corrida import EstadoCorrida, EstadoDocumentoCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
-from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Cuarentena, Estudio
 
 
 def _documento(corrida_id: str) -> DocumentoCorrida:
@@ -227,6 +227,49 @@ def test_ultima_actividad_sin_evidencia_de_pipeline_usa_la_transicion_administra
 
     assert ultima is not None
     assert (datetime.now(timezone.utc).replace(tzinfo=None) - ultima.replace(tzinfo=None)) < timedelta(minutes=1)
+
+
+def test_registrar_latido_actualiza_ultima_actividad_sin_tocar_estado_ni_version() -> None:
+    """Revisión adversarial ronda 3, hallazgo 2: un corpus plano puede tardar
+    mucho más que el margen de inactividad SÓLO hasheando -- en toda esa
+    ventana no hay ningún `Estudio`/`Cuarentena` que sirva de evidencia. Un
+    latido periódico del proceso que trabaja (`_despachar_y_cerrar`) tiene
+    que poder refrescar `ultima_actividad` sin depender de que ya se haya
+    escrito un documento, y sin pisar `estado`/`version` -- el latido no es
+    una transición de dominio, es sólo "sigo vivo"."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-con-latido")
+    repositorio.crear_corrida(corrida)
+    corrida.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    repositorio.actualizar_corrida(corrida, version_esperada=0)
+
+    import time
+
+    antes = repositorio.ultima_actividad("corrida-con-latido")
+    time.sleep(0.05)  # margen real de reloj: sin esto, un no-op pasaría igual (despues >= antes trivial)
+    repositorio.registrar_latido("corrida-con-latido")
+    despues = repositorio.ultima_actividad("corrida-con-latido")
+
+    assert despues is not None
+    assert antes is not None
+    assert despues > antes, "el latido tiene que AVANZAR ultima_actividad, no sólo no retrocederla"
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, "corrida-con-latido")
+    assert fila.estado == "inventariando", "el latido no puede cambiar el estado"
+    assert fila.version == 1, "el latido no puede pisar la version de bloqueo optimista"
+
+
+def test_registrar_latido_de_corrida_inexistente_no_rompe() -> None:
+    """Best-effort: un latido tardío contra una corrida que ya no existe (o
+    que corrió una migración/limpieza entre medio) no debe tumbar el hilo de
+    despacho -- sólo no hace nada."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+
+    repositorio.registrar_latido("no-existe")  # no debe lanzar
 
 
 def test_registrar_documentos_dos_veces_no_duplica_el_denominador() -> None:

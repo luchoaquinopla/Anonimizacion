@@ -11,7 +11,7 @@ de qué existe, qué falta y qué decisión lo desbloquea.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
@@ -151,6 +151,44 @@ class RepositorioCorridas:
             )
         candidatos = [fila.actualizada_en, ultimo_estudio, ultima_cuarentena]
         return max(momento for momento in candidatos if momento is not None)
+
+    def registrar_latido(self, id_corrida: str) -> None:
+        """Toca `corrida.actualizada_en` SIN pasar por `Corrida.avanzar_a` --
+        no es una transición de dominio, es sólo "el proceso que trabaja
+        sigue vivo" (revisión adversarial ronda 3, hallazgo 2).
+
+        Por qué hace falta además de `ultima_actividad`: un corpus PLANO (sin
+        subcarpetas) colapsa en un único grupo, y `FuenteLocal.listar_grupos`
+        agota TODO el listado -- hasheando cada archivo -- antes de entregar
+        ese grupo (`ingesta/fuente.py`, docstring de `listar_grupos`). Con
+        ~400.000 documentos eso puede tardar mucho más que cualquier margen
+        de inactividad razonable, y en toda esa ventana no se escribe ningún
+        `estudio` ni `cuarentena` -- la única evidencia sería la transición a
+        `PROCESANDO`, marcada una sola vez al principio. Sin un latido
+        propio, esa ventana larga y silenciosa es indistinguible de una
+        corrida abandonada.
+
+        Llamador de producción: un hilo de latido dedicado, lanzado por
+        `web/servicio_corridas.py::_despachar_y_cerrar` mientras el despacho
+        real está en curso -- ver ese módulo para el intervalo.
+
+        Sin bloqueo optimista (a propósito): un latido es best-effort y
+        NUNCA debe competir por la versión de dominio con
+        `marcar_procesando`/`marcar_finalizada`/`marcar_fallida` -- si pisa
+        una actualización real por una carrera rarísima, la próxima vuelta
+        del latido (segundos después) lo corrige solo. `estado`/`version` NO
+        se tocan: sólo `actualizada_en`.
+
+        Silencioso si `id_corrida` no existe (corrida borrada/migrada entre
+        medio): un latido tardío no puede tumbar el hilo de despacho por una
+        fila que ya no está.
+        """
+        with Session(self._motor) as sesion, sesion.begin():
+            sesion.execute(
+                update(CorridaOrm)
+                .where(CorridaOrm.id_corrida == id_corrida)
+                .values(actualizada_en=datetime.now(timezone.utc))
+            )
 
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
         """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.

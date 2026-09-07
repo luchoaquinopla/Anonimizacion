@@ -390,3 +390,54 @@ def test_crear_corrida_con_dos_peticiones_concurrentes_una_sola_pasa_el_gate(tmp
     assert rechazadas[0][1] == exitosas[0][1], "la rechazada tiene que apuntar a la corrida que sí se creó"
 
     servicio.esperar_despachos_en_curso()
+
+
+# --- latido periódico durante el despacho (revisión adversarial ronda 3) ----
+
+
+def test_el_despacho_emite_latidos_periodicos_mientras_esta_en_curso(tmp_path) -> None:
+    """Revisión adversarial ronda 3, hallazgo 2: un corpus PLANO agota todo
+    el listado (hasheando cada archivo) antes de entregar su único grupo
+    (`ingesta/fuente.py::listar_grupos`) -- con ~400.000 documentos eso puede
+    tardar mucho más que el margen de inactividad, y en toda esa ventana no
+    se escribe ningún `estudio`/`cuarentena`. `_despachar_y_cerrar` tiene que
+    mantener `ultima_actividad` fresca durante TODO el despacho -- no sólo
+    en `marcar_procesando` (al principio) y `marcar_finalizada` (al final) --
+    con un latido propio, independiente de que ya se haya escrito un
+    documento."""
+    (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    def _despachador_lento(**_kwargs):
+        time.sleep(0.6)  # simula el hasheo largo de un corpus plano
+        return [], 0, 0
+
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador,
+        motor=motor,
+        db_url=_DB_URL_NUNCA_REAL,
+        procesos=1,
+        despachador=_despachador_lento,
+        latido_intervalo_seg=0.05,
+    )
+
+    creada = servicio.crear_corrida(str(tmp_path))
+    # Deja asentar `marcar_procesando` (que también toca `actualizada_en`,
+    # una sola vez, al principio) ANTES de tomar la primera lectura -- si no,
+    # ese bump por sí solo -- sin ningún latido -- alcanzaría para que
+    # `durante_el_despacho > antes_de_dormir` sea cierto por la razón
+    # equivocada. Confirmado revirtiendo el fix: el test pasaba igual sin
+    # ningún latido real, por esta misma carrera.
+    time.sleep(0.15)
+    antes_de_dormir = lanzador.repositorio.ultima_actividad(creada.id_corrida)
+    time.sleep(0.3)  # deja pasar varios intervalos de latido MIENTRAS el despachador sigue "trabajando"
+    durante_el_despacho = lanzador.repositorio.ultima_actividad(creada.id_corrida)
+    servicio.esperar_despachos_en_curso()
+
+    assert antes_de_dormir is not None
+    assert durante_el_despacho is not None
+    assert durante_el_despacho > antes_de_dormir, (
+        "ultima_actividad tiene que avanzar DURANTE el despacho por el latido, "
+        "no sólo por marcar_procesando al principio y marcar_finalizada al final"
+    )

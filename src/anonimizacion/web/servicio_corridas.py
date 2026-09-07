@@ -33,7 +33,8 @@ from pathlib import Path
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
+from anonimizacion.ingesta.lanzador_corrida import MARGEN_INACTIVIDAD_DEFAULT, LanzadorCorrida
+from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import CorridaOrm
 from anonimizacion.trabajadores import despacho_paralelo
 from anonimizacion.web.embudo_corrida import Embudo, construir_embudo
@@ -45,6 +46,13 @@ Grupo = tuple[dict[str, str], ...]
 # despacho en sí -- ver `_DespachadorFake` en
 # `tests/web/test_servicio_corridas.py`), no sólo la función real.
 FuncionDespacho = Callable[..., tuple[list[dict[str, object]], int, int]]
+
+# Intervalo de latido por defecto (revisión adversarial ronda 3, hallazgo 2):
+# un tercio de `MARGEN_INACTIVIDAD_DEFAULT` -- tres latidos de margen antes
+# de que `recuperar_corridas_abandonadas` pueda considerar la corrida
+# abandonada, para tolerar que un latido puntual se demore o falle sin que
+# el margen entero dependa de uno solo.
+LATIDO_INTERVALO_SEG_DEFAULT = MARGEN_INACTIVIDAD_DEFAULT.total_seconds() / 3
 
 
 class CorridaEnCursoError(RuntimeError):
@@ -67,6 +75,39 @@ class CorridaEnCursoError(RuntimeError):
         )
 
 
+def _emitir_latidos(
+    *,
+    repositorio: RepositorioCorridas,
+    corrida_id: str,
+    detener: threading.Event,
+    intervalo_seg: float,
+) -> None:
+    """Hilo de fondo: llama `RepositorioCorridas.registrar_latido` cada
+    `intervalo_seg` mientras `detener` no esté seteado -- señal de vida
+    PROPIA del proceso que trabaja (revisión adversarial ronda 3, hallazgo
+    2), independiente de que ya se haya escrito o no un `estudio`/`cuarentena`.
+
+    Por qué hace falta: un corpus PLANO agota todo el listado -- hasheando
+    cada archivo -- antes de entregar su único grupo
+    (`ingesta/fuente.py::listar_grupos`). Con ~400.000 documentos eso puede
+    tardar mucho más que `MARGEN_INACTIVIDAD_DEFAULT`, y en toda esa ventana
+    la única evidencia sin este latido sería la transición a `PROCESANDO`,
+    marcada UNA sola vez al principio -- indistinguible, para
+    `recuperar_corridas_abandonadas`, de una corrida realmente abandonada.
+
+    `detener.wait(timeout=...)`, no `time.sleep`: responde de inmediato en
+    cuanto el despacho termina, sin esperar el intervalo completo. Cualquier
+    fallo al escribir el latido es best-effort (`except Exception: pass`) --
+    un error transitorio de conexión no puede tumbar el despacho real por
+    culpa de una señal de vida.
+    """
+    while not detener.wait(timeout=intervalo_seg):
+        try:
+            repositorio.registrar_latido(corrida_id)
+        except Exception:
+            pass
+
+
 def _despachar_y_cerrar(
     *,
     lanzador: LanzadorCorrida,
@@ -78,6 +119,7 @@ def _despachar_y_cerrar(
     tope_bytes: int | None,
     despachador: FuncionDespacho,
     detener: threading.Event,
+    latido_intervalo_seg: float = LATIDO_INTERVALO_SEG_DEFAULT,
 ) -> None:
     """Corre en un HILO en segundo plano, lanzado por `ServicioCorridasReal.crear_corrida`.
 
@@ -129,6 +171,18 @@ def _despachar_y_cerrar(
     del corte quedan escritos igual -- sólo el renglón administrativo de
     `corrida` refleja que no terminó.
     """
+    detener_latido = threading.Event()
+    hilo_latido = threading.Thread(
+        target=_emitir_latidos,
+        kwargs={
+            "repositorio": lanzador.repositorio,
+            "corrida_id": corrida_id,
+            "detener": detener_latido,
+            "intervalo_seg": latido_intervalo_seg,
+        },
+        daemon=True,
+    )
+    hilo_latido.start()
     try:
         lanzador.marcar_procesando(corrida_id)
         resultados, _total_documentos, _total_grupos = despachador(
@@ -156,6 +210,9 @@ def _despachar_y_cerrar(
         else:
             hubo_cuarentena = any(resultado["estado"] != "exito" for resultado in resultados)
             lanzador.marcar_finalizada(corrida_id, hubo_cuarentena=hubo_cuarentena)
+    finally:
+        detener_latido.set()
+        hilo_latido.join(timeout=5)
 
 
 def _leer_estado_corrida(motor: Engine, id_corrida: str) -> str | None:
@@ -268,6 +325,7 @@ class ServicioCorridasReal:
     procesos: int
     tope_bytes: int | None = None
     despachador: FuncionDespacho = despacho_paralelo.despachar_en_paralelo
+    latido_intervalo_seg: float = LATIDO_INTERVALO_SEG_DEFAULT
     _hilos_en_curso: list[threading.Thread] = field(default_factory=list)
     _evento_apagado: threading.Event = field(default_factory=threading.Event)
     _lock_creacion: threading.Lock = field(default_factory=threading.Lock)
@@ -323,6 +381,7 @@ class ServicioCorridasReal:
                     "tope_bytes": self.tope_bytes,
                     "despachador": self.despachador,
                     "detener": self._evento_apagado,
+                    "latido_intervalo_seg": self.latido_intervalo_seg,
                 },
                 # `daemon=True`: backstop, no el mecanismo principal de
                 # apagado (revisión adversarial crítico 2 -- la versión
