@@ -1,13 +1,15 @@
 """Tests de `salida/destinos/postgres.py` (tasks.md 7.3, spec `anonymized-output`).
 
 Corren contra SQLite en memoria -- ver `tests/salida/test_migraciones.py`
-para la nota completa de por qué (no hay Postgres en esta máquina de
-desarrollo). `EscritorPostgres` recibe el `Engine` de afuera (inyección de
-dependencia): en producción ese engine se arma con una URL
-`postgresql+psycopg2://...` (Fase 8/9, pipeline/config -- todavía no
-implementada), acá con `sqlite:///:memory:`. El código de este módulo no
-importa `psycopg2` en ningún lado ni depende de sintaxis específica de
-Postgres (nada de `INSERT ... ON CONFLICT`), así que es honestamente
+para la nota completa de por qué (la suite bloquea toda conexión de red real,
+`tests/conftest.py::_bloquear_llamadas_de_red_reales`; Postgres real sólo se
+usa para verificación manual fuera de pytest, ver
+`openspec/changes/paralelismo-de-procesamiento/proposal.md`). `EscritorPostgres`
+recibe el `Engine` de afuera (inyección de dependencia): en producción ese
+engine se arma con `construir_engine_postgres` (mismo módulo) contra una URL
+`postgresql+psycopg://...`, acá con `sqlite:///:memory:`. El código de este
+módulo no importa `psycopg` en ningún lado ni depende de sintaxis específica
+de Postgres (nada de `INSERT ... ON CONFLICT`), así que es honestamente
 portable, no un mock de la lógica real.
 
 El bloque más importante de estos tests es la semántica de ambigüedad de
@@ -36,7 +38,7 @@ from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEc
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
 from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
-from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
 
@@ -442,4 +444,33 @@ def test_un_registro_sin_clave_conserva_el_comportamiento_anterior(
     escritor.escribir_registro(registro)
 
     assert len(_leer_todas(motor, Estudio)) == 2
+
+
+# --- construir_engine_postgres: pool contra RDS (paralelismo-de-procesamiento) --
+#
+# `pool_pre_ping`/`pool_recycle` importan sólo contra una base de red real
+# (RDS puede cerrar una conexión ociosa del pool sin avisar); estos tests
+# verifican la CONFIGURACIÓN del engine, no requieren conexión real -- crear
+# un `Engine` con SQLAlchemy es perezoso, no abre socket hasta el primer uso.
+
+
+def test_construir_engine_postgres_activa_pre_ping_y_recycle_explicito() -> None:
+    engine = construir_engine_postgres("postgresql+psycopg://usuario:clave@localhost/base")
+    try:
+        assert engine.pool._pre_ping is True
+        assert engine.pool._recycle == POOL_RECYCLE_SEGUNDOS
+        assert engine.pool.size() == POOL_SIZE
+    finally:
+        engine.dispose()
+
+
+def test_construir_engine_postgres_no_rompe_con_sqlite(motor) -> None:
+    """SQLite no tiene pool de red: la config se acepta pero no representa nada
+    real -- `pool_size` lo ignora `SingletonThreadPool`, sin error ni warning."""
+    engine = construir_engine_postgres("sqlite:///:memory:")
+    try:
+        with sa.orm.Session(engine) as sesion:
+            sesion.execute(sa.text("SELECT 1"))
+    finally:
+        engine.dispose()
 
