@@ -77,6 +77,7 @@ def _despachar_y_cerrar(
     procesos: int,
     tope_bytes: int | None,
     despachador: FuncionDespacho,
+    detener: threading.Event,
 ) -> None:
     """Corre en un HILO en segundo plano, lanzado por `ServicioCorridasReal.crear_corrida`.
 
@@ -114,6 +115,19 @@ def _despachar_y_cerrar(
     para siempre, y se vuelve a lanzar para que quede visible en stderr
     (`threading.excepthook` por defecto) -- no hay otro canal para un bug
     inesperado en un hilo de fondo.
+
+    `detener` (revisión adversarial crítico 2, decisión "Ctrl+C a mitad de
+    una corrida"): el `threading.Event` compartido de
+    `ServicioCorridasReal._evento_apagado`, forwardeado al `despachador`
+    (`despacho_paralelo.despachar_en_paralelo` real acepta este mismo
+    parámetro). Si `detener.is_set()` cuando el despachador retorna, el
+    despacho se CORTÓ voluntariamente -- no terminó de procesar el
+    inventario. No hay evidencia de que esté completo, así que no puede
+    cerrar `COMPLETADA`/`COMPLETADA_CON_CUARENTENA` (eso afirmaría un
+    desenlace que nunca ocurrió): cierra `FALLIDA`, la misma honestidad que
+    ya exige un crash inesperado. Los documentos que sí se procesaron antes
+    del corte quedan escritos igual -- sólo el renglón administrativo de
+    `corrida` refleja que no terminó.
     """
     try:
         lanzador.marcar_procesando(corrida_id)
@@ -128,6 +142,7 @@ def _despachar_y_cerrar(
             ),
             procesos=procesos,
             cuarentena=lanzador.cuarentena,
+            detener=detener,
         )
     except Exception:
         try:
@@ -136,8 +151,11 @@ def _despachar_y_cerrar(
             pass  # ya hay una excepcion real en curso; no la tapamos con esta
         raise
     else:
-        hubo_cuarentena = any(resultado["estado"] != "exito" for resultado in resultados)
-        lanzador.marcar_finalizada(corrida_id, hubo_cuarentena=hubo_cuarentena)
+        if detener.is_set():
+            lanzador.marcar_fallida(corrida_id)
+        else:
+            hubo_cuarentena = any(resultado["estado"] != "exito" for resultado in resultados)
+            lanzador.marcar_finalizada(corrida_id, hubo_cuarentena=hubo_cuarentena)
 
 
 def _leer_estado_corrida(motor: Engine, id_corrida: str) -> str | None:
@@ -218,6 +236,30 @@ class ServicioCorridasReal:
     `esperar_despachos_en_curso` pueda esperarlos (tests de integración HTTP
     que necesitan el resultado final de un despacho real antes de
     comprobarlo, y el cierre ordenado de `scripts/servir_panel.py`).
+
+    `_evento_apagado` (revisión adversarial crítico 2, decisión "Ctrl+C a
+    mitad de una corrida"): UN SOLO `threading.Event`, compartido por TODOS
+    los despachos que este servicio lance -- `solicitar_apagado()` lo setea
+    una vez, y `_despachar_y_cerrar` lo revisa en cada uno. No se resetea
+    nunca: `solicitar_apagado()` es para el apagado del PROCESO completo, no
+    para pausar una corrida y después reanudarla.
+
+    `_lock_creacion` (revisión adversarial IMPORTANTE, ventana TOCTOU del
+    gate): `crear_corrida` lee `listar_corridas_no_terminales` y recién
+    después crea la corrida -- dos peticiones casi simultáneas (latencia
+    real de listar un directorio grande, un doble clic, un reintento del
+    navegador) pueden pasar el chequeo ANTES de que cualquiera de las dos
+    termine de crear la suya, reproducido con dos hilos reales. Este
+    `Lock` serializa el chequeo + la creación dentro de ESTE proceso -- basta
+    porque `crear_corrida` es el ÚNICO punto de entrada al gate, y este
+    servidor es de un solo proceso (`scripts/servir_panel.py`, sin réplicas).
+    NO protege contra una corrida creada por OTRO proceso (p. ej.
+    `scripts/procesar_carpeta.py`) en esa misma ventana -- ese es un
+    escenario distinto (dos ESCRITORES independientes, no dos peticiones al
+    mismo gate) que ninguna sincronización en memoria de este proceso puede
+    cerrar; ahí la protección real es que el `SELECT` de
+    `listar_corridas_no_terminales` de todos modos ve esa corrida en cuanto
+    su fila existe, sea cual sea el proceso que la creó.
     """
 
     lanzador: LanzadorCorrida
@@ -227,6 +269,8 @@ class ServicioCorridasReal:
     tope_bytes: int | None = None
     despachador: FuncionDespacho = despacho_paralelo.despachar_en_paralelo
     _hilos_en_curso: list[threading.Thread] = field(default_factory=list)
+    _evento_apagado: threading.Event = field(default_factory=threading.Event)
+    _lock_creacion: threading.Lock = field(default_factory=threading.Lock)
 
     def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
         """Crea la corrida, inventaría el primer grupo, y despacha el resto
@@ -256,14 +300,15 @@ class ServicioCorridasReal:
         Si no hay ningún grupo (carpeta sin PDFs), no se lanza ningún hilo --
         no hay nada que procesar (misma decisión que el script).
         """
-        activas = self.lanzador.repositorio.listar_corridas_no_terminales()
-        if activas:
-            raise CorridaEnCursoError(activas[0].id_corrida)
+        with self._lock_creacion:
+            activas = self.lanzador.repositorio.listar_corridas_no_terminales()
+            if activas:
+                raise CorridaEnCursoError(activas[0].id_corrida)
 
-        ruta = Path(ruta_autorizada)
-        resultado = self.lanzador.lanzar(ruta)
-        iterador_grupos = iter(resultado.referencias)
-        primer_grupo = next(iterador_grupos, None)
+            ruta = Path(ruta_autorizada)
+            resultado = self.lanzador.lanzar(ruta)
+            iterador_grupos = iter(resultado.referencias)
+            primer_grupo = next(iterador_grupos, None)
         if primer_grupo is not None:
             grupos_a_despachar = itertools.chain([primer_grupo], iterador_grupos)
             hilo = threading.Thread(
@@ -277,17 +322,27 @@ class ServicioCorridasReal:
                     "procesos": self.procesos,
                     "tope_bytes": self.tope_bytes,
                     "despachador": self.despachador,
+                    "detener": self._evento_apagado,
                 },
-                # `daemon=True`: si el servidor se cae (o Ctrl+C) con una
-                # corrida en curso, este hilo muere con el proceso -- no
-                # queda colgando el apagado. La corrida queda `procesando`
-                # hasta el próximo arranque, donde
-                # `lanzador_corrida.recuperar_corridas_abandonadas` la cierra
-                # `FALLIDA` (decisión "qué pasa si el servidor se cae",
-                # `scripts/servir_panel.py`). No es un dato perdido: los
-                # documentos ya escritos en `estudio`/`cuarentena` antes de
-                # la caída no se revierten, sólo el renglón administrativo
-                # de `corrida` se cierra honesto.
+                # `daemon=True`: backstop, no el mecanismo principal de
+                # apagado (revisión adversarial crítico 2 -- la versión
+                # anterior de este comentario afirmaba que `daemon=True`
+                # alcanzaba para que el proceso saliera al toque; es FALSO:
+                # `ProcessPoolExecutor` registra su propio `atexit` que
+                # espera a que el pool activo termine, sin importar que el
+                # hilo dueño sea daemon -- medido, ~8 s de proceso colgado
+                # con un hilo daemon de 8 s de trabajo). El mecanismo real es
+                # cooperativo: `scripts/servir_panel.py::main` llama
+                # `solicitar_apagado()` + `esperar_despachos_en_curso(timeout=...)`
+                # ante `KeyboardInterrupt`, lo que hace que `despachar_en_paralelo`
+                # deje de tomar grupos nuevos y el `ProcessPoolExecutor` se
+                # cierre solo, sin hijos huérfanos. `daemon=True` sólo cubre
+                # el caso límite en que ese apagado cooperativo se agota
+                # (`timeout`) o el proceso muere de otra forma (crash, `kill
+                # -9`): ahí sí, que el hilo no bloquee la salida es mejor que
+                # colgar para siempre -- la corrida queda abandonada y
+                # `recuperar_corridas_abandonadas` la recupera en el próximo
+                # arranque si de verdad no hay evidencia de trabajo.
                 daemon=True,
             )
             self._hilos_en_curso.append(hilo)
@@ -308,6 +363,33 @@ class ServicioCorridasReal:
         """
         for hilo in list(self._hilos_en_curso):
             hilo.join(timeout=timeout)
+
+    def hay_despachos_en_curso(self) -> bool:
+        """`True` si algún hilo de despacho lanzado por este servicio sigue
+        vivo -- feature `despachador-desde-el-panel`, para que
+        `scripts/servir_panel.py::main` pueda avisar si el apagado
+        cooperativo (`solicitar_apagado` + `esperar_despachos_en_curso`) se
+        agotó sin que el despacho terminara, sin tener que tocar
+        `_hilos_en_curso` (privado) desde afuera."""
+        return any(hilo.is_alive() for hilo in self._hilos_en_curso)
+
+    def solicitar_apagado(self) -> None:
+        """Señala a TODOS los despachos en curso (y a cualquiera que arranque
+        después) que dejen de tomar grupos NUEVOS -- feature
+        `despachador-desde-el-panel`, decisión "Ctrl+C a mitad de una
+        corrida" (revisión adversarial crítico 2).
+
+        Llamador de producción: `scripts/servir_panel.py::main`, en el
+        `except KeyboardInterrupt` -- ANTES de `esperar_despachos_en_curso`,
+        para que el despacho tenga la señal antes de que el operador se
+        quede esperando. Idempotente: llamarlo más de una vez no hace nada
+        distinto (`threading.Event.set()` ya lo es).
+
+        No cancela trabajo YA en vuelo ni mata procesos hijos a la fuerza --
+        drena lo que está corriendo y corta ahí (ver el docstring de
+        `despacho_paralelo.despachar_en_paralelo`, parámetro `detener`).
+        """
+        self._evento_apagado.set()
 
     def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
         estado = _leer_estado_corrida(self.motor, id_corrida)

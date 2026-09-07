@@ -9,6 +9,8 @@ doble.
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass, field
 
 import pytest
@@ -70,7 +72,7 @@ class _DespachadorFake:
     resultados: list[dict[str, object]] = field(default_factory=list)
     llamadas: list[dict[str, object]] = field(default_factory=list)
 
-    def __call__(self, *, corrida_id, grupos, crear_pool, procesos, cuarentena, **_kwargs):
+    def __call__(self, *, corrida_id, grupos, crear_pool, procesos, cuarentena, detener=None, **_kwargs):
         grupos_consumidos = list(grupos)
         self.llamadas.append(
             {
@@ -78,6 +80,7 @@ class _DespachadorFake:
                 "grupos": grupos_consumidos,
                 "procesos": procesos,
                 "cuarentena": cuarentena,
+                "detener": detener,
             }
         )
         total_documentos = sum(len(grupo) for grupo in grupos_consumidos)
@@ -261,3 +264,129 @@ def test_reintentar_corrida_lanza_notimplementederror(tmp_path) -> None:
 
     with pytest.raises(NotImplementedError):
         servicio.reintentar_corrida("cualquier-id")
+
+
+# --- apagado ordenado (revisión adversarial crítico 2) -----------------------
+
+
+def test_crear_corrida_le_pasa_al_despachador_el_evento_de_apagado_del_servicio(tmp_path) -> None:
+    """`main()` (`scripts/servir_panel.py`) necesita poder pedirle a UN
+    servicio que frene TODOS sus despachos en curso -- el mismo
+    `threading.Event` tiene que viajar hasta el despachador real en cada
+    corrida que este servicio lance."""
+    (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    despachador = _DespachadorFake()
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=despachador
+    )
+
+    servicio.crear_corrida(str(tmp_path))
+    servicio.esperar_despachos_en_curso()
+
+    (llamada,) = despachador.llamadas
+    assert llamada["detener"] is servicio._evento_apagado
+
+
+def test_solicitar_apagado_marca_fallida_una_corrida_cuyo_despacho_se_corto(tmp_path) -> None:
+    """Revisión adversarial crítico 2: si el despacho se corta porque se
+    pidió apagado (Ctrl+C, `solicitar_apagado`), la corrida NO puede quedar
+    diciendo `completada` -- no hay evidencia de que el inventario completo
+    se haya procesado. Se cierra `FALLIDA`, la misma honestidad que ya exige
+    un crash inesperado."""
+    (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+
+    def _despachador_cancelado_a_mitad_de_camino(*, detener, **_kwargs):
+        detener.set()  # simula que Ctrl+C llegó DURANTE el despacho
+        return [], 0, 0
+
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador,
+        motor=motor,
+        db_url=_DB_URL_NUNCA_REAL,
+        procesos=1,
+        despachador=_despachador_cancelado_a_mitad_de_camino,
+    )
+
+    creada = servicio.crear_corrida(str(tmp_path))
+    servicio.esperar_despachos_en_curso()
+
+    assert servicio.consultar_corrida(creada.id_corrida).estado == "fallida"
+
+
+def test_solicitar_apagado_es_idempotente_y_no_rompe_si_no_hay_despachos(tmp_path) -> None:
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    servicio = ServicioCorridasReal(lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1)
+
+    servicio.solicitar_apagado()
+    servicio.solicitar_apagado()
+
+    assert servicio._evento_apagado.is_set()
+
+
+# --- ventana TOCTOU del gate (revisión adversarial IMPORTANTE) --------------
+
+
+def test_crear_corrida_con_dos_peticiones_concurrentes_una_sola_pasa_el_gate(tmp_path, monkeypatch) -> None:
+    """Revisión adversarial: la ventana entre "leer si hay una corrida
+    activa" y "crear la corrida" es real, no teórica -- reproducida con dos
+    hilos REALES sincronizados con un `Barrier` (no en secuencia dentro del
+    mismo hilo, que nunca ejercita la concurrencia real), y con un `sleep`
+    corto insertado a propósito en el chequeo para ensanchar la ventana de
+    forma determinística -- la misma ventana que en producción abre 0,5 s de
+    latencia real (un `FuenteLocal` listando un directorio grande, un doble
+    clic, un reintento del navegador).
+
+    Con dos corridas concurrentes duplicando el presupuesto de memoria que
+    el gate existe para proteger, exactamente UNA de las dos peticiones
+    tiene que pasar."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "uno.pdf").write_bytes(b"contenido-a")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "uno.pdf").write_bytes(b"contenido-b")
+
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=_DespachadorFake()
+    )
+
+    original_listar = RepositorioCorridas.listar_corridas_no_terminales
+
+    def _listar_ensanchando_la_ventana(self):
+        resultado = original_listar(self)
+        time.sleep(0.2)  # ensancha la ventana TOCTOU a propósito, sólo para este test
+        return resultado
+
+    monkeypatch.setattr(RepositorioCorridas, "listar_corridas_no_terminales", _listar_ensanchando_la_ventana)
+
+    barrera = threading.Barrier(2)
+    resultados: dict[str, tuple[str, str]] = {}
+
+    def _crear(etiqueta: str, ruta) -> None:
+        barrera.wait()
+        try:
+            estado = servicio.crear_corrida(str(ruta))
+            resultados[etiqueta] = ("OK", estado.id_corrida)
+        except CorridaEnCursoError as error:
+            resultados[etiqueta] = ("RECHAZADA", error.id_corrida_activa)
+
+    hilo_a = threading.Thread(target=_crear, args=("A", tmp_path / "a"))
+    hilo_b = threading.Thread(target=_crear, args=("B", tmp_path / "b"))
+    hilo_a.start()
+    hilo_b.start()
+    hilo_a.join(timeout=10)
+    hilo_b.join(timeout=10)
+
+    print("Resultados:", resultados)
+    exitosas = [valor for valor in resultados.values() if valor[0] == "OK"]
+    rechazadas = [valor for valor in resultados.values() if valor[0] == "RECHAZADA"]
+    assert len(exitosas) == 1, f"exactamente una de las dos peticiones tiene que pasar el gate: {resultados}"
+    assert len(rechazadas) == 1, f"la otra tiene que ser rechazada: {resultados}"
+    assert rechazadas[0][1] == exitosas[0][1], "la rechazada tiene que apuntar a la corrida que sí se creó"
+
+    servicio.esperar_despachos_en_curso()

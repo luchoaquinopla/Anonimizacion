@@ -12,6 +12,7 @@ import socket
 import socketserver
 import threading
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from wsgiref.simple_server import WSGIServer, make_server
 
@@ -113,6 +114,68 @@ def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> No
     assert llamadas == [], "no debe conectar a Postgres si el pepper no esta configurado"
 
 
+def test_keyboardinterrupt_pide_apagado_cooperativo_antes_de_cerrar(monkeypatch) -> None:
+    """Revisión adversarial crítico 2: `daemon=True` en el hilo de despacho
+    NO alcanza -- `ProcessPoolExecutor` registra su propio `atexit` que
+    espera a que el pool activo termine, sin importar que el hilo dueño sea
+    daemon (medido: ~8 s de proceso colgado con un hilo daemon de 8 s de
+    trabajo, y dos procesos hijos huérfanos al matar el padre a la fuerza).
+
+    El apagado real es cooperativo: `main()` tiene que llamar
+    `servicio.solicitar_apagado()` ANTES de `esperar_despachos_en_curso`
+    (para que el despacho tenga la señal antes de que alguien se quede
+    esperando), avisar al operador en castellano llano, y sólo entonces
+    cerrar el servidor -- nunca matar procesos hijos a la fuerza."""
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite:///:memory:"), raising=False
+    )
+
+    llamadas: list[str] = []
+
+    class _ServicioEspia:
+        def solicitar_apagado(self) -> None:
+            llamadas.append("solicitar_apagado")
+
+        def esperar_despachos_en_curso(self, timeout=None) -> None:
+            llamadas.append(f"esperar_despachos_en_curso(timeout={timeout})")
+
+        def hay_despachos_en_curso(self) -> bool:
+            llamadas.append("hay_despachos_en_curso")
+            return False
+
+    servicio_espia = _ServicioEspia()
+    monkeypatch.setattr(
+        modulo,
+        "construir_aplicacion",
+        lambda *args, **kwargs: (lambda entorno, iniciar: [b""], servicio_espia),
+    )
+
+    class _ServidorFalso:
+        def serve_forever(self) -> None:
+            raise KeyboardInterrupt()
+
+        def server_close(self) -> None:
+            llamadas.append("server_close")
+
+    monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
+
+    codigo = modulo.main()
+
+    assert codigo == 0
+    # Orden: pedir apagado ANTES de esperar, y cerrar el servidor AL FINAL --
+    # nunca al revés (cerrar el servidor mientras un despacho sigue en vuelo
+    # dejaría esa corrida sin que nadie la haya avisado).
+    assert llamadas == [
+        "solicitar_apagado",
+        f"esperar_despachos_en_curso(timeout={modulo._TIMEOUT_APAGADO_SEG})",
+        "hay_despachos_en_curso",
+        "server_close",
+    ]
+
+
 def test_el_servidor_es_wsgiref_con_threading_mixin() -> None:
     """10.10: el punto de entrada usa `wsgiref.simple_server` + `ThreadingMixIn`."""
     modulo = _cargar_script()
@@ -193,7 +256,12 @@ def test_construir_aplicacion_recupera_corridas_abandonadas_al_arrancar(tmp_path
     abandonada.avanzar_a(EstadoCorrida.INVENTARIANDO)
     repositorio.actualizar_corrida(abandonada, version_esperada=0)
 
-    modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
+    # `ahora` bien en el futuro (revisión adversarial crítico 1): sin esto,
+    # `corrida.actualizada_en` (recién escrita arriba) siempre estaría dentro
+    # de CUALQUIER margen de inactividad razonable -- ver
+    # `lanzador_corrida.recuperar_corridas_abandonadas`.
+    mucho_despues = datetime.now(timezone.utc) + timedelta(days=1)
+    modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1, ahora=mucho_despues)
 
     with Session(engine) as sesion:
         fila = sesion.get(CorridaOrm, "corrida-abandonada")
@@ -234,7 +302,7 @@ def test_el_servidor_real_responde_una_peticion_http_real(tmp_path, monkeypatch)
             )
         )
 
-    aplicacion = modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
+    aplicacion, _servicio = modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
     servidor = make_server("127.0.0.1", 0, aplicacion, server_class=modulo._ServidorConHilos)
     puerto = servidor.server_address[1]
     hilo = threading.Thread(target=servidor.serve_forever, daemon=True)

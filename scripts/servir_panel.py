@@ -70,25 +70,35 @@ from __future__ import annotations
 import argparse
 import socketserver
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from wsgiref.simple_server import WSGIServer, make_server
 
 from sqlalchemy import Engine
 
-from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida, recuperar_corridas_abandonadas
+from anonimizacion.ingesta.lanzador_corrida import (
+    MARGEN_INACTIVIDAD_DEFAULT,
+    LanzadorCorrida,
+    recuperar_corridas_abandonadas,
+)
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.pseudonimizacion.almacen_pepper import ErrorPepperNoConfigurado, obtener_pepper
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.trabajadores import despacho_paralelo
-from anonimizacion.web.rutas_corridas import crear_aplicacion_corridas
+from anonimizacion.web.rutas_corridas import AplicacionWsgi, crear_aplicacion_corridas
 from anonimizacion.web.servicio_corridas import ServicioCorridasReal
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 _PUERTO_DEFAULT = 8000
 _HOST_LOCAL = "127.0.0.1"
 _HOST_TODAS_LAS_INTERFACES = ""  # equivalente a 0.0.0.0 -- sólo con --escuchar-red
+# Tope del apagado cooperativo ante Ctrl+C (revisión adversarial crítico 2):
+# tiempo de sobra para que el grupo EN VUELO en cada corrida activa termine
+# (segundos a bajas decenas de segundos por grupo, ver `despacho_paralelo.py`)
+# sin dejar al operador esperando indefinidamente si algo se cuelga de verdad.
+_TIMEOUT_APAGADO_SEG = 120
 
 
 def _tipo_procesos(valor: str) -> int:
@@ -114,12 +124,20 @@ def construir_aplicacion(
     db_url: str,
     procesos: int,
     tope_bytes: int | None = None,
-):
+    margen_inactividad: timedelta = MARGEN_INACTIVIDAD_DEFAULT,
+    ahora: datetime | None = None,
+) -> tuple[AplicacionWsgi, ServicioCorridasReal]:
     """Arma la aplicación WSGI real: `ServicioCorridasReal` sobre `engine`.
 
     Separado de `main()` para poder ejercitarlo en tests
     (`tests/scripts/test_servir_panel.py`) sin pasar por argparse ni por
     Postgres real -- mismo patrón que `scripts/procesar_carpeta.py::ejecutar`.
+
+    Devuelve `(aplicacion, servicio)`, no sólo `aplicacion` (revisión
+    adversarial crítico 2): `main()` necesita el `servicio` para poder
+    pedirle `solicitar_apagado()`/`esperar_despachos_en_curso()` ante
+    `KeyboardInterrupt` -- devolver sólo la app WSGI dejaba a `main()` sin
+    forma de alcanzar los hilos de despacho que lanzó.
 
     `db_url`/`procesos` viajan hasta `ServicioCorridasReal`: cada corrida
     despachada arma su propio `ProcessPoolExecutor` (`db_url` porque cada
@@ -129,17 +147,22 @@ def construir_aplicacion(
 
     Recuperación de arranque (decisión "qué pasa si el servidor se cae con
     una corrida en curso"): ANTES de devolver la aplicación, cierra como
-    `FALLIDA` toda corrida no terminal que haya quedado de un proceso
-    anterior -- ver `lanzador_corrida.recuperar_corridas_abandonadas` para
-    el porqué es seguro asumir "abandonada". Sin esto, el gate de "una
-    corrida a la vez" quedaría bloqueado para siempre tras cualquier caída.
+    `FALLIDA` toda corrida no terminal SIN evidencia reciente de trabajo --
+    ver `lanzador_corrida.recuperar_corridas_abandonadas` (revisión
+    adversarial crítico 1: la versión anterior asumía que CUALQUIER corrida
+    no terminal estaba abandonada, lo cual es falso mientras
+    `scripts/procesar_carpeta.py` siga corriendo contra la misma base).
+    `margen_inactividad`/`ahora` son un passthrough para tests (mismo patrón
+    que `reloj` en `embudo_corrida.construir_embudo`); producción usa el
+    default y el reloj real.
     """
     Base.metadata.create_all(engine, checkfirst=True)
     repositorio = RepositorioCorridas(engine)
-    for id_corrida in recuperar_corridas_abandonadas(repositorio):
+    for id_corrida in recuperar_corridas_abandonadas(repositorio, margen_inactividad=margen_inactividad, ahora=ahora):
         print(
             f"Corrida {id_corrida}: recuperada como FALLIDA al arrancar -- quedó abandonada "
-            "por un proceso anterior (ver recuperar_corridas_abandonadas).",
+            "por un proceso anterior, sin evidencia reciente de trabajo "
+            "(ver recuperar_corridas_abandonadas).",
             file=sys.stderr,
         )
     lanzador = LanzadorCorrida(
@@ -149,7 +172,8 @@ def construir_aplicacion(
     servicio = ServicioCorridasReal(
         lanzador=lanzador, motor=engine, db_url=db_url, procesos=procesos, tope_bytes=tope_bytes
     )
-    return crear_aplicacion_corridas([raiz_autorizada], servicio, motor_lectura=engine)
+    aplicacion = crear_aplicacion_corridas([raiz_autorizada], servicio, motor_lectura=engine)
+    return aplicacion, servicio
 
 
 def _parsear_args() -> argparse.Namespace:
@@ -217,7 +241,7 @@ def main() -> int:
     # es un proceso de larga vida, exactamente el perfil que una conexión
     # muerta del pool afecta (ver docstring de esa función).
     engine = construir_engine_postgres(args.db_url)
-    aplicacion = construir_aplicacion(engine, args.raiz, db_url=args.db_url, procesos=args.procesos)
+    aplicacion, servicio = construir_aplicacion(engine, args.raiz, db_url=args.db_url, procesos=args.procesos)
 
     host = _resolver_host(escuchar_red=args.escuchar_red)
     servidor = make_server(host, args.puerto, aplicacion, server_class=_ServidorConHilos)
@@ -232,7 +256,32 @@ def main() -> int:
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
-        pass
+        # Decisión "Ctrl+C a mitad de una corrida" (revisión adversarial
+        # crítico 2): `daemon=True` en el hilo de despacho NO alcanza --
+        # `ProcessPoolExecutor` registra su propio `atexit` que espera a que
+        # el pool activo termine sin importar si el hilo dueño es daemon
+        # (medido: ~8 s de proceso colgado con un hilo daemon de 8 s de
+        # trabajo). El apagado real es COOPERATIVO: `solicitar_apagado()`
+        # hace que cada despacho en curso deje de tomar grupos NUEVOS
+        # (`despacho_paralelo.despachar_en_paralelo`, parámetro `detener`) y
+        # drene lo que ya estaba en vuelo -- acotado al tiempo de esos
+        # grupos, no a las horas que dura la corrida completa.
+        print(
+            "Apagando: si hay una corrida activa, se espera a que termine el grupo en curso "
+            f"(hasta {_TIMEOUT_APAGADO_SEG} s) antes de salir -- no se matan procesos hijos a la fuerza "
+            "para no perder trabajo a medio escribir.",
+            file=sys.stderr,
+        )
+        servicio.solicitar_apagado()
+        servicio.esperar_despachos_en_curso(timeout=_TIMEOUT_APAGADO_SEG)
+        if servicio.hay_despachos_en_curso():
+            print(
+                "Un despacho no terminó dentro del tiempo de espera -- el proceso puede tardar "
+                "en salir de todos modos. La corrida queda para revisar en el próximo arranque "
+                "(recuperar_corridas_abandonadas la cerrará FALLIDA si de verdad no hay evidencia "
+                "de trabajo).",
+                file=sys.stderr,
+            )
     finally:
         servidor.server_close()
     return 0
