@@ -70,7 +70,7 @@ class ClavesPaciente:
 
 @dataclass(frozen=True)
 class RegistroAnonimizado:
-    """Registro final de salida: cero PII, listo para Postgres/Parquet."""
+    """Registro final de salida: cero PII, listo para Postgres."""
 
     id_paciente: str
     id_episodio: str
