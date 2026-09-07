@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
+from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento, EtapaDocumento
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import DestinoCuarentena
 from anonimizacion.pipeline.resultado import FalloDocumento
@@ -118,6 +118,26 @@ _TOPE_DEFAULT_CONSERVADOR = 4
 # de seguridad para quien mide su propia máquina y decide subir el número a
 # mano, no una recomendación.
 _MULTIPLICADOR_TOPE_DURO = 2
+# ALTO 4 de revisión adversarial: validar SOLO contra 2x núcleos lógicos
+# ignora el recurso que este mismo módulo argumenta que es el techo real --
+# la memoria. En la máquina de referencia (12 lógicos) eso dejaba pasar
+# `--procesos 24` sin ningún rechazo: ~21 GB solo en copias de
+# `es_core_news_lg`, muy por encima del margen que el propio docstring de
+# arriba llama "angosto". El tope duro real es el MÁS CHICO entre los dos
+# recursos: núcleos lógicos y memoria.
+#
+# `_MEMORIA_ESTIMADA_POR_PROCESO_MB`/`_PRESUPUESTO_MEMORIA_TOPE_DURO_MB` son
+# constantes fijas, no una lectura de RAM libre real (misma razón que
+# `_TOPE_DEFAULT_CONSERVADOR`: leer RAM disponible de forma confiable y
+# portable exige `psutil` o código específico por plataforma, y ese número
+# de todos modos hay que poder overridearlo a mano conociendo la máquina
+# real). El presupuesto del TOPE DURO (8 GiB) es deliberadamente más
+# generoso que el del DEFAULT (~3,5 GB con `_TOPE_DEFAULT_CONSERVADOR=4`):
+# el default tiene que ser seguro sin que nadie mida nada, el tope duro sólo
+# tiene que evitar el caso claramente absurdo (`--procesos` a mano en una
+# máquina que el operador conoce, sin llegar a poder pedir 21 GB).
+_MEMORIA_ESTIMADA_POR_PROCESO_MB = 875
+_PRESUPUESTO_MEMORIA_TOPE_DURO_MB = 8192
 # Reintentos por grupo ante `BrokenProcessPool` antes de darlo por perdido
 # (ver `despachar_en_paralelo`). 1 reintento, no infinito: un grupo cuyo
 # contenido causa la muerte del proceso de forma determinística (p. ej. un
@@ -135,8 +155,14 @@ def grado_de_concurrencia_por_defecto() -> int:
 
 
 def tope_duro_concurrencia() -> int:
-    """2x núcleos lógicos -- ver el razonamiento medido arriba."""
-    return _MULTIPLICADOR_TOPE_DURO * (os.cpu_count() or 1)
+    """El más chico entre 2x núcleos lógicos y el presupuesto de memoria
+    (`_PRESUPUESTO_MEMORIA_TOPE_DURO_MB` // `_MEMORIA_ESTIMADA_POR_PROCESO_MB`)
+    -- ver el razonamiento medido arriba (ALTO 4, revisión adversarial: antes
+    de este ajuste solo se validaba contra núcleos, dejando pasar valores que
+    exceden por mucho el recurso que este módulo mismo llama el techo real."""
+    tope_por_nucleos = _MULTIPLICADOR_TOPE_DURO * (os.cpu_count() or 1)
+    tope_por_memoria = _PRESUPUESTO_MEMORIA_TOPE_DURO_MB // _MEMORIA_ESTIMADA_POR_PROCESO_MB
+    return min(tope_por_nucleos, tope_por_memoria)
 
 
 def validar_grado_concurrencia(procesos: int) -> int:
@@ -146,12 +172,13 @@ def validar_grado_concurrencia(procesos: int) -> int:
     tope = tope_duro_concurrencia()
     if procesos > tope:
         raise ValueError(
-            f"procesos={procesos} supera el tope duro de 2x nucleos logicos "
-            f"({tope} en esta maquina). Pasado ese punto cada proceso extra solo "
+            f"procesos={procesos} supera el tope duro ({tope} en esta maquina: el "
+            "menor entre 2x nucleos logicos y el presupuesto de memoria de "
+            f"{_PRESUPUESTO_MEMORIA_TOPE_DURO_MB} MB // {_MEMORIA_ESTIMADA_POR_PROCESO_MB} MB "
+            "por copia de es_core_news_lg). Pasado ese punto cada proceso extra solo "
             "compra latencia de red (el termino de CPU del modelo de speedup deja "
-            "de mejorar) y cuesta una copia mas de es_core_news_lg en RAM "
-            "(~875 MB medidos, ver docstring de grado_de_concurrencia_por_defecto) "
-            "-- medir el pico de memoria real antes de subirlo."
+            "de mejorar) y cuesta una copia mas del modelo en RAM -- medir el pico "
+            "de memoria real antes de subirlo."
         )
     return procesos
 
@@ -262,21 +289,20 @@ def _error_grupo_perdido(referencia: Referencia, corrida_id: str) -> ErrorDocume
     `resumen_trazable()` que viaja en `resultados` -- las dos superficies
     deben describir exactamente el mismo fallo.
 
-    Reutiliza `CodigoErrorDocumento.ERROR_TRANSITORIO_AGOTADO` en vez de un
-    código nuevo: semánticamente es el mismo caso que ya cubre ese código
-    ("se agotaron los reintentos de un error transitorio -- reprocesar más
-    tarde puede tener éxito", `dominio/errores.py`) -- un hijo muerto por el
-    sistema operativo (p. ej. OOM-kill) es transitorio de la misma forma que
-    un error de IO/conexión: no es un defecto determinístico del documento.
-    `etapa` es un string libre (`ErrorDocumento.etapa: str | EtapaDocumento`
-    lo permite) porque esto ocurre POR ENCIMA del pipeline -- en la capa de
-    gestión de procesos, no en ninguna de las etapas que ya modela
-    `EtapaDocumento` -- y forzarlo a una de esas etiquetas sería impreciso.
+    `codigo=PROCESO_INTERRUMPIDO` (revisión adversarial, ALTO 3), NO
+    `ERROR_TRANSITORIO_AGOTADO`: ese código ya significa "un error de
+    IO/conexión DENTRO del pipeline, sobre un documento que sí llegó a
+    ejecutarse" -- reusarlo acá volvía indistinguible, para quien opera la
+    corrida, un problema real del documento de uno del PROCESO que lo
+    procesaba (memoria, infra). `etapa=EtapaDocumento.DESPACHO` (tampoco un
+    string libre, revisión adversarial): un string fuera de `ETAPAS_EMBUDO`
+    se sumaba al total global del embudo pero desaparecía del desglose por
+    etapa sin que nada lo señalara -- ver `web/embudo_corrida.py`.
     """
     return ErrorDocumento(
         id_documento=referencia["id_documento"],
-        etapa="despacho_paralelo",
-        codigo=CodigoErrorDocumento.ERROR_TRANSITORIO_AGOTADO,
+        etapa=EtapaDocumento.DESPACHO,
+        codigo=CodigoErrorDocumento.PROCESO_INTERRUMPIDO,
         corrida_id=corrida_id,
     )
 
@@ -292,7 +318,7 @@ class _EstadoDespacho:
 
     corrida_id: str
     grupos: Iterator[Grupo]
-    crear_pool: Callable[[], ProcessPoolExecutor]
+    crear_pool: Callable[[int], ProcessPoolExecutor]
     procesos: int
     cuarentena: DestinoCuarentena
     funcion_trabajo: FuncionTrabajo
@@ -314,7 +340,7 @@ class _EstadoDespacho:
         futuro = self.pool.submit(self.funcion_trabajo, self.corrida_id, grupo)
         self.en_vuelo[futuro] = (indice, grupo)
 
-    def _dar_por_perdido(self, grupo: Grupo) -> None:
+    def _dar_por_perdido(self, indice: int, grupo: Grupo) -> None:
         for referencia in grupo:
             error = _error_grupo_perdido(referencia, self.corrida_id)
             self.cuarentena.registrar(error)
@@ -327,27 +353,90 @@ class _EstadoDespacho:
             )
         self.total_documentos += len(grupo)
         self.total_grupos += 1
+        # MEDIO 5 de revisión adversarial: sin este `pop`, `intentos_por_grupo`
+        # crece sin límite durante toda la corrida (nunca se borra una
+        # entrada) -- sobre ~100.000 grupos son cientos de miles de enteros
+        # acumulados en el padre para grupos que ya terminaron y nunca se
+        # van a volver a consultar.
+        self.intentos_por_grupo.pop(indice, None)
+
+    def _aceptar_exito(self, indice: int, grupo: Grupo, parcial: list[dict[str, object]]) -> None:
+        self.resultados.extend(parcial)
+        self.total_documentos += len(grupo)
+        self.total_grupos += 1
+        self.intentos_por_grupo.pop(indice, None)
+
+    def _reprocesar_en_aislamiento(self, indice: int, grupo: Grupo) -> None:
+        """Reprocesa un grupo SOLO, en su propio pool de UN worker -- la
+        única forma de atribuir causalmente un crash cuando varios grupos
+        compartían el pool que se rompió.
+
+        CRÍTICO 2 de revisión adversarial: `concurrent.futures._base.wait`
+        convierte la lista de futuros a un `set` antes de esperarlos --
+        cuál de ellos "sale primero" del `for futuro in terminados` es
+        orden de HASH, no de causalidad. Tratar al primero que itera como
+        "el culpable" (versión anterior de este método) manda estudios
+        clínicos SANOS a cuarentena por compartir pool con uno tóxico: la
+        revisión lo reprodujo, con `procesos=4` y un solo grupo malo, 2 de
+        3 grupos perdidos eran sanos.
+
+        No hay API pública de `ProcessPoolExecutor` para preguntar "¿qué
+        `work item` corría en el proceso que murió?" -- así que en vez de
+        adivinar, se re-somete el grupo SOLO: si vuelve a morir sin
+        hermanos con quien compartir pool, es indiscutiblemente su propia
+        culpa (recién ahí carga su cupo de reintentos). Si NO muere en
+        aislamiento, nunca fue culpable -- su resultado se acepta
+        normalmente y su contador de reintentos NUNCA se toca, sin
+        importar cuántas veces haya sido baja colateral de otro.
+
+        Costo aceptado y explícito: procesar en aislamiento es
+        SECUENCIAL, un grupo a la vez -- durante la recuperación de un
+        pool roto se pierde concurrencia temporalmente. Es el precio de
+        la atribución causal correcta; los crashes deberían ser raros
+        (`MAX_REINTENTOS_POR_GRUPO` sigue acotando cuánto puede alargarse
+        esto por grupo).
+        """
+        pool_aislado = self.crear_pool(1)
+        futuro = pool_aislado.submit(self.funcion_trabajo, self.corrida_id, grupo)
+        try:
+            parcial = futuro.result()
+        except BrokenProcessPool:
+            pool_aislado.shutdown(wait=False, cancel_futures=True)
+            self.intentos_por_grupo[indice] = self.intentos_por_grupo.get(indice, 0) + 1
+            if self.intentos_por_grupo[indice] > MAX_REINTENTOS_POR_GRUPO:
+                self._dar_por_perdido(indice, grupo)
+            else:
+                self._reprocesar_en_aislamiento(indice, grupo)
+        else:
+            pool_aislado.shutdown(wait=True)
+            self._aceptar_exito(indice, grupo, parcial)
 
     def _recuperar_de_pool_roto(self, indice: int, grupo: Grupo) -> None:
-        """Descarta el pool roto, crea uno nuevo y reencola el trabajo
-        pendiente. Solo `indice`/`grupo` (el futuro que disparó la excepción)
-        carga su cupo de reintentos -- ver el docstring de
-        `despachar_en_paralelo` para el porqué de esa asimetría."""
-        colaterales = list(self.en_vuelo.values())
+        """Descarta el pool roto y reprocesa en aislamiento TODO lo que
+        seguía en vuelo (`afectados`: el grupo que disparó la excepción más
+        cualquier `colateral` que compartía ese mismo pool) -- ver
+        `_reprocesar_en_aislamiento` para la atribución causal.
+
+        CRÍTICO 1 de revisión adversarial: termina SIEMPRE recreando el
+        pool principal y reponiendo la ventana hasta su ancho completo
+        (`self.procesos`). Antes de este ajuste, `_dar_por_perdido` nunca
+        llamaba `_reponer()`: el lugar de un grupo perdido quedaba vacío
+        para siempre, y la ventana deslizante colapsaba a un ancho menor
+        por el resto de la corrida -- sin ningún log ni métrica que lo
+        señalara. Sobre un corpus de horas, un solo documento problemático
+        temprano degradaba el resto de la corrida a (procesos - 1) para
+        siempre.
+        """
+        afectados = [(indice, grupo), *self.en_vuelo.values()]
         self.en_vuelo.clear()
         self.pool.shutdown(wait=False, cancel_futures=True)
-        self.pool = self.crear_pool()
 
-        self.intentos_por_grupo[indice] += 1
-        if self.intentos_por_grupo[indice] > MAX_REINTENTOS_POR_GRUPO:
-            self._dar_por_perdido(grupo)
-        else:
-            futuro_nuevo = self.pool.submit(self.funcion_trabajo, self.corrida_id, grupo)
-            self.en_vuelo[futuro_nuevo] = (indice, grupo)
+        for indice_afectado, grupo_afectado in afectados:
+            self._reprocesar_en_aislamiento(indice_afectado, grupo_afectado)
 
-        for indice_colateral, grupo_colateral in colaterales:
-            futuro_nuevo = self.pool.submit(self.funcion_trabajo, self.corrida_id, grupo_colateral)
-            self.en_vuelo[futuro_nuevo] = (indice_colateral, grupo_colateral)
+        self.pool = self.crear_pool(self.procesos)
+        for _ in range(self.procesos):
+            self._reponer()
 
     def _procesar_terminado(self, futuro: Future[list[dict[str, object]]]) -> None:
         entrada_en_vuelo = self.en_vuelo.pop(futuro, None)
@@ -363,13 +452,11 @@ class _EstadoDespacho:
         except BrokenProcessPool:
             self._recuperar_de_pool_roto(indice, grupo)
         else:
-            self.resultados.extend(parcial)
-            self.total_documentos += len(grupo)
-            self.total_grupos += 1
+            self._aceptar_exito(indice, grupo, parcial)
             self._reponer()
 
     def ejecutar(self) -> tuple[list[dict[str, object]], int, int]:
-        self.pool = self.crear_pool()
+        self.pool = self.crear_pool(self.procesos)
         for _ in range(self.procesos):
             self._reponer()
 
@@ -379,11 +466,12 @@ class _EstadoDespacho:
             for futuro in terminados:
                 self._procesar_terminado(futuro)
                 if self.pool is not pool_antes:
-                    # `_recuperar_de_pool_roto` ya reencoló TODO lo que
+                    # `_recuperar_de_pool_roto` ya resolvió TODO lo que
                     # seguía en vuelo en el pool viejo (colaterales
-                    # incluidos) -- el resto de `terminados` de este lote
-                    # pertenece a ese pool descartado. Volver a `wait()`
-                    # sobre el pool nuevo en vez de seguir iterando.
+                    # incluidos, vía aislamiento) y ya repuso la ventana --
+                    # el resto de `terminados` de este lote pertenece a ese
+                    # pool descartado. Volver a `wait()` sobre el pool nuevo
+                    # en vez de seguir iterando.
                     break
 
         self.pool.shutdown(wait=True)
@@ -394,13 +482,19 @@ def despachar_en_paralelo(
     *,
     corrida_id: str,
     grupos: Iterator[Grupo],
-    crear_pool: Callable[[], ProcessPoolExecutor],
+    crear_pool: Callable[[int], ProcessPoolExecutor],
     procesos: int,
     cuarentena: DestinoCuarentena,
     funcion_trabajo: FuncionTrabajo = procesar_grupo_en_trabajador,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Despacha `grupos` a un `ProcessPoolExecutor`, con recuperación ante un
     hijo muerto y sin materializar la partición completa en memoria.
+
+    `crear_pool` recibe el grado de concurrencia deseado (`int`), no un
+    factory de aridad cero: la recuperación ante un pool roto necesita poder
+    pedir un pool de UN solo worker para aislar causalmente un crash (ver
+    `_reprocesar_en_aislamiento`), además del pool principal de `procesos`
+    workers.
 
     **Ventana deslizante, no `executor.map`**: se mantienen en vuelo hasta
     `procesos` grupos a la vez, reponiendo el siguiente ítem del iterador
@@ -417,47 +511,51 @@ def despachar_en_paralelo(
     UN hijo muere de forma abrupta, el pool ENTERO queda inutilizable --no
     solo la tarea que corría en ese hijo-- y `concurrent.futures` lo señala
     marcando `BrokenProcessPool` en TODOS los futuros pendientes, los de ese
-    hijo y los de cualquier otro (verificado empíricamente en esta sesión:
-    ver `scratchpad` de la sesión de implementación). Por eso, al capturar
-    `BrokenProcessPool`, se descarta el pool viejo
-    (`shutdown(wait=False, cancel_futures=True)`), se crea uno nuevo, y se
-    reencolan TANTO el grupo que disparó la excepción COMO cualquier otro
-    grupo que seguía en vuelo en el pool roto (`colaterales`). Esto es SEGURO
-    por idempotencia, no una suposición: `EscritorPostgres.escribir_registro`/
-    `escribir_episodio` (`salida/destinos/postgres.py`) y
-    `EscritorCuarentena.registrar` (`salida/cuarentena.py`) ya toleran
-    reprocesar el mismo documento -- un grupo cuyos primeros documentos ya
-    se habían escrito antes de que su hijo muriera simplemente los vuelve a
-    encontrar como "ya escritos" y no los duplica.
+    hijo y los de cualquier otro (verificado empíricamente en esta sesión).
+    Al capturarla, se descarta el pool viejo
+    (`shutdown(wait=False, cancel_futures=True)`) y se reprocesa en
+    AISLAMIENTO (`_reprocesar_en_aislamiento`) TANTO el grupo que disparó la
+    excepción COMO cualquier otro grupo que seguía en vuelo en el pool roto
+    (`afectados`). Reencolar es SEGURO por idempotencia, no una suposición:
+    `EscritorPostgres.escribir_registro`/`escribir_episodio`
+    (`salida/destinos/postgres.py`) y `EscritorCuarentena.registrar`
+    (`salida/cuarentena.py`) ya toleran reprocesar el mismo documento -- un
+    grupo cuyos primeros documentos ya se habían escrito antes de que su
+    hijo muriera simplemente los vuelve a encontrar como "ya escritos" y no
+    los duplica.
 
-    **Solo el grupo que disparó la excepción carga su cupo de reintentos**;
-    los `colaterales` se reencolan gratis, sin tocar su contador. Hallazgo
-    real de esta sesión (reproducido con un test que hacía morir DOS grupos
-    a la vez con `procesos=2`, antes de este ajuste): cobrarle un reintento a
-    TODO lo que estaba en vuelo -- incluidos grupos que ni siquiera habían
-    llegado a arrancar en un worker todavía, porque `ProcessPoolExecutor`
-    tarda en levantar cada proceso -- agotaba `MAX_REINTENTOS_POR_GRUPO` de
-    grupos sanos de forma prematura e injusta. **Límite conocido, no
-    resuelto del todo**: un grupo saludable que comparte pool con uno
-    genuinamente fatal puede, en el peor caso (crashes que se solapan dos
-    veces seguidas antes de que ese grupo sano termine), terminar cargado
-    por una muerte ajena de todos modos -- es una consecuencia estructural
-    de que `ProcessPoolExecutor` rompe el pool ENTERO ante un solo hijo
-    muerto, no algo que este despachador pueda evitar del todo sin
-    abandonar `ProcessPoolExecutor` (la decisión ya tomada por el proposal).
-    En producción, donde los OOM-kill son eventos raros y no simultáneos,
-    este caso extremo es infrecuente; en el peor caso, ese grupo termina en
-    cuarentena (no pierde el documento, no tumba la corrida) y un reproceso
-    manual posterior lo resuelve -- el mismo tratamiento que cualquier otro
-    `ERROR_TRANSITORIO_AGOTADO`.
+    **Atribución causal del crash, no un culpable arbitrario** (revisión
+    adversarial, hallazgo crítico: `concurrent.futures._base.wait` convierte
+    la lista de futuros a un `set` -- qué futuro "sale primero" del bucle es
+    orden de HASH, no de causalidad; tratar al primero como culpable
+    reproducidamente mandaba estudios SANOS a cuarentena por compartir pool
+    con uno tóxico). Por eso cada `afectado` se reprocesa SOLO, en su propio
+    pool de un worker: si vuelve a morir sin hermanos con quien compartir
+    pool, es indiscutiblemente su propia culpa y recién ahí carga su cupo de
+    reintentos; si no muere en aislamiento, nunca fue culpable, se acepta su
+    resultado y su contador de reintentos nunca se toca. Ver
+    `_reprocesar_en_aislamiento` para el detalle y el costo aceptado
+    (procesar los afectados de a uno, secuencial, durante la recuperación).
+
+    **Reposición de la ventana tras una pérdida** (revisión adversarial,
+    hallazgo crítico): `_recuperar_de_pool_roto` SIEMPRE termina recreando
+    el pool principal y reponiendo la ventana hasta `procesos` -- antes de
+    este ajuste, un grupo dado por perdido dejaba su lugar vacío para
+    siempre (`_dar_por_perdido` nunca llamaba `_reponer()`), y la ventana
+    deslizante colapsaba a un ancho menor por el resto de la corrida, sin
+    ningún log ni métrica que lo señalara. Sobre un corpus de horas, un solo
+    documento problemático temprano degradaba el resto de la corrida a
+    concurrencia reducida para siempre.
 
     **Tope de reintentos (`MAX_REINTENTOS_POR_GRUPO`)**: si un grupo agota
-    sus reintentos (p. ej. su contenido dispara la muerte del proceso de
-    forma determinística, no un OOM transitorio), se da por perdido: se
-    registra en `cuarentena` un `ErrorDocumento` por cada referencia del
-    grupo (`_dar_por_perdido`/`_error_grupo_perdido`) y la corrida SIGUE con los demás
-    grupos -- nunca propaga la excepción hacia arriba. Registrar en
-    `cuarentena` (no solo devolver un resultado en memoria) es necesario
+    sus reintentos EN AISLAMIENTO (su propio contenido dispara la muerte del
+    proceso de forma determinística, no comparte la culpa con nadie más), se
+    da por perdido: se registra en `cuarentena` un `ErrorDocumento` por cada
+    referencia del grupo (`_dar_por_perdido`/`_error_grupo_perdido`,
+    `codigo=PROCESO_INTERRUMPIDO`, `etapa=DESPACHO` -- distintos de un fallo
+    real del pipeline, revisión adversarial ALTO 3) y la corrida SIGUE con
+    los demás grupos -- nunca propaga la excepción hacia arriba. Registrar
+    en `cuarentena` (no solo devolver un resultado en memoria) es necesario
     para el invariante del embudo (`web/embudo_corrida.py`,
     `residuo = entraron - (publicados + apartados)`): `entraron` ya cuenta
     estos documentos desde el inventario (un solo proceso, PR 2), así que si

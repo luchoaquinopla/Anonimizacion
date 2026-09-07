@@ -20,6 +20,12 @@ from pathlib import Path
 # la firma de `funcion_trabajo` (fijada por `despacho_paralelo.FuncionTrabajo`)
 # solo para un detalle de instrumentación de test.
 VAR_ENV_MARCADOR = "_ANONIMIZACION_TEST_MARCADOR_DESPACHO"
+#: Mismo convenio, para el centinela de pereza (MEDIO 6, revisión
+#: adversarial): un directorio donde cada tarea completada deja un archivo
+#: ANTES de retornar -- permite que el generador de grupos, corriendo en el
+#: proceso padre, observe si YA hubo alguna completación en el momento
+#: exacto en que se le pide el siguiente grupo.
+VAR_ENV_MARCADOR_COMPLETADOS = "_ANONIMIZACION_TEST_MARCADOR_COMPLETADOS"
 
 ID_DOCUMENTO_QUE_MUERE_SIEMPRE = "doc-que-muere-siempre"
 
@@ -52,6 +58,20 @@ def trabajo_muere_la_primera_vez_por_grupo(corrida_id: str, grupo) -> list[dict[
         archivo_marcador.touch()
         os._exit(137)
     return [{"id_documento": referencia["id_documento"], "estado": "exito"} for referencia in grupo]
+
+
+def trabajo_marca_completado_y_devuelve_pid(corrida_id: str, grupo) -> list[dict[str, object]]:
+    """Como `trabajo_devuelve_pid`, pero deja un archivo en
+    `VAR_ENV_MARCADOR_COMPLETADOS` ANTES de retornar -- el orden importa: el
+    marcador queda escrito antes de que `future.result()` pueda desbloquear
+    al padre, así que si el padre lo ve, es porque esta tarea genuinamente
+    terminó, no una carrera."""
+    directorio = Path(os.environ[VAR_ENV_MARCADOR_COMPLETADOS])
+    resultado = [
+        {"id_documento": referencia["id_documento"], "estado": "exito", "pid": os.getpid()} for referencia in grupo
+    ]
+    (directorio / f"listo-{grupo[0]['id_documento']}").touch()
+    return resultado
 
 
 class CuarentenaEnMemoria:

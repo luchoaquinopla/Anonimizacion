@@ -180,11 +180,15 @@ def _despachar_grupos(
     return despacho_paralelo.despachar_en_paralelo(
         corrida_id=corrida_id,
         grupos=grupos_a_despachar,
-        crear_pool=lambda: despacho_paralelo.crear_pool_de_trabajadores(
+        # `crear_pool` recibe el grado de concurrencia deseado -- no siempre
+        # es `procesos`: la recuperación ante un pool roto pide un pool de
+        # UN solo worker para aislar causalmente un crash (ver
+        # `despacho_paralelo._EstadoDespacho._reprocesar_en_aislamiento`).
+        crear_pool=lambda n: despacho_paralelo.crear_pool_de_trabajadores(
             entrada=entrada,
             db_url=db_url,
             tope_bytes=tope_bytes,
-            procesos=procesos,
+            procesos=n,
             directorio_marcador_pid=directorio_marcador_pid,
         ),
         procesos=procesos,

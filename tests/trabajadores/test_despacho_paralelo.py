@@ -21,17 +21,22 @@ from anonimizacion.trabajadores import despacho_paralelo
 from ._dobles_despacho_paralelo import (
     ID_DOCUMENTO_QUE_MUERE_SIEMPRE,
     VAR_ENV_MARCADOR,
+    VAR_ENV_MARCADOR_COMPLETADOS,
     CuarentenaEnMemoria,
     referencia,
     trabajo_devuelve_pid,
+    trabajo_marca_completado_y_devuelve_pid,
     trabajo_muere_la_primera_vez_por_grupo,
     trabajo_muere_siempre_si_esta_marcado,
 )
 
 
-def _crear_pool(procesos: int = 2) -> ProcessPoolExecutor:
+def _crear_pool(procesos: int) -> ProcessPoolExecutor:
     # Sin `initializer`: los dobles de este archivo no necesitan pepper,
-    # motor ni engine -- solo confirmar el PID o morir a propósito.
+    # motor ni engine -- solo confirmar el PID o morir a propósito. Recibe
+    # el grado de concurrencia deseado -- `despachar_en_paralelo` lo llama
+    # tanto con `procesos` (pool principal) como con `1` (aislamiento tras
+    # un pool roto, ver `despacho_paralelo._EstadoDespacho._reprocesar_en_aislamiento`).
     return ProcessPoolExecutor(max_workers=procesos)
 
 
@@ -63,6 +68,22 @@ def test_validar_grado_concurrencia_rechaza_pasar_el_tope_duro(monkeypatch):
     assert despacho_paralelo.validar_grado_concurrencia(tope) == tope
 
 
+def test_el_tope_duro_tambien_limita_por_memoria_no_solo_por_nucleos(monkeypatch):
+    """ALTO 4 de revisión adversarial: antes de este ajuste, el tope duro
+    solo validaba contra 2x núcleos lógicos -- en una máquina de muchos
+    núcleos eso permitía `--procesos` muy por encima de lo que la memoria
+    (el recurso que este módulo mismo argumenta que es el techo real,
+    ~875 MB medidos por copia de `es_core_news_lg`) puede sostener. Con 64
+    núcleos lógicos, 2x núcleos daría 128 -- el tope real tiene que quedar
+    acotado por el presupuesto de memoria del tope duro, mucho más chico."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    tope = despacho_paralelo.tope_duro_concurrencia()
+    assert tope < 128, "el tope duro no puede depender solo de nucleos logicos"
+    assert tope == despacho_paralelo._PRESUPUESTO_MEMORIA_TOPE_DURO_MB // despacho_paralelo._MEMORIA_ESTIMADA_POR_PROCESO_MB
+    with pytest.raises(ValueError, match="tope duro"):
+        despacho_paralelo.validar_grado_concurrencia(24)
+
+
 # --- paralelismo real ---------------------------------------------------
 
 
@@ -83,7 +104,7 @@ def test_despachar_en_paralelo_usa_procesos_del_sistema_operativo_genuinamente_d
     resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
         corrida_id="corrida-paralelismo-real",
         grupos=grupos,
-        crear_pool=lambda: _crear_pool(2),
+        crear_pool=_crear_pool,
         procesos=2,
         cuarentena=cuarentena,
         funcion_trabajo=trabajo_devuelve_pid,
@@ -99,30 +120,53 @@ def test_despachar_en_paralelo_usa_procesos_del_sistema_operativo_genuinamente_d
     assert not cuarentena.errores
 
 
-def test_despachar_en_paralelo_no_materializa_todos_los_grupos_antes_de_despachar():
-    """Centinela de pereza: un iterador que agota su presupuesto de items
-    disponibles antes de ser consumido por completo NO debe romperse -- si
-    `despachar_en_paralelo` hiciera `list(grupos)` de entrada, este test
-    fallaria con `RuntimeError` en vez de completar normalmente."""
+def test_despachar_en_paralelo_no_materializa_todos_los_grupos_antes_de_despachar(tmp_path, monkeypatch):
+    """Centinela de pereza (reescrito tras revisión adversarial MEDIO 6: la
+    versión anterior afirmaba en su docstring que una implementación ansiosa
+    (`list(grupos)`) haría fallar este test con `RuntimeError` -- FALSO,
+    verificado con una implementación ansiosa real que lo pasaba igual. Esta
+    versión observa el MOMENTO del consumo, no solo el total final.
+
+    Cada tarea deja un archivo en un directorio compartido ANTES de
+    retornar (`trabajo_marca_completado_y_devuelve_pid`). El generador de
+    grupos, corriendo en el proceso PADRE, registra una violación si se le
+    pide un grupo más allá de la ventana inicial (`procesos`) sin que
+    todavía exista NINGÚN archivo de completación -- eso solo puede pasar
+    si la implementación materializó el iterador por adelantado, porque en
+    el camino perezoso real `_reponer()` (que es quien pide el siguiente
+    grupo) solo se llama DESPUÉS de que `future.result()` desbloquea tras
+    una tarea ya terminada."""
+    directorio_completados = tmp_path / "completados"
+    directorio_completados.mkdir()
+    monkeypatch.setenv(VAR_ENV_MARCADOR_COMPLETADOS, str(directorio_completados))
+
+    procesos = 2
     total_de_grupos = 6
     entregados = 0
+    violaciones: list[int] = []
 
-    def _generador_que_cuenta():
+    def _generador_que_vigila_el_momento_del_consumo():
         nonlocal entregados
         for indice in range(total_de_grupos):
+            if indice >= procesos and not any(directorio_completados.iterdir()):
+                violaciones.append(indice)
             entregados += 1
             yield (referencia(f"doc-{indice}"),)
 
     cuarentena = CuarentenaEnMemoria()
     resultados, _, total_grupos = despacho_paralelo.despachar_en_paralelo(
         corrida_id="corrida-pereza",
-        grupos=_generador_que_cuenta(),
-        crear_pool=lambda: _crear_pool(2),
-        procesos=2,
+        grupos=_generador_que_vigila_el_momento_del_consumo(),
+        crear_pool=_crear_pool,
+        procesos=procesos,
         cuarentena=cuarentena,
-        funcion_trabajo=trabajo_devuelve_pid,
+        funcion_trabajo=trabajo_marca_completado_y_devuelve_pid,
     )
 
+    assert not violaciones, (
+        f"se pidieron grupos en los indices {violaciones} sin que ninguna tarea hubiera "
+        "terminado todavia -- la implementacion esta materializando el iterador por adelantado"
+    )
     assert total_grupos == total_de_grupos
     assert entregados == total_de_grupos
     assert len(resultados) == total_de_grupos
@@ -149,7 +193,7 @@ def test_un_hijo_que_muere_no_tumba_la_corrida_y_los_demas_grupos_se_procesan():
     resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
         corrida_id="corrida-hijo-muere",
         grupos=grupos,
-        crear_pool=lambda: _crear_pool(2),
+        crear_pool=_crear_pool,
         procesos=2,
         cuarentena=cuarentena,
         funcion_trabajo=trabajo_muere_siempre_si_esta_marcado,
@@ -162,7 +206,13 @@ def test_un_hijo_que_muere_no_tumba_la_corrida_y_los_demas_grupos_se_procesan():
     fallos = [r for r in resultados if r["estado"] != "exito"]
     assert {r["id_documento"] for r in exitos} == {"doc-ok-1", "doc-ok-2", "doc-ok-3"}
     assert [r["id_documento"] for r in fallos] == [ID_DOCUMENTO_QUE_MUERE_SIEMPRE]
-    assert fallos[0]["codigo"] == "error_transitorio_agotado"
+    # `proceso_interrumpido`, NO `error_transitorio_agotado` (revisión
+    # adversarial ALTO 3): son códigos deliberadamente distintos -- un
+    # proceso muerto por el SO no es lo mismo que un fallo real DENTRO del
+    # pipeline, y confundirlos le ocultaría al operador que la causa está en
+    # el proceso, no en el contenido del documento.
+    assert fallos[0]["codigo"] == "proceso_interrumpido"
+    assert fallos[0]["etapa"] == "despacho"
 
     # El invariante del embudo (residuo = entraron - (publicados + apartados))
     # exige que el documento perdido quede APARTADO, no solo devuelto en
@@ -175,19 +225,12 @@ def test_un_hijo_que_muere_no_tumba_la_corrida_y_los_demas_grupos_se_procesan():
 
 def test_un_hijo_que_muere_una_vez_se_recupera_en_el_reintento(tmp_path, monkeypatch):
     """Distinto del test anterior: acá el hijo muere UNA sola vez por grupo
-    -- la recuperacion automatica (pool nuevo, mismo grupo reencolado) debe
-    terminar en EXITO, sin tocar cuarentena.
-
-    `procesos=1` a propósito (no 2): con más de un grupo genuinamente en
-    vuelo a la vez, cuando el pool se rompe, `despachar_en_paralelo` reencola
-    los grupos "colaterales" (los que compartían pool con el que murió) SIN
-    cargarles su cupo de reintentos -- pero si ESE reencolado colateral
-    coincide con el momento exacto en que el pool se rompe de nuevo por otra
-    razón, un grupo sano puede terminar cargado por una muerte ajena (límite
-    real de "un hijo muerto rompe el pool ENTERO", no solo su tarea -- ver
-    docstring de `despachar_en_paralelo`). Ese escenario de carreras
-    superpuestas no es lo que este test quiere ejercitar: acá se aísla la
-    mecánica de recuperación en sí, un grupo a la vez."""
+    -- la recuperacion automatica (aislamiento, mismo grupo reprocesado)
+    debe terminar en EXITO, sin tocar cuarentena. `procesos=1`: aísla la
+    mecánica de recuperación en sí, sin la complejidad adicional de grupos
+    concurrentes (esa la ejercita
+    `test_ningun_grupo_sano_termina_en_cuarentena_por_compartir_pool_con_uno_toxico`,
+    con `procesos>1`)."""
     monkeypatch.setenv(VAR_ENV_MARCADOR, str(tmp_path))
     grupos = iter([(referencia("doc-se-recupera-1"),), (referencia("doc-se-recupera-2"),)])
     cuarentena = CuarentenaEnMemoria()
@@ -195,7 +238,7 @@ def test_un_hijo_que_muere_una_vez_se_recupera_en_el_reintento(tmp_path, monkeyp
     resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
         corrida_id="corrida-recupera",
         grupos=grupos,
-        crear_pool=lambda: _crear_pool(1),
+        crear_pool=_crear_pool,
         procesos=1,
         cuarentena=cuarentena,
         funcion_trabajo=trabajo_muere_la_primera_vez_por_grupo,
@@ -206,3 +249,99 @@ def test_un_hijo_que_muere_una_vez_se_recupera_en_el_reintento(tmp_path, monkeyp
     assert {r["estado"] for r in resultados} == {"exito"}
     assert {r["id_documento"] for r in resultados} == {"doc-se-recupera-1", "doc-se-recupera-2"}
     assert not cuarentena.errores
+
+
+def test_la_ventana_vuelve_a_su_ancho_completo_despues_de_dar_un_grupo_por_perdido():
+    """Centinela del CRÍTICO 1 de revisión adversarial: `_dar_por_perdido`
+    nunca llamaba `_reponer()` -- el lugar de un grupo perdido quedaba
+    vacío para siempre y la ventana deslizante colapsaba a un ancho menor
+    por el resto de la corrida, sin ningún log ni métrica que lo señalara.
+    Reproducido por la revisión con `procesos=4` y 15 grupos sanos: el
+    ancho de `en_vuelo` llegaba a 4 y caía a 1 para el resto de la corrida.
+
+    Este test observa el ancho de `en_vuelo` DIRECTAMENTE (no los totales
+    finales, que no distinguen "se procesó todo en paralelo" de "se procesó
+    todo en serie después del primer crash") justo después de que la
+    recuperación de un pool roto termina."""
+    procesos = 4
+    total_sanos = 15
+    grupos = iter(
+        [(referencia(ID_DOCUMENTO_QUE_MUERE_SIEMPRE),)]
+        + [(referencia(f"doc-sano-{indice}"),) for indice in range(total_sanos)]
+    )
+    cuarentena = CuarentenaEnMemoria()
+    anchos_tras_recuperacion: list[int] = []
+
+    estado = despacho_paralelo._EstadoDespacho(
+        corrida_id="corrida-ventana",
+        grupos=grupos,
+        crear_pool=_crear_pool,
+        procesos=procesos,
+        cuarentena=cuarentena,
+        funcion_trabajo=trabajo_muere_siempre_si_esta_marcado,
+    )
+    original_recuperar = estado._recuperar_de_pool_roto
+
+    def _recuperar_vigilado(indice, grupo):
+        original_recuperar(indice, grupo)
+        anchos_tras_recuperacion.append(len(estado.en_vuelo))
+
+    estado._recuperar_de_pool_roto = _recuperar_vigilado
+    resultados, total_documentos, total_grupos = estado.ejecutar()
+
+    assert total_grupos == 1 + total_sanos
+    assert total_documentos == 1 + total_sanos
+    assert anchos_tras_recuperacion, "nunca se disparo una recuperacion -- el test no ejercito el camino que prueba"
+    # Justo tras la recuperación (que da por perdido al grupo tóxico en
+    # aislamiento), la ventana tiene que volver a tocar su ancho completo --
+    # quedan 15 grupos sanos disponibles en el iterador, así que no hay
+    # excusa de "se agotó" para no reponerla del todo.
+    assert anchos_tras_recuperacion[0] == procesos, (
+        f"la ventana no volvio a su ancho completo ({procesos}) tras la recuperacion: "
+        f"quedo en {anchos_tras_recuperacion[0]} -- ver CRITICO 1 de la revision adversarial"
+    )
+
+
+def test_ningun_grupo_sano_termina_en_cuarentena_por_compartir_pool_con_uno_toxico():
+    """Centinela del CRÍTICO 2 de revisión adversarial: `wait()` convierte
+    la lista de futuros a un `set` -- cuál "sale primero" del bucle es
+    orden de HASH, no de causalidad. Tratar al primero como culpable
+    (versión anterior de `_recuperar_de_pool_roto`) mandaba estudios SANOS
+    a cuarentena por compartir pool con uno tóxico -- reproducido por la
+    revisión con `procesos=4`: de 3 grupos perdidos, 2 eran sanos.
+
+    Corre varias rondas (la asignación de qué proceso muere primero no es
+    determinística) para no depender de que una sola corrida "tuviera
+    suerte" con el orden -- con atribución causal correcta (aislamiento),
+    el resultado tiene que ser el MISMO en todas: solo el grupo tóxico
+    termina en cuarentena, nunca uno sano."""
+    procesos = 4
+    total_sanos = 15
+
+    for ronda in range(5):
+        grupos = iter(
+            [(referencia(ID_DOCUMENTO_QUE_MUERE_SIEMPRE),)]
+            + [(referencia(f"doc-sano-{ronda}-{indice}"),) for indice in range(total_sanos)]
+        )
+        cuarentena = CuarentenaEnMemoria()
+
+        resultados, total_documentos, total_grupos = despacho_paralelo.despachar_en_paralelo(
+            corrida_id=f"corrida-atribucion-{ronda}",
+            grupos=grupos,
+            crear_pool=_crear_pool,
+            procesos=procesos,
+            cuarentena=cuarentena,
+            funcion_trabajo=trabajo_muere_siempre_si_esta_marcado,
+        )
+
+        assert total_grupos == 1 + total_sanos, f"ronda {ronda}"
+        assert total_documentos == 1 + total_sanos, f"ronda {ronda}"
+
+        fallos = [r for r in resultados if r["estado"] != "exito"]
+        ids_perdidos = {r["id_documento"] for r in fallos}
+        assert ids_perdidos == {ID_DOCUMENTO_QUE_MUERE_SIEMPRE}, (
+            f"ronda {ronda}: se perdieron grupos SANOS ademas del toxico: {ids_perdidos}"
+        )
+        assert {error.id_documento for error in cuarentena.errores} == {ID_DOCUMENTO_QUE_MUERE_SIEMPRE}, (
+            f"ronda {ronda}: la cuarentena registro un grupo sano"
+        )

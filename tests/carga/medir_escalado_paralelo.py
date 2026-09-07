@@ -143,7 +143,7 @@ def _medir_una_corrida(directorio_entrada: Path, *, procesos: int) -> float:
         despacho_paralelo.despachar_en_paralelo(
             corrida_id="medicion",
             grupos=iter(grupos_referencias),
-            crear_pool=lambda: ProcessPoolExecutor(max_workers=procesos, initializer=_inicializar_trabajador_offline),
+            crear_pool=lambda n: ProcessPoolExecutor(max_workers=n, initializer=_inicializar_trabajador_offline),
             procesos=procesos,
             cuarentena=cuarentena,
             funcion_trabajo=_procesar_grupo_offline,
