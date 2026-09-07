@@ -18,6 +18,8 @@ que nunca puede inventariarse -- igual queda atribuido a su corrida.
 from __future__ import annotations
 
 import importlib.util
+import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,7 @@ from sqlalchemy.orm import Session
 from anonimizacion.dominio.errores import CodigoErrorDocumento
 from anonimizacion.dominio.estados_corrida import EstadoCorrida
 from anonimizacion.pii.motor import MotorPii
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Cuarentena, Estudio
 from anonimizacion.trabajadores import tareas
 
@@ -35,6 +38,13 @@ from ..fixtures.v1 import documentos
 _RUTA_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "procesar_carpeta.py"
 
 PEPPER = b"pepper-test-procesar-carpeta-nunca-real"
+
+# Ver `tests/integracion/test_postgres_carrera_real.py` para el porqué de
+# capturar esto a nivel de módulo, ANTES de que
+# `tests/conftest.py::_bloquear_llamadas_de_red_reales` (autouse, sesión)
+# parchee `socket.socket.connect`.
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 
 
 def _cargar_script():
@@ -341,3 +351,88 @@ def test_el_apartado_por_sobretamano_antes_de_la_huella_queda_atribuido_a_la_cor
 
     assert len(cuarentenas_por_sobretamano) == 1
     assert cuarentenas_por_sobretamano[0].corrida_id == corrida.id_corrida
+
+
+# --- openspec `paralelismo-de-procesamiento` PR 3: despacho paralelo real --
+
+
+@pytest.fixture()
+def _engine_postgres_real_para_script(monkeypatch: pytest.MonkeyPatch):
+    """Motor contra el Postgres real de `docker-compose.yml`, o `skip` si no
+    responde -- mismo patrón que `tests/integracion/test_postgres_carrera_real.py`.
+    """
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_el_script_despacha_dos_pacientes_en_procesos_reales_distintos_contra_postgres_real(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, _engine_postgres_real_para_script
+) -> None:
+    """Paralelismo REAL, no simulado, por el camino de producción completo:
+    `scripts/procesar_carpeta.py::ejecutar(procesos=2, db_url=...)` contra
+    Postgres real. Cada proceso hijo (`despacho_paralelo.inicializar_trabajador`,
+    instrumentado acá con `directorio_marcador_pid`) deja un archivo nombrado
+    con su propio PID -- si el despacho fuera secuencial-disfrazado-de-paralelo,
+    solo aparecería UN PID (el del propio proceso de test, si nada se
+    despachara a un hijo, o siempre el mismo hijo reusado). Con 2 pacientes en
+    subcarpetas separadas y `procesos=2`, tienen que aparecer al menos 2 PIDs
+    de sistema operativo genuinamente distintos, y ninguno debe coincidir con
+    el PID del proceso de test.
+
+    `ANONIMIZACION_PEPPER` se setea en runtime (no antes de arrancar pytest,
+    no vía shell) para confirmar de punta a punta -- no solo en el módulo
+    aislado -- que los hijos heredan el pepper del entorno del padre (ver
+    `despacho_paralelo.inicializar_trabajador`)."""
+    monkeypatch.setenv("ANONIMIZACION_PEPPER", "pepper-test-paralelismo-real-nunca-produccion")
+
+    (tmp_path / "paciente-1").mkdir()
+    (tmp_path / "paciente-2").mkdir()
+    _grupo_completo(tmp_path / "paciente-1", "par1", dni="20555888", nombre="Ana Sintetica Paralelo Uno")
+    _grupo_completo(
+        tmp_path / "paciente-2",
+        "par2",
+        dni="20666999",
+        nombre="Beatriz Sintetica Paralelo Dos",
+        fecha_nac_lab="10/10/1985",
+        fecha_nac_ecg="10-OCT-1985",
+    )
+
+    directorio_marcador_pid = tmp_path / "pids"
+    directorio_marcador_pid.mkdir()
+
+    modulo = _cargar_script()
+    codigo = modulo.ejecutar(
+        entrada=tmp_path,
+        engine=_engine_postgres_real_para_script,
+        motor=None,
+        pepper=b"no-se-usa-con-procesos-mayor-a-uno",
+        procesos=2,
+        db_url=_URL_POSTGRES_REAL,
+        directorio_marcador_pid=directorio_marcador_pid,
+    )
+
+    assert codigo == 0
+
+    pids_hijos = {archivo.name for archivo in directorio_marcador_pid.iterdir()}
+    assert str(os.getpid()) not in pids_hijos, "los grupos deben procesarse en HIJOS, no en el proceso de test"
+    assert len(pids_hijos) >= 2, f"se esperaban al menos 2 PIDs de SO distintos, se vieron: {pids_hijos}"
+
+    with Session(_engine_postgres_real_para_script) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+        cuarentenas = sesion.scalars(sa.select(Cuarentena)).all()
+    assert len(estudios) == 6, "particion exhaustiva: ambos pacientes se publican, cada uno en su proceso"
+    assert len(cuarentenas) == 0, "dos pacientes genuinamente distintos: ninguno va a cuarentena"
