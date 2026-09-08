@@ -21,6 +21,18 @@ class Firma:
     tipo: TipoDocumento
     marcadores: tuple[str, ...]
 
+    def puntaje(self, texto_normalizado: str) -> int:
+        """Cantidad de marcadores de esta firma que aparecen en el texto.
+
+        `detectar_tipo` compara el puntaje de todas las firmas entre sí y se
+        queda con la de mayor evidencia, en vez de la primera que matchea
+        (ver spec `document-type-detection`). Defecto medido que motiva esto:
+        la firma de ecocardiograma reconocía un documento real por un solo
+        marcador genérico de 4 caracteres ("S.C.") porque `coincide` usaba
+        `any()` -- alcanzaba con uno solo, sin importar cuán específico fuera.
+        """
+        return sum(1 for marcador in self.marcadores if marcador in texto_normalizado)
+
     def coincide(self, texto_normalizado: str) -> bool:
         """`texto_normalizado` ya debe estar en mayúsculas (ver `detectar_tipo`)."""
-        return any(marcador in texto_normalizado for marcador in self.marcadores)
+        return self.puntaje(texto_normalizado) > 0
