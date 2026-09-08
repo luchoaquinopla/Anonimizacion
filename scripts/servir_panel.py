@@ -97,7 +97,11 @@ from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.trabajadores import despacho_paralelo
 from anonimizacion.web.autenticacion_panel import exigir_autenticacion
 from anonimizacion.web.rutas_corridas import AplicacionWsgi, crear_aplicacion_corridas
-from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado, obtener_secreto_panel
+from anonimizacion.web.secreto_panel import (
+    ErrorSecretoPanel,
+    ErrorSecretoPanelNoConfigurado,
+    obtener_secreto_panel,
+)
 from anonimizacion.web.servicio_corridas import ServicioCorridasReal
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
@@ -242,15 +246,23 @@ def _resolver_secreto_para_arranque(*, escuchar_red: bool) -> bytes | None:
     `acceso-al-panel`, ver `web/autenticacion_panel.py` para el resto de la
     decisión de autenticación):
 
-    - Sin `--escuchar-red` (sólo `127.0.0.1`): se tolera arrancar sin
+    - **Ninguna fuente configurada** (`ErrorSecretoPanelNoConfigurado`):
+      sin `--escuchar-red` (sólo `127.0.0.1`) se tolera arrancar sin
       autenticación -- mismo bar que ya existía para este modo, para no
-      romper el uso local/de desarrollo.
-    - Con `--escuchar-red`: NO. Exponer el panel a toda la red del instituto
-      sin autenticación configurada es EXACTAMENTE el agujero que esta
-      feature cierra (`POST /corridas` puede lanzar horas de CPU sobre
-      cualquier ruta bajo `--raiz`) -- se relanza `ErrorSecretoPanelNoConfigurado`
-      para que `main()` falle ANTES de conectar a Postgres, mismo criterio
-      que ya usa con el pepper.
+      romper el uso local/de desarrollo. Con `--escuchar-red` NO: exponer
+      el panel a toda la red del instituto sin autenticación configurada
+      es EXACTAMENTE el agujero que esta feature cierra (`POST /corridas`
+      puede lanzar horas de CPU sobre cualquier ruta bajo `--raiz`) -- se
+      relanza la excepción para que `main()` falle ANTES de conectar a
+      Postgres, mismo criterio que ya usa con el pepper.
+    - **Una fuente SÍ está configurada pero mal** (`ErrorSecretoPanelInvalido`
+      -- secreto por debajo del piso mínimo, revisión de seguridad
+      hallazgo ALTA -- o `ErrorSecretoPanelArchivoIlegible`): esto NUNCA se
+      tolera, tenga o no `--escuchar-red`. Degradarlo a "arrancar sin
+      autenticación" sería peor que fallar: quien configuró un secreto
+      (aunque sea uno inválido) cree que el panel está protegido. No se
+      captura acá a propósito -- se deja propagar para que `main()` la
+      trate igual que cualquier otro error de configuración fuerte.
 
     Separada de `main()` para poder fijar la decisión con un test unitario
     sin levantar ningún servidor real (mismo patrón que `_resolver_host`).
@@ -284,18 +296,22 @@ def main() -> int:
 
     # Decisión "acceso al panel" (feature `acceso-al-panel`): mismo criterio
     # de fallo temprano que el pepper, ver `_resolver_secreto_para_arranque`.
-    # El mensaje de `ErrorSecretoPanelNoConfigurado` sólo nombra las
-    # variables de entorno esperadas -- nunca un valor leído -- así que
-    # imprimirlo tal cual no filtra el secreto.
+    # Se captura la clase BASE `ErrorSecretoPanel` (no sólo `NoConfigurado`):
+    # tanto "nada configurado con --escuchar-red" como "algo configurado
+    # pero inválido" (secreto corto, archivo illegible -- revisión de
+    # seguridad, hallazgos ALTA/BAJA) tienen que fallar temprano con el
+    # mismo criterio. Todos esos mensajes sólo nombran variables de entorno
+    # o rutas ya conocidas por quien las configuró -- nunca un valor
+    # leído -- así que imprimirlos tal cual no filtra el secreto.
     print(
         "Secreto del panel: verificando ANONIMIZACION_PANEL_SECRETO/ANONIMIZACION_PANEL_SECRETO_ARCHIVO...",
         file=sys.stderr,
     )
     try:
         secreto = _resolver_secreto_para_arranque(escuchar_red=args.escuchar_red)
-    except ErrorSecretoPanelNoConfigurado as error:
+    except ErrorSecretoPanel as error:
         print(
-            f"No se puede escuchar en toda la red del instituto sin autenticación configurada: {error}",
+            f"No se puede arrancar el panel: {error}",
             file=sys.stderr,
         )
         return 1

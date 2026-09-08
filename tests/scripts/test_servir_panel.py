@@ -404,6 +404,59 @@ def test_main_sin_escuchar_red_y_sin_secreto_arranca_igual(monkeypatch) -> None:
     assert codigo == 0
 
 
+@pytest.mark.parametrize("escuchar_red", [True, False])
+def test_main_falla_siempre_con_secreto_invalido_tenga_o_no_escuchar_red(monkeypatch, escuchar_red: bool) -> None:
+    """Revisión de seguridad (hallazgo ALTA): un secreto CONFIGURADO pero
+    inválido (por debajo del piso mínimo) nunca se degrada a "arrancar sin
+    autenticación" -- ni siquiera en modo loopback. Distinto de
+    `ErrorSecretoPanelNoConfigurado` (nada configurado), que sí se tolera
+    sin `--escuchar-red`: acá SÍ hay algo configurado, y está mal, así que
+    fallar en silencio dejaría a quien administra el servidor creyendo que
+    el panel está protegido cuando no lo está."""
+    from anonimizacion.web.secreto_panel import ErrorSecretoPanelInvalido
+
+    modulo = _cargar_script()
+    argv = ["servir_panel.py", "--escuchar-red"] if escuchar_red else ["servir_panel.py"]
+    monkeypatch.setattr("sys.argv", argv)
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelInvalido())
+    )
+
+    llamadas: list[str] = []
+    monkeypatch.setattr(
+        modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
+    )
+
+    codigo = modulo.main()
+
+    assert codigo == 1
+    assert llamadas == [], "un secreto invalido nunca debe dejar conectar a Postgres, con o sin --escuchar-red"
+
+
+@pytest.mark.parametrize("escuchar_red", [True, False])
+def test_main_falla_siempre_con_archivo_de_secreto_ilegible(monkeypatch, escuchar_red: bool) -> None:
+    """Hallazgo BAJA: `ErrorSecretoPanelArchivoIlegible` es otro error de
+    configuración fuerte -- mismo criterio que `ErrorSecretoPanelInvalido`,
+    nunca se tolera."""
+    from anonimizacion.web.secreto_panel import ErrorSecretoPanelArchivoIlegible
+
+    modulo = _cargar_script()
+    argv = ["servir_panel.py", "--escuchar-red"] if escuchar_red else ["servir_panel.py"]
+    monkeypatch.setattr("sys.argv", argv)
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo,
+        "obtener_secreto_panel",
+        lambda: (_ for _ in ()).throw(ErrorSecretoPanelArchivoIlegible("/ruta/inexistente")),
+    )
+    monkeypatch.setattr(modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite://"))
+
+    codigo = modulo.main()
+
+    assert codigo == 1
+
+
 def test_construir_aplicacion_recupera_corridas_abandonadas_al_arrancar(tmp_path, capsys) -> None:
     """Decisión "qué pasa si el servidor se cae con una corrida en curso"
     (feature `despachador-desde-el-panel`): al construir la aplicación --
