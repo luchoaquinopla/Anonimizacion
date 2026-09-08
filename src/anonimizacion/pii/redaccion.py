@@ -77,6 +77,40 @@ _PATRON_DNI = re.compile(
 # proteger nada (ver `_componentes_nombre`).
 _TOKEN_MINIMO = 3
 
+# Clases de equivalencia acentuada (hallazgo de auditoría: fuga de PII por
+# acentos). `re.IGNORECASE` cubre mayúsculas/minúsculas pero NO cubre
+# diacríticos -- "Maria" y "María" son puntos de código distintos para el
+# motor de regex, así que un nombre conocido con tilde ("María González",
+# como lo escribe el sistema del instituto en el header) no matcheaba su
+# aparición sin tilde en el texto libre dictado (o viceversa), y la mención
+# sobrevivía intacta en el registro de salida.
+#
+# La corrección NO normaliza el texto de entrada (NFD + strip de
+# diacríticos): eso cambia longitudes y obliga a remapear offsets de vuelta
+# al original, una fuente clásica de errores de un caracter que acá
+# significarían cortar mal una redacción. En cambio, el patrón se arma para
+# que cada letra base del nombre conocido matchee su propia clase de
+# variantes acentuadas: los offsets del texto original nunca se tocan.
+_EQUIVALENTES_ACENTUADAS: dict[str, str] = {
+    "a": "aáàäâ",
+    "e": "eéèëê",
+    "i": "iíìïî",
+    "o": "oóòöô",
+    "u": "uúùüû",
+    "n": "nñ",
+    "c": "cç",
+}
+
+# Reverso de `_EQUIVALENTES_ACENTUADAS`: de CUALQUIER variante (con o sin
+# acento) a su letra base. Necesario porque el nombre conocido puede traer
+# la letra YA acentuada (p.ej. "í" en "María") -- sin este reverso, sólo se
+# resolvía la dirección "letra base en el nombre -> variante acentuada en el
+# texto", no la inversa ("letra acentuada en el nombre -> letra base en el
+# texto").
+_BASE_POR_VARIANTE: dict[str, str] = {
+    variante: base for base, variantes in _EQUIVALENTES_ACENTUADAS.items() for variante in variantes
+}
+
 
 class DetectorEntidades(Protocol):
     """Lo mínimo que este módulo necesita del motor de PII.
@@ -114,9 +148,41 @@ def _componentes_nombre(nombre: str) -> tuple[str, ...]:
     Fernandez"), o solo el nombre de pila -- cualquiera de las tres formas
     debe redactarse. Los tokens por debajo de `_TOKEN_MINIMO` (conectores
     como "de"/"la"/"y") se excluyen: ver docstring de esa constante.
+
+    El piso mínimo también se aplica al nombre completo (hallazgo de
+    auditoría): una captura de header degenerada de una o dos letras (p.ej.
+    `["A"]`) no debe convertirse en gatillo de redacción -- redactaría esa
+    letra suelta en TODO el texto libre y corrompería el contenido clínico
+    en masa, silenciosamente. Si tras el filtro no queda ningún componente
+    utilizable, se devuelve una tupla vacía: el llamador
+    (`redactar_por_nombres_conocidos`) ya contempla ese caso y no arma un
+    patrón vacío (que matchearía cualquier posición del texto).
     """
-    tokens = nombre.split()
-    return tuple([nombre] + [token for token in tokens if len(token) >= _TOKEN_MINIMO])
+    componentes = [nombre] + nombre.split()
+    return tuple(c for c in componentes if len(c) >= _TOKEN_MINIMO)
+
+
+def _fragmento_tolerante_a_acentos(componente: str) -> str:
+    """Arma el fragmento de regex de `componente` matcheando ambas direcciones
+    de acento (header con tilde / texto sin tilde, y viceversa).
+
+    Por cada caracter: si su base en minúscula tiene variantes acentuadas
+    conocidas (`_EQUIVALENTES_ACENTUADAS`), se emite una clase de caracteres
+    con todas ellas; si no, se emite `re.escape(caracter)` sin tocar -- así un
+    nombre con punto, guion o paréntesis sigue escapado como antes y no se
+    convierte en metacaracteres de regex. `re.IGNORECASE` (aplicado por el
+    llamador al compilar) cubre mayúsculas/minúsculas tanto para estas clases
+    como para el resto de los caracteres escapados; acá sólo se resuelven los
+    diacríticos, que `IGNORECASE` no cubre.
+    """
+    partes = []
+    for caracter in componente:
+        base = _BASE_POR_VARIANTE.get(caracter.lower())
+        if base:
+            partes.append(f"[{_EQUIVALENTES_ACENTUADAS[base]}]")
+        else:
+            partes.append(re.escape(caracter))
+    return "".join(partes)
 
 
 def redactar_por_nombres_conocidos(texto: str, nombres: Sequence[str]) -> str:
@@ -127,7 +193,8 @@ def redactar_por_nombres_conocidos(texto: str, nombres: Sequence[str]) -> str:
     CONOCIDAS con certeza para ESTE documento (el paciente y/o el médico,
     leídos del header parseado por el llamador -- ver
     `salida/constructor_registro.py`). Cualquier aparición literal, sin
-    importar mayúsculas/minúsculas, se reemplaza por `MARCADOR_REDACTADO`.
+    importar mayúsculas/minúsculas NI diacríticos (ver
+    `_fragmento_tolerante_a_acentos`), se reemplaza por `MARCADOR_REDACTADO`.
 
     Los componentes más largos se intentan primero (`sorted(..., reverse=True)`)
     para que "Roberto Fernandez" se redacte como una sola unidad en vez de
@@ -143,7 +210,10 @@ def redactar_por_nombres_conocidos(texto: str, nombres: Sequence[str]) -> str:
     if not componentes:
         return texto
     patron = re.compile(
-        "|".join(rf"\b{re.escape(c)}\b" for c in sorted(componentes, key=len, reverse=True)),
+        "|".join(
+            rf"\b{_fragmento_tolerante_a_acentos(c)}\b"
+            for c in sorted(componentes, key=len, reverse=True)
+        ),
         re.IGNORECASE,
     )
     return patron.sub(MARCADOR_REDACTADO, texto)

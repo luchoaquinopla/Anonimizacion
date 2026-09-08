@@ -71,3 +71,43 @@ def test_redactar_texto_aplica_tambien_nombres_conocidos_sin_motor() -> None:
     texto = "Se sugiere control con Dra. Ana Lopez en dos semanas."
     redactado = redactar_texto(texto, nombres_conocidos=["Ana Lopez"])
     assert "Ana Lopez" not in redactado
+
+
+def test_redacta_nombre_conocido_con_acento_aunque_el_texto_no_lo_tenga() -> None:
+    # Hallazgo de auditoría (fuga de PII por acentos): el header trae el
+    # nombre con tilde tal cual lo escribe el sistema del instituto, pero el
+    # dictado del informe frecuentemente omite los acentos. `IGNORECASE` no
+    # cubre diacríticos -- sin el fix, "Maria Gonzalez" (sin tilde) sobrevive
+    # intacto en el texto pese a que el nombre conocido es "María González".
+    # Nombres sintéticos, no de un paciente real.
+    texto = "Se comenta con Maria Gonzalez y su hijo sobre la evolucion."
+    redactado = redactar_por_nombres_conocidos(texto, ["María González"])
+    assert "Maria Gonzalez" not in redactado
+    assert MARCADOR_REDACTADO in redactado
+
+
+def test_redacta_nombre_conocido_sin_acento_aunque_el_texto_lo_tenga() -> None:
+    # Dirección inversa: header sin tilde, texto libre con tilde.
+    texto = "Se comenta con María González y su hijo sobre la evolucion."
+    redactado = redactar_por_nombres_conocidos(texto, ["Maria Gonzalez"])
+    assert "María González" not in redactado
+    assert MARCADOR_REDACTADO in redactado
+
+
+def test_nombre_conocido_de_una_letra_no_redacta_esa_letra_suelta() -> None:
+    # Hallazgo de auditoría (sobre-redacción): el piso `_TOKEN_MINIMO` debe
+    # aplicarse también al nombre completo, no sólo a sus tokens. Una
+    # captura de header degenerada de una letra no puede convertirse en un
+    # patrón que matchee cualquier "A" del texto libre.
+    texto = "El paciente tiene un antecedente de asma leve."
+    redactado = redactar_por_nombres_conocidos(texto, ["A"])
+    assert redactado == texto
+
+
+def test_nombres_conocidos_todos_degenerados_no_arma_patron_vacio() -> None:
+    # Si tras el filtro de `_TOKEN_MINIMO` no queda ningún componente
+    # utilizable (todos los nombres conocidos son demasiado cortos), no debe
+    # armarse un patrón vacío que matchee cualquier posición del texto.
+    texto = "Sin hallazgos patologicos en el estudio."
+    redactado = redactar_por_nombres_conocidos(texto, ["A", "B", ""])
+    assert redactado == texto
