@@ -69,7 +69,7 @@ def crear_aplicacion_corridas(
             return _consultar_corrida(iniciar_respuesta, servicio, ruta.removeprefix("/corridas/"))
         if metodo == "POST" and ruta.startswith("/corridas/") and ruta.endswith("/reintentar"):
             id_corrida = ruta.removeprefix("/corridas/").removesuffix("/reintentar").rstrip("/")
-            return _reintentar_corrida(iniciar_respuesta, servicio, id_corrida)
+            return _reintentar_corrida(entorno, iniciar_respuesta, servicio, id_corrida)
         return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "ruta_no_encontrada"})
 
     return aplicacion
@@ -147,14 +147,25 @@ def _responder(
 
 
 def _reintentar_corrida(
-    iniciar_respuesta: InicioRespuesta, servicio: ServicioCorridas, id_corrida: str
+    entorno: dict[str, object], iniciar_respuesta: InicioRespuesta, servicio: ServicioCorridas, id_corrida: str
 ) -> Iterable[bytes]:
     """501, no un 202 falso (design.md, 'ServicioCorridas real').
 
     La reanudación por documento está fuera de alcance de este cambio; la
     ruta funciona hoy, así que sin este `try` un `POST` real respondería 202
     sobre algo que no reintenta nada -- el silencio que este cambio cierra.
+
+    Mismo chequeo de `Content-Type: application/json` que `_crear_corrida`
+    (revisión de seguridad, feature `acceso-al-panel`): hoy esta ruta
+    siempre da 501, así que un CSRF vía `<form>` (Basic Auth cacheado por el
+    navegador, ver `autenticacion_panel.py`) es inofensivo -- pero el día
+    que se implemente el reintento de verdad, un formulario sin una línea de
+    JavaScript podría disparar un reintento real sin que ningún preflight
+    CORS lo frene. Se cierra ahora, cuando es barato, no cuando alguien
+    implemente el reintento sin acordarse de este chequeo.
     """
+    if str(entorno.get("CONTENT_TYPE", "")).split(";", 1)[0] != "application/json":
+        return _responder(iniciar_respuesta, "415 Unsupported Media Type", {"codigo": "tipo_de_contenido_no_admitido"})
     try:
         return _responder(iniciar_respuesta, "202 Accepted", servicio.reintentar_corrida(id_corrida))
     except NotImplementedError:
