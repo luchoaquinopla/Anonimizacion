@@ -59,16 +59,62 @@ autenticarse.
 Sobre CSRF con Basic Auth (considerado, no un hueco nuevo): un navegador
 reenvía credenciales de Basic Auth cacheadas a CUALQUIER pestaña que pida el
 mismo origen, así que en teoría una página maliciosa abierta en otra
-pestaña podría intentar disparar `POST /corridas`. Dos barreras ya
-existentes en `rutas_corridas.py` lo evitan: (1) esa ruta exige
-`Content-Type: application/json` exacto (415 si no), y un `<form>` HTML
-sólo puede mandar `application/x-www-form-urlencoded`/`multipart/form-data`/
-`text/plain` -- nunca JSON sin JavaScript; (2) un `fetch()` cross-origin con
+pestaña podría intentar disparar una acción de escritura. Dos barreras ya
+existentes en `rutas_corridas.py` lo evitan en LAS DOS rutas de escritura
+(`POST /corridas` y `POST /corridas/{id}/reintentar` -- revisión de
+seguridad, hallazgo MEDIA: la primera versión de este cambio sólo verificó
+la primera; la segunda quedó sin el mismo chequeo hasta que se agregó
+explícitamente, ver `_reintentar_corrida` en `rutas_corridas.py`): (1) las
+dos exigen `Content-Type: application/json` exacto (415 si no), y un
+`<form>` HTML sólo puede mandar
+`application/x-www-form-urlencoded`/`multipart/form-data`/`text/plain` --
+nunca JSON sin JavaScript; (2) un `fetch()` cross-origin con
 `Content-Type: application/json` deja de ser una petición "simple" y exige
 preflight CORS -- este servidor no emite ningún encabezado
 `Access-Control-Allow-Origin`, así que el navegador bloquea el preflight y
 la petición real nunca sale. No se agrega ningún encabezado CORS a
-propósito: agregarlo sería DEBILITAR esta barrera, no reforzarla.
+propósito: agregarlo sería DEBILITAR esta barrera, no reforzarla. Cualquier
+ruta de escritura NUEVA que se agregue después tiene que repetir el mismo
+chequeo de `Content-Type` -- no es automático por estar detrás de
+`exigir_autenticacion`, que sólo verifica IDENTIDAD, no protege por sí solo
+contra CSRF.
+
+Sobre límite de intentos de autenticación (evaluado, NO implementado --
+revisión de seguridad, hallazgo ALTA): se consideró un contador en memoria
+que bloquee tras N intentos fallidos, y se decidió NO agregarlo, por estas
+razones:
+
+1. **El control que de verdad cierra fuerza bruta ya está en
+   `secreto_panel.py`**: el piso mínimo de longitud
+   (`LONGITUD_MINIMA_SECRETO = 16`) hace que adivinar el secreto en línea,
+   un intento HTTP a la vez, sea inviable en un tiempo práctico incluso SIN
+   ningún límite de intentos -- un espacio de búsqueda de ese tamaño no se
+   agota probando online, con o sin demora entre intentos.
+2. **El riesgo real no es "alguien adivina el secreto probando"**, es
+   "alguien lo CAPTURA" -- la ausencia de TLS (ver más arriba) significa
+   que el secreto viaja en claro por la red si alguien observa tráfico. Un
+   límite de intentos no hace NADA contra un atacante que ya tiene el
+   secreto correcto: lo usa una sola vez y entra. Agregar un contador
+   habría gastado código y complejidad en el vector que YA está cerrado
+   (fuerza bruta online) sin tocar el vector que sigue abierto (captura de
+   tráfico).
+3. **Un contador en memoria, en ESTE servidor (un solo proceso,
+   `wsgiref.simple_server`), tiene sus propias trampas**: un reinicio lo
+   borra por completo -- y este panel YA se reinicia solo tras cualquier
+   caída (`recuperar_corridas_abandonadas` en `scripts/servir_panel.py`),
+   así que un atacante con paciencia para forzar o esperar un reinicio
+   recupera el contador en cero gratis. Bloquear por IP es peor todavía
+   para el caso de uso real: un panel de intranet para UN operador, donde
+   una IP mal escrita cinco veces bloquea exactamente a la persona
+   legítima que lo necesita usar, sin ningún camino de auto-recuperación
+   más allá de pedirle a alguien que reinicie el servidor -- que es
+   exactamente la clase de fricción operativa que este cambio evitó a
+   propósito al no construir un formulario de login con estado.
+
+Si el mecanismo de autenticación institucional reemplaza esto en el futuro
+(ver más arriba), es esperable que SÍ traiga su propio límite de intentos
+del lado del servidor de identidad -- ese es el lugar correcto para esa
+lógica, no un panel de un solo proceso sin persistencia de sesión.
 """
 
 from __future__ import annotations
