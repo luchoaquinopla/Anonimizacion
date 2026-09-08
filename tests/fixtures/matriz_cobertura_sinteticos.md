@@ -59,6 +59,60 @@ para el test que custodia que no vuelva a aparecer un marcador inventado.
 - Valores, nombres, DNIs, matrículas, fechas y texto libre de las referencias reales.
 - Logos, marcas y estilos propietarios que no cambian la detección o el parseo.
 - Una señal ECG digital o una interpretación clínica: el trazado es una figura sintética y no
-  representa una señal ni un resultado médico.
+  representa una señal ni un resultado médico (además, la grilla/trazado vectorial del ECG se
+  retiró en la tarea "invertir la dirección del corpus sintético": era una figura decorativa que
+  ningún test verifica, y su costo de dibujado dominaba el tiempo de generación -- ver esa tarea
+  para las mediciones).
 - Variantes no observadas en las referencias autorizadas; deberán incorporarse sólo desde
   muestras anonimizadas aprobadas y con una prueba contractual nueva.
+- (Sólo ecocardiograma) El nombre completo de la institución y la línea de dirección/teléfono
+  del pie: ninguno de los dos tiene un prefijo genérico seguro en
+  `parseo/eco_doppler.py::_PREFIJOS_BOILERPLATE` sin inventar o filtrar un dato institucional
+  real -- ver `plantilla_documento.py::_recuperar_boilerplate_eco`.
+
+## Tarea "invertir la dirección del corpus sintético"
+
+`tests/fixtures/pdf_sintetico.py` dejó de reconstruir cada tipo de documento a
+mano: ahora dibuja el contenido de `tests/fixtures/plantilla_documento.py`,
+que toma como MOLDE el fixture parseable real versionado
+(`tests/fixtures/parseables/{tipo}-01.txt`) y sólo sustituye identidad
+(nombre, DNI, fechas, números de petición/estudio/ECG) por documento. El
+centinela `tests/fixtures/test_cobertura_plantillas.py` mide, contra el PDF
+real que `generar_corpus_clinico` termina escribiendo, qué porcentaje del
+vocabulario estructural de la plantilla (excluyendo identidad y el
+boilerplate recuperado del eco) reproduce -- con un piso fijo del 95% escrito
+en el test. Medido contra esta implementación: ECG, laboratorio y
+ecocardiograma reproducen el 100% del vocabulario exigido.
+
+Cobertura del vocabulario de los documentos REALES (medida por el pedido de
+esta tarea, antes de esta tarea → generador anterior, hoy → plantilla real):
+laboratorio 38% → ~100%, ecocardiograma 42% → ~100%, ecg 62% → ~100%.
+
+Dos hallazgos de parser reales, encontrados al enfrentar el generador contra
+el layout completo (no del corpus sintético en sí -- se confirmaron leyendo
+el PDF real bajo `D:\ejemplos_pdf\`, sin copiar su contenido a ningún
+archivo):
+
+- `parseo/eco_doppler.py::es_boilerplate_eco` comparaba contra el prefijo
+  `"informe no valido"` (sin tilde) usando sólo `casefold()`, que no saca
+  acentos -- la línea real trae "Informe no válido..." (con tilde) y nunca
+  matcheaba, en NINGÚN documento real, no sólo en el sintético. Fix: le saca
+  los acentos a la línea antes de comparar.
+- `parseo/eco_doppler.py::_CAMPOS_HEADER["medico_solicitante"]` nunca podía
+  protegerse en `esqueleto.py` (su regex arranca con una clase de caracteres
+  justo después de la primera letra, `M[eé]dico`, y el extractor de prefijo
+  literal de `esqueleto.py` se detiene ahí) -- la plantilla real la trae
+  enmascarada por forma. `plantilla_documento.py` la relabeliza a la forma
+  canónica no identificatoria ("Medico Solicitante:") porque, sin ella
+  reconocible, la sección "FLUJO PULMONAR" (que continúa entre páginas) se
+  contamina con el header repetido de la página siguiente y la reconciliación
+  la rechaza con `evidencia_ausente`.
+
+"PID / NAME MISMATCH" (ECG) y "DIAGNOSTICO POR IMAGENES" (eco) NO aparecen en
+las plantillas reales usadas (no es que se enmascararan: esas muestras en
+particular no traen esa alerta de equipo ni ese sello de especialidad) pero
+sí son constantes que un parser real ya sabe reconocer
+(`parseo/ecg_mortara.py::_ADVERTENCIA_PID_MISMATCH`,
+`parseo/eco_doppler.py::_TEXTO_FIRMA_EXCLUIDO`) -- se agregan como líneas
+sintéticas explícitas, igual que el pie "DOCUMENTO SINTETICO - SOLO
+PRUEBAS", para seguir calibrando esas dos ramas.

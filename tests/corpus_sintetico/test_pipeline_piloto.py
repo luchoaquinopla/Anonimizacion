@@ -27,7 +27,18 @@ def test_piloto_adversarial_ejecuta_cincuenta_casos_punta_a_punta(corridas_pilot
     assert resultado.documentos_publicados == 120
     assert resultado.documentos_en_cuarentena == 29
     assert resultado.registros_inspeccionados == 120
-    assert resultado.valores_pii_verificados == 572
+    # 520, no 572: tarea "invertir la dirección del corpus sintético"
+    # (`tests/fixtures/plantilla_documento.py`) -- el generador ahora
+    # registra 10 valores de identidad por episodio (4 laboratorio + 3 eco +
+    # 3 ecg) en vez de los 11 fijos de antes (¡"Profesional Sintetico",
+    # matrícula, técnico, etc. eran los MISMOS literales en los 52 episodios,
+    # nunca variaban!). 572 - 520 = 52, exactamente 1 valor menos por cada
+    # una de las 52 llamadas a `generar_corpus_clinico` del corpus
+    # adversarial (50 casos + 2 alternos del caso "ambiguo"). El resto del
+    # oráculo (episodios aprobados, cuarentena, códigos) no cambió: la
+    # plantilla real conserva todo lo que el pipeline necesita para los
+    # mismos 40 episodios "completos".
+    assert resultado.valores_pii_verificados == 520
     # Los 2 casos "corrupto" del corpus adversarial (`fixtures/corpus_piloto.py`)
     # ahora caen en `pdf_ilegible`, no en el `parseo_incompleto` indistinguible
     # de antes (Tarea "que la cuarentena diga qué se rompió",

@@ -79,36 +79,46 @@ class ComparacionContrato:
         return asdict(self)
 
 
+# Tarea "invertir la dirección del corpus sintético": secciones y
+# determinaciones regeneradas una vez contra el fixture parseable real
+# (`tests/fixtures/parseables/laboratorio-01.txt`, ver
+# `plantilla_documento.py` y `test_regresion_fixtures_parseables.py`, que ya
+# fija estos mismos 36 resultados/6 secciones contra ese fixture). Son
+# palabras SINTÉTICAS (`_sustituir_letras`, `esqueleto.py`), no
+# determinaciones clínicas reales -- nombre de sección/prueba NO está en
+# `ALLOWLIST_ESTRUCTURAL`, así que la plantilla los trae enmascarados por
+# forma. `tipos_resultado`/`resultados_con_unidad`/`resultados_con_referencia`
+# no cambiaron (36 numéricos, 34 con unidad, 33 con rango).
 _DETERMINACIONES = (
-    "basofilos",
-    "cayados",
-    "conc. de hba corpuscular media",
-    "creatinina serica",
-    "eosinofilos",
-    "eritrosedimentacion",
-    "filtrado glomerular estimado (ckd-epi 2021)",
-    "globulos blancos",
-    "globulos rojos",
-    "glucemia",
-    "granulocitos inmaduros",
-    "hematocrito",
-    "hemoglobina",
-    "hemoglobina corpuscular media",
-    "linfocitos",
-    "monocitos",
-    "neutrofilos",
-    "plaquetas",
-    "potasio",
-    "r",
-    "rdw-cv",
-    "rdw-sd",
-    "rin",
-    "sodio",
-    "tiempo de protrombina",
-    "tiempo de tromboplastina aptt",
-    "uremia",
-    "volumen corpuscular medio",
-    "volumen plaquetario medio",
+    "aluhay se guvaqoyaronavo avak",
+    "aluhay se zoxomupadok",
+    "anekemumi",
+    "azanirez",
+    "biniqotaqiz",
+    "caw",
+    "edasek",
+    "efevuwimuru",
+    "epi-ca",
+    "epi-ge",
+    "erajeti",
+    "etiwu",
+    "eyowidufiwawifewawo",
+    "icac. se efa wozejevuciq gezuk",
+    "ihogiwojig molibo",
+    "iwuqitu",
+    "kusejisawovo ujilosela",
+    "o",
+    "obidoyapuhi",
+    "obidoyapuhi wozejevuciq gezuk",
+    "ojocaxeba",
+    "omubilij orilowucud dunejuda (juy-oka 9808)",
+    "oyoyeqera",
+    "tabuvah icumodemomi iloyo",
+    "tabuvah wozejevuciq iloyo",
+    "ukilodedad",
+    "xazituga okabake",
+    "xazituga riciv",
+    "zucajidacef",
 )
 
 CONTRATO_LABORATORIO = ResumenLaboratorio(
@@ -117,7 +127,7 @@ CONTRATO_LABORATORIO = ResumenLaboratorio(
     estado_parseo="aprobado",
     campos_identidad=("dni", "fecha_nac", "ids_internos", "nombre"),
     campos_adicionales=("edad", "medico_derivante", "origen"),
-    secciones=("formula leucocitaria", "hematologia", "hemograma", "hemostasia", "ionograma", "quimica clinica"),
+    secciones=("bejuzaqab", "dugijuw iqajizayukac", "hematologia", "hemostasia", "ionograma pobiga", "quimica clinica"),
     determinaciones=_DETERMINACIONES,
     tipos_resultado=(("numerico", 36),),
     resultados_con_unidad=34,

@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+import hashlib
+import random
 import socket
+from datetime import date
 
 import pymupdf
 
-from tests.fixtures.pdf_sintetico import generar_corpus_clinico
+from tests.fixtures.pdf_sintetico import _FECHA_SINTETICA, generar_corpus_clinico
+from tests.fixtures.plantilla_documento import IdentidadSintetica, generar_identidad_sintetica
+
+
+def _identidad_de_semilla(semilla: int) -> IdentidadSintetica:
+    """Reproduce el mismo cómputo de identidad que `generar_corpus_clinico`
+    (mismo orden de consumo de `rng`) para poder afirmar sobre el nombre y el
+    DNI generados sin duplicar la lógica ni hardcodear un valor fijo -- desde
+    la tarea "invertir la dirección del corpus sintético", cada documento
+    tiene una identidad sintética DISTINTA por semilla (antes era siempre
+    "Paciente Sintetico"), así que un test que afirme sobre el nombre
+    necesita poder recalcularlo."""
+    rng = random.Random(semilla)
+    dni = str(rng.randint(10_000_000, 49_999_999))
+    fecha_base = date.fromisoformat(_FECHA_SINTETICA)
+    return generar_identidad_sintetica(rng, dni, fecha_base)
 
 
 def test_corpus_con_misma_semilla_repite_oraculo_y_tres_tipos(tmp_path) -> None:
@@ -18,11 +36,34 @@ def test_corpus_con_misma_semilla_repite_oraculo_y_tres_tipos(tmp_path) -> None:
 
 def test_corpus_usa_pii_sintetica_y_no_la_expone_en_oraculo(tmp_path) -> None:
     corpus = generar_corpus_clinico(tmp_path, semilla=9)
+    identidad = _identidad_de_semilla(9)
 
     contenido = "\n".join(pymupdf.open(documento.ruta)[0].get_text() for documento in corpus.documentos)
-    assert "Paciente Sintetico" in contenido
-    assert "Paciente Sintetico" not in str(corpus.oraculo)
+    assert identidad.nombre_lab in contenido
+    assert identidad.dni not in str(corpus.oraculo)
     assert all("dni" not in claves for claves in corpus.oraculo.values())
+
+
+def test_dos_semillas_distintas_generan_documentos_con_identidad_distinta(tmp_path) -> None:
+    """Tarea "invertir la dirección del corpus sintético", requisito 2: los
+    documentos deben seguir siendo DISTINTOS entre sí (no sólo el nombre
+    "Paciente Sintetico" con un DNI distinto como antes) -- si no, el corpus
+    deja de ejercitar la deduplicación por SHA-256 y el banco de carga mide
+    una mezcla que no existe. Se compara el hash de CONTENIDO del PDF
+    completo (no sólo la identidad), asi que tambien cubre que el resto del
+    documento (fechas, numero de peticion/estudio) varía por semilla."""
+    primero = generar_corpus_clinico(tmp_path / "uno", semilla=101)
+    segundo = generar_corpus_clinico(tmp_path / "dos", semilla=102)
+
+    for tipo in ("ecg", "laboratorio", "ecocardiograma"):
+        ruta_1 = next(d.ruta for d in primero.documentos if d.tipo == tipo)
+        ruta_2 = next(d.ruta for d in segundo.documentos if d.tipo == tipo)
+        assert hashlib.sha256(ruta_1.read_bytes()).digest() != hashlib.sha256(ruta_2.read_bytes()).digest()
+
+    identidad_1 = _identidad_de_semilla(101)
+    identidad_2 = _identidad_de_semilla(102)
+    assert identidad_1.dni != identidad_2.dni
+    assert identidad_1.nombre_lab != identidad_2.nombre_lab
 
 
 def test_ecg_reproduce_contrato_visual_y_textual_de_layout(tmp_path) -> None:
@@ -57,12 +98,10 @@ def test_laboratorio_y_eco_preservan_paginacion_y_secciones_extraibles(tmp_path)
     texto_laboratorio = [pagina.get_text("text", sort=True) for pagina in laboratorio]
     assert all("LABORATORIO DE ANALISIS CLINICOS" in texto for texto in texto_laboratorio)
     assert "HEMATOLOGIA" in texto_laboratorio[0]
-    assert "Resultado" in texto_laboratorio[0]
-    assert "Unidades" in texto_laboratorio[0]
-    assert "Valores de Referencia" in texto_laboratorio[0]
+    assert "Apellido y Nombre:" in texto_laboratorio[0]
     assert "QUÍMICA CLÍNICA" in texto_laboratorio[1]
     assert "Pagina 3 de 3" in texto_laboratorio[2]
-    assert texto_laboratorio[0].index("Resultado") < texto_laboratorio[0].index("HEMATOLOGIA")
+    assert texto_laboratorio[0].index("Apellido y Nombre:") < texto_laboratorio[0].index("HEMATOLOGIA")
     laboratorio.close()
 
     ecocardiograma = pymupdf.open(rutas["ecocardiograma"])
@@ -70,7 +109,7 @@ def test_laboratorio_y_eco_preservan_paginacion_y_secciones_extraibles(tmp_path)
     assert all((round(pagina.rect.width), round(pagina.rect.height)) == (616, 862) for pagina in ecocardiograma)
     texto_eco = [pagina.get_text("text", sort=True) for pagina in ecocardiograma]
     assert "ECOGRAFIA DOPPLER COLOR CARDIACA" in texto_eco[0]
-    assert "DDVI" in texto_eco[0]
+    assert "MEDIDAS" in texto_eco[0]
     assert "MOTILIDAD SEGMENTARIA" in texto_eco[0]
     assert "VALVULAS CARDIACAS" in texto_eco[0]
     assert "EVALUACION DE FLUJOS POR DOPPLER" in texto_eco[0]
@@ -86,6 +125,7 @@ def test_corpus_identifica_datos_ficticios_y_no_requiere_red(tmp_path, monkeypat
 
     monkeypatch.setattr(socket, "create_connection", red_prohibida)
     corpus = generar_corpus_clinico(tmp_path, semilla=23)
+    identidad = _identidad_de_semilla(23)
     textos = []
     for documento_sintetico in corpus.documentos:
         documento = pymupdf.open(documento_sintetico.ruta)
@@ -94,11 +134,20 @@ def test_corpus_identifica_datos_ficticios_y_no_requiere_red(tmp_path, monkeypat
 
     contenido = "\n".join(textos)
     assert "DOCUMENTO SINTETICO - SOLO PRUEBAS" in contenido
-    assert "Paciente Sintetico" in contenido
-    assert "Paciente Sintetico" not in str(corpus.oraculo)
+    assert identidad.nombre_lab in contenido
+    assert identidad.dni not in str(corpus.oraculo)
 
 
 def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_path) -> None:
+    """Contrato de campos/secciones que cada parser real necesita encontrar
+    literalmente -- ver `tests/fixtures/matriz_cobertura_sinteticos.md`.
+
+    Las cadenas de abajo se leyeron directamente del fixture parseable real
+    versionado (`tests/fixtures/parseables/{tipo}-01.txt`), no del generador
+    hand-typed anterior: acentos/símbolos exactos (p. ej. "Nº Petición:",
+    "F.Nacimiento :") importan porque son justamente lo que el regex del
+    parser real espera -- ver `plantilla_documento.py`.
+    """
     corpus = generar_corpus_clinico(tmp_path, semilla=29)
     rutas = {documento.tipo: documento.ruta for documento in corpus.documentos}
 
@@ -114,8 +163,8 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "12SL",
             "~,",
             "ID:",
-            "(43 yr)",
-            "Female",
+            "yr)",
+            "Male",
             "Technician:",
             "Test ind:",
             "Ordered by:",
@@ -134,15 +183,11 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "DNI:",
             "F.Nacimiento :",
             "Edad:",
-            "Medico:",
-            "No Peticion:",
+            "Médico:",
+            "Nº Petición:",
             "Fecha:",
-            "Hora de Extraccion:",
+            "Hora de Extracción:",
             "Origen:",
-            "Pruebas",
-            "Resultado",
-            "Unidades",
-            "Valores de Referencia",
             "HEMATOLOGIA",
             "HEMOSTASIA",
             "QUÍMICA CLÍNICA",
@@ -157,16 +202,7 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "Peso:",
             "Altura:",
             "S.C.",
-            "AO",
-            "AI",
-            "DDVI",
-            "DSVI",
-            "FA",
-            "SEPTUM",
-            "P.POSTERIOR",
-            "VD",
-            "PULMON",
-            "AD",
+            "MEDIDAS",
             "MOTILIDAD SEGMENTARIA",
             "AURICULAS",
             "VALVULAS CARDIACAS",
@@ -181,14 +217,15 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "FLUJO PULMONAR",
             "FLUJO TRICUSPIDEO",
             "CONCLUSIONES",
-            "Matricula W",
+            "Matrícula",
             "DIAGNOSTICO POR IMAGENES",
         ),
     }
 
     for tipo, campos in contratos.items():
         texto = texto_de(rutas[tipo])
-        assert all(campo in texto for campo in campos)
+        faltantes = [campo for campo in campos if campo not in texto]
+        assert not faltantes, f"'{tipo}' no reproduce: {faltantes}"
 
     texto_laboratorio = texto_de(rutas["laboratorio"])
     assert texto_laboratorio.index("HEMATOLOGIA") < texto_laboratorio.index("HEMOSTASIA")

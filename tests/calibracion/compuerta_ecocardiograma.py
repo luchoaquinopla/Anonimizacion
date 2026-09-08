@@ -69,7 +69,14 @@ class ComparacionContratoEco:
     equivalencia_estado_final: bool
 
 
-_MEDIDAS = ("AO", "SEPTUM", "AI", "P.POSTERIOR", "DDVI", "VD", "DSVI", "PULMON", "FA", "AD")
+# Tarea "invertir la dirección del corpus sintético": nombres de medida
+# regenerados una vez contra el fixture parseable real
+# (`tests/fixtures/parseables/eco-01.txt`, ver `plantilla_documento.py`) --
+# son palabras SINTÉTICAS (`_sustituir_letras`, `esqueleto.py`), no nombres
+# clínicos reales; los nombres de medida NO están en `ALLOWLIST_ESTRUCTURAL`
+# (a diferencia de sus unidades y de "NORMAL"/"VARIABLE"), así que la
+# plantilla los trae enmascarados por forma.
+_MEDIDAS = ("WO", "GUJESA", "HO", "H.IXOJUMOVO", "RUDE", "EJ", "IHIC", "AFACUB", "VA", "HA")
 _SECCIONES = (
     "MOTILIDAD SEGMENTARIA",
     "AURICULAS",
