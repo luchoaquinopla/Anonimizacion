@@ -1,0 +1,90 @@
+# esqueleto de formato -- generado con `anonimizacion esqueleto`
+# tipo_detectado: ecg
+# puntaje_firma: 3/4 marcadores
+
+## pagina 1 (orden de dibujado)
+X
+XX
+XXX
+XXX
+XXX
+XXX
+X0
+X0
+X0
+X0
+X0
+X0
+X0
+XXXXXXXX XXXXXX~, 
+ID:000000
+00-XXX-0000  00:00:00
+XXXX. XXXXXXXXXXX XX XXXXXXXXXX-XXXXXX   XXXXXXX XXXXXX
+*** XXX / XXXX XXXXXXXX ***
+00XX/X
+00XX/XX
+00XX
+0.0.0
+12SL 000
+XXX: 0
+Ordered by:   - XXX XXXXXX XXX
+XXXXXXXXXXX
+BPM
+00
+Vent. rate
+ms
+000
+XX XXXXXXXX
+ms
+000
+XXX XXXXXXXX
+ms
+XX/XXX
+000/000
+00
+00
+00
+P-R-T axes
+00-XXX-0000 (00 XX)
+XXXX
+XXXXXXX
+XXXX:
+XXX:0
+Technician: 
+Test ind:
+XXX:
+XXXX 0 XX 0
+  XXX:       XXX:  XXXXX:00XXX0000~ XXXXX: 00XXX000000000
+
+## pagina 1 (orden geometrico)
+                                           0
+                                                                                       XX
+                                           0
+                                                                                                                                                                              XXXXXXXXXX                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 00XXX000000000XXXXXXX                                                                                                                                                                                                                                                              XXXXX:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      XXXXX:00XXX0000~XXXXXXXXXX-XXXXXX
+XX                             X0              X0              X0                                       XXX:                                                                                                           XXXXXXXXXXX
+                                                                                                                                                                         XXX:XXXXXXXXXXX
+XXXX.
+                             XXX
+                                                          XXXXXX
+                             XXX
+
+          -00:00:00                             X0              X0              X0
+                             XX:
+                                                                    XXXXXXX00-XXX-0000
+
+    XXXXXXXXX00
+
+   00000000 00
+         00                          000/000
+                                          0
+                                                                                                                                                                         XXX:ID:000000
+                                               XXX                     XXX                     XXX
+                                                                                                                               000
+      XXXX    XXXXXXXX                  XXXXXXXX     XXXX                                                                                                                                                   12SL       XXXX.XXXXXXX/XXXX-X-X
+                                                                                                                                                                                                                    0.0.0
+  ***
+                                 XXX:                                                                                                                                    00XX                                                                                  Technician:XXXX      XXXXXXXXXX)XXXXXX~, (00                XXXXXXX                                                                                                                                                                                                                                                                                  00XX/XX   XXXX
+
+ /
+  XXX              X              XX                     XXX              X0XXXXXXXX***00-XXX-0000XXXX  XXXX:XXX:0              XXX:                                                                                                                                                                                                  00XX/X

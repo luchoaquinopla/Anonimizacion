@@ -1,0 +1,379 @@
+# esqueleto de formato -- generado con `anonimizacion esqueleto`
+# tipo_detectado: laboratorio
+# puntaje_firma: 4/5 marcadores
+
+## pagina 1 (orden de dibujado)
+XXXXXXXXXX
+Apellido y Nombre:
+XXXXXX:
+Edad:
+Origen:
+Fecha:
+XX XXXXXXXX:
+Hora XX XXXXXXXXXX:
+XXXXXXXXX
+ XXXXXX
+XXXXXXXX
+XXXXX X  XXXXXXXXX
+ XXXXXXXX
+XXXXXXX XX XXXXXXXXXX
+XXXXXXXXXXXX XX XXXXXXXX XXXXXXXX, XXXXXXXXXXXXXXX X XX XXXX XXXXXXXXXXX
+XXXXXXX 0000 - XXX 0000-0000000 XXX 0000-0000000 XXX 000 - XXXXXXXXXX - XX 0000
+XXXXXXXX , XXXXXX XXXXX
+XXX XXXXXX XXXXXXXXX
+00
+0000000
+XXXXXXX
+00/00/0000
+00:00
+00/00/0000
+F.Nacimiento :
+00000000
+DNI:
+0
+XX
+0
+-HEMATOLOGIA-
+HEMATOLOGIA
+XXXXXXXXXXXXXXXXXXX
+mm/hora
+0 - 00
+0
+XXXXXXXXX
+XXXXXXXXXXX
+00
+%
+00 - 00
+XXXXXXXX XXXXX
+00*0/XX0
+0.00 - 0.00
+0.00
+XXXXXXXXXXX
+00.0
+g/dl
+00.0 - 00.0
+XXXXXXX XXXXXXXXXXX XXXXX
+XX
+00 - 000
+00
+XXXXXXXXXXX XXXXXXXXXXX XXXXX
+XX
+00.0 - 00.0
+00.0
+XXXX. XX XXX XXXXXXXXXXX XXXXX
+g/dl
+00.0 - 00.0
+00.0
+XXX-XX
+XX
+00.00 - 00.00
+00.00
+XXX-XX
+%
+00.00 - 00.00
+00.00
+XXXXXXXXX
+000000
+/XX
+000000 - 000000
+XXXXXXX XXXXXXXXXXX XXXXX
+XX
+0 - 00
+0
+XXXXXXXX XXXXXXX
+0000
+/XX0
+0000 - 00000
+XXXXXXX XXXXXXXXXXXX
+XXXXXXX XXXXXXXXX:
+XXXXXXXXXXX
+%
+00 - 00
+00
+XXXXXXXXXXX
+%
+0 - 0
+0
+XXXXXXXXX
+%
+0 - 0
+0
+XXXXXXXXXX
+%
+00 - 00
+00
+
+## pagina 2 (orden de dibujado)
+XX XXXXXXXX:
+0000000
+Apellido y Nombre: XXXXXXXX , XXXXXX XXXXX
+XXXXXXX
+XXXXXXXX
+XXXXXXX XX XXXXXXXXXX
+XXXXXXXXX
+ XXXXXX
+XXXXX X XXXXXXXXX
+ XXXXXXXX
+0
+XX
+0
+XXXXXXXXX
+%
+0 - 00
+0
+XXXXXXX
+%
+0 - 00
+0
+XXXXXXXXXXXX XXXXXXXXX
+%
+0.00 - 0.00
+0.00
+XXXXXXX XXXXXXXXX:
+XXXXXXXXXXX
+/XX0
+0000 - 0000
+0000
+XXXXXXXXXXX
+/XX0
+00 - 000
+000
+XXXXXXXXX
+/XX0
+00 - 000
+00
+XXXXXXXXXX
+/XX0
+000 - 0000
+0000
+XXXXXXXXX
+/XX0
+00 - 0000
+000
+XXXXXXX
+/XX0
+0 - 000
+0
+XXXXXXXXXXXX XXXXXXXXX
+/XX0
+0.00 - 0.00
+0.00
+-HEMOSTASIA-
+HEMOSTASIA
+XXXXXX XX XXXXXXXXXXX
+00
+XXXXXX: XXXXXXXXXXXXXX
+%
+00 - 000
+XXX
+0.00
+XXX: XXXX XXX XXXXXXXXXXX XXXX
+ XX XXXXXXXXX XX XXXXXXXXXXX XXX
+ XXXXXXXXXXXXXXX XXXXXX.
+XXXXXX XX XXXXXXXXXXXXXX XXXX
+00
+seg
+00 - 00
+XXXXXX XXXXXXXXXXXXXX X000 XXXX
+X
+0.00
+X: XXXXXXXXXX XXXX XX XXXXXXXXX
+ XX XXXXXXXXXXX XXX XXXXXXXX XX
+ XXXXXXXXXXX.
+-QUÍMICA CLÍNICA-
+QUÍMICA CLÍNICA
+XXXXXXXX
+000
+mg/dl
+00 - 000
+XXXXXX
+0.00
+X/X
+0.00 - 0.00
+XXXXXXXXXX XXXXXX
+0.00
+mg/dl
+0.00 - 0.00
+XXXXXXXX XXXXXXXXXX XXXXXXXX (XXX-XXX
+ 0000)
+000
+XX/XXX/0.00XX
+
+## pagina 3 (orden de dibujado)
+XX XXXXXXXX:
+0000000
+Apellido y Nombre: XXXXXXXX , XXXXXX XXXXX
+XXXXXXX
+XXXXXXXX
+XXXXXXX XX XXXXXXXXXX
+XXXXXXXXX
+ XXXXXX
+XXXXX X XXXXXXXXX
+ XXXXXXXX
+XXXXXXX XXXX XXXXXX XXX XX XXXXX X XXXXX XXX XXXXXXXXXX
+XX
+0
+00/00/0000
+0
+XXXXXXX XXXXX
+“XXXX XXXXXXXXX XXXXXX XX XXXXXXXXXX XXXXXXXXXX XX XXXXXXXX XXX XXXXXXXXXXX XXXXXXXXXXX. XX XXXXXXX XXX XXXXXXXXXXX XX XXXXXXXX
+ XXX XXXXXX XX XXXX XXXXXXXX XXXXXXXX (XX XXXXXXX XXX <00,0 XX/XX X >00 XX/XX X XX XXXXXXXX XXXXXXX XX 00 XXXX XXX< XXXXXXXXX
+ 0), XXXXXXXXXXX, XXXXXXXXXX X XXXXXXXX XX XXXXX XXXXXX XX XXXXXX XXXXX XXXXX. XX XXXXXXX XXXXXXXXXX XX XXXXXXXXXXXX XX XXXXXXXXXX
+ X XXXXXXX XX 00 XXXX XXX XXX < 00 XX/XXX/0,00X0 X XX XXXXXXX XXX XXX < 00 XX/XXX/0,00 m2”.XXXXXXXX XX XXXXXXXXXXXXXX XX
+ XX XXX 0000/0000 XXXXX XXXXXXXXX XXXXXXXXXX XXXXXXXXXXX, XXXXXXXXXX, XXXXXXX X XXXXXXXXXXX X XX XXXXXXXX XXXXXXXX XX XXXXXXXX
+ XXXXXXXX XX XXXXXXXXXXXX XXXXXXX (XXXXX, XXXXXXXXXX XX XXXXX)”.
+IONOGRAMA XXXXXX
+XXXXX
+000
+meq/lt
+000 - 000
+XXXXXXX
+0.0
+meq/lt
+0.0 - 0.0
+XXXX. XXXXX XXX X. XXXXXXX X.X. 000
+XXXXXXXX XXXXXXXXXXXXXXXX:
+
+## pagina 1 (orden geometrico)
+                  XXXXXXXXXXXX XX XXXXXXXX XXXXXXXX, XXXXXXXXXXXXXXX X XX XXXX XXXXXXXXXXX
+                     XXXXXXX 0000 - XXX 0000-0000000 XXX 0000-0000000 XXX 000 - XXXXXXXXXX - XX 0000
+
+
+ Apellido y Nombre: XXXXXXXX , XXXXXX XXXXX                          Fecha:  00/00/0000
+ F.Nacimiento :  00/00/0000                                              XX XXXXXXXX: 0000000
+ Edad: 00                DNI:  00000000                               Hora XX XXXXXXXXXX:  00:00
+ XXXXXX: XXX XXXXXX XXXXXXXXX                                           Origen: XXXXXXXXXX
+
+        XXXXXXX               XXXXXXXXX   XXXXX X XXXXXXXXX     XXXXXXXX              XXXXXXX XX XXXXXXXXXX
+                                   XXXXXX           XXXXXXXX
+
+                                   -HEMATOLOGIA-
+
+HEMATOLOGIA
+XXXXXXXXXXXXXXXXXXX                   0                          mm/hora                  0 - 00
+
+XXXXXXXXX
+
+XXXXXXXXXXX                         00                  %                    00 - 00
+
+
+XXXXXXXX XXXXX                         0.00                        00*0/XX0                    0.00 - 0.00
+
+XXXXXXXXXXX                           00.0                                       g/dl                      00.0 - 00.0
+
+XXXXXXX XXXXXXXXXXX XXXXX            00                                       XX                    00 - 000
+
+XXXXXXXXXXX XXXXXXXXXXX XXXXX         00.0                            XX                       00.0 - 00.0
+
+XXXX. XX XXX XXXXXXXXXXX XXXXX        00.0                                      g/dl                       00.0 - 00.0
+
+XXX-XX                             00.00                                     XX                       00.00 - 00.00
+
+XXX-XX                             00.00                 %                       00.00 - 00.00
+
+XXXXXXXXX                        000000                                  /XX                   000000 - 000000
+
+XXXXXXX XXXXXXXXXXX XXXXX             0                                       XX                    0 - 00
+
+XXXXXXXX XXXXXXX                    0000                         /XX0                 0000 - 00000
+
+                            XXXXXXX XXXXXXXXXXXX
+
+XXXXXXX XXXXXXXXX:
+XXXXXXXXXXX                          00                  %                    00 - 00
+
+XXXXXXXXXXX                          0                  %                    0 - 0
+
+XXXXXXXXX                            0                  %                    0 - 0
+
+XXXXXXXXXX                           00                  %                    00 - 00
+
+
+                                                                                           0  XX  0
+## pagina 2 (orden geometrico)
+XX XXXXXXXX:  0000000
+Apellido y Nombre: XXXXXXXX , XXXXXX XXXXX
+
+        XXXXXXX               XXXXXXXXX   XXXXX X XXXXXXXXX     XXXXXXXX              XXXXXXX XX XXXXXXXXXX
+                                   XXXXXX           XXXXXXXX
+
+XXXXXXXXX                           0                  %                    0 - 00
+
+XXXXXXX                            0                  %                    0 - 00
+
+XXXXXXXXXXXX XXXXXXXXX                 0.00                  %                       0.00 - 0.00
+
+XXXXXXX XXXXXXXXX:
+XXXXXXXXXXX                         0000                        /XX0                   0000 - 0000
+
+XXXXXXXXXXX                         000                        /XX0                   00 - 000
+
+XXXXXXXXX                           00                        /XX0                   00 - 000
+
+XXXXXXXXXX                          0000                        /XX0                   000 - 0000
+
+XXXXXXXXX                          000                        /XX0                   00 - 0000
+
+XXXXXXX                            0                         /XX0                   0 - 000
+
+XXXXXXXXXXXX XXXXXXXXX                 0.00                        /XX0                      0.00 - 0.00
+
+                                       -HEMOSTASIA-
+HEMOSTASIA
+XXXXXX XX XXXXXXXXXXX                00                  %                      00 - 000
+XXXXXX: XXXXXXXXXXXXXX
+
+XXX                                    0.00
+                                                                                                         XXX: XXXX XXX XXXXXXXXXXX XXXX
+                                                                                             XX XXXXXXXXX XX XXXXXXXXXXX XXX
+                                                                                                           XXXXXXXXXXXXXXX XXXXXX.
+
+
+XXXXXX XX XXXXXXXXXXXXXX XXXX         00                            seg                      00 - 00
+XXXXXX XXXXXXXXXXXXXX X000 XXXX
+
+X                                      0.00
+                                                                                                      X: XXXXXXXXXX XXXX XX XXXXXXXXX
+                                                                                             XX XXXXXXXXXXX XXX XXXXXXXX XX
+                                                                                                               XXXXXXXXXXX.
+
+                                    -QUÍMICA CLÍNICA-
+QUÍMICA CLÍNICA
+XXXXXXXX                             000                              mg/dl                    00 - 000
+
+XXXXXX                                  0.00                                           X/X                        0.00 - 0.00
+
+XXXXXXXXXX XXXXXX                         0.00                              mg/dl                       0.00 - 0.00
+
+XXXXXXXX XXXXXXXXXX XXXXXXXX (XXX-XXX    000                         XX/XXX/0.00XX
+ 0000)
+
+                                                                                           0  XX  0
+## pagina 3 (orden geometrico)
+XX XXXXXXXX:  0000000
+Apellido y Nombre: XXXXXXXX , XXXXXX XXXXX
+
+        XXXXXXX               XXXXXXXXX   XXXXX X XXXXXXXXX     XXXXXXXX              XXXXXXX XX XXXXXXXXXX
+                                   XXXXXX           XXXXXXXX
+
+
+   “XXXX XXXXXXXXX XXXXXX XX XXXXXXXXXX XXXXXXXXXX XX XXXXXXXX XXX XXXXXXXXXXX XXXXXXXXXXX. XX XXXXXXX XXX XXXXXXXXXXX XX XXXXXXXX
+   XXX XXXXXX XX XXXX XXXXXXXX XXXXXXXX (XX XXXXXXX XXX <00,0 XX/XX X >00 XX/XX X XX XXXXXXXX XXXXXXX XX 00 XXXX XXX< XXXXXXXXX
+    0), XXXXXXXXXXX, XXXXXXXXXX X XXXXXXXX XX XXXXX XXXXXX XX XXXXXX XXXXX XXXXX. XX XXXXXXX XXXXXXXXXX XX XXXXXXXXXXXX XX XXXXXXXXXX
+   X XXXXXXX XX 00 XXXX XXX XXX < 00 XX/XXX/0,00X0 X XX XXXXXXX XXX XXX < 00 XX/XXX/0,00 m2”.XXXXXXXX XX XXXXXXXXXXXXXX XX
+    XX XXX 0000/0000 XXXXX XXXXXXXXX XXXXXXXXXX XXXXXXXXXXX, XXXXXXXXXX, XXXXXXX X XXXXXXXXXXX X XX XXXXXXXX XXXXXXXX XX XXXXXXXX
+    XXXXXXXX XX XXXXXXXXXXXX XXXXXXX (XXXXX, XXXXXXXXXX XX XXXXX)”.
+IONOGRAMA XXXXXX
+XXXXX                               000                                meq/lt                    000 - 000
+
+XXXXXXX                                    0.0                                meq/lt                        0.0 - 0.0
+
+
+
+        XXXXXXXX XXXXXXXXXXXXXXXX:    XXXX. XXXXX XXX X. XXXXXXX X.X. 000
+
+
+
+
+
+00/00/0000                  XXXXXXX XXXX XXXXXX XXX XX XXXXX X XXXXX XXX XXXXXXXXXX    XXXXXXX XXXXX    0  XX  0

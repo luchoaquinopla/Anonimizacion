@@ -132,7 +132,7 @@ def test_detecta_tipo_y_reporta_puntaje_de_la_firma() -> None:
 
     assert esqueleto.tipo_detectado is TipoDocumento.LABORATORIO
     assert esqueleto.puntaje == 3
-    assert esqueleto.total_marcadores == 4
+    assert esqueleto.total_marcadores == 5
 
 
 def test_tipo_no_reconocido_reporta_puntaje_cero() -> None:
@@ -158,7 +158,7 @@ def test_formatear_incluye_tipo_puntaje_y_ambas_representaciones() -> None:
     formateado = esqueleto.formatear()
 
     assert "laboratorio" in formateado
-    assert "3/4" in formateado
+    assert "3/5" in formateado
     assert "Perez Juan" not in formateado
     assert "orden de dibujado" in formateado
     assert "orden geometrico" in formateado
