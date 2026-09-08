@@ -42,6 +42,10 @@ El comando imprime en la terminal el tipo de documento detectado y el puntaje de
 
 **El PDF original nunca debe copiarse al repositorio** -- sólo el `.txt` que produce este comando.
 
+## Instalación en una computadora del instituto (sin experiencia técnica)
+
+Para instalar el panel en la computadora de un operador que no programa, ver [`docs/instalacion-para-el-instituto.md`](docs/instalacion-para-el-instituto.md): dos scripts de PowerShell (`scripts/instalar.ps1` y `scripts/iniciar_panel.ps1`) hacen el entorno virtual, la instalación de dependencias, el modelo de spaCy, los secretos y el arranque del panel, con salida en español y sin dejar nada a medias en silencio.
+
 ## Despliegue institucional
 
 La guía de instalación, variables protegidas, permisos, backups, retención y rollback está en [`deploy/operacion-institucional.md`](deploy/operacion-institucional.md). El archivo [`deploy/variables-entorno.example`](deploy/variables-entorno.example) es sólo un catálogo y no contiene secretos.

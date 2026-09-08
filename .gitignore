@@ -23,3 +23,16 @@ venv/
 /lote*/
 /entrada*/
 /pdf-prueba*/
+
+# Configuración local del operador (`scripts/instalar.ps1` la genera a
+# partir de `deploy/anonimizacion.toml.example`): puede llevar una URL de
+# Postgres con credenciales embebidas específicas de una máquina. El
+# ejemplo versionado (`.example`) no queda afectado por este patrón.
+/anonimizacion.toml
+
+# Segunda defensa para secretos (pepper, secreto del panel): el instalador
+# los escribe FUERA del repositorio por defecto (perfil del usuario de
+# Windows), pero si alguna vez alguien los apunta a una carpeta local acá
+# adentro, que git los ignore igual -- nunca deben versionarse.
+/secretos/
+*.pepper
