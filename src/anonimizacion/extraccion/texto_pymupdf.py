@@ -63,8 +63,21 @@ class TextoExtraido:
     que espera `parseo/ecg_mortara.py`, recalibrado contra el layout real.
     `paginas_ordenadas`: orden geométrico (`sort=True`) — lo que esperan
     `parseo/laboratorio_general.py` y `parseo/eco_doppler.py`. La detección
-    de tipo (`deteccion/detector_tipo.py`) es indistinta a cuál se use: solo
-    hace `in` sobre el texto completo en mayúsculas, no depende del orden.
+    de tipo (`deteccion/detector_tipo.py`) lee SIEMPRE `texto_completo`, es
+    decir `paginas` (orden de dibujado), para los tres tipos.
+
+    NO es indistinto cuál se use, aunque la detección sólo haga `in` sobre el
+    texto en mayúsculas. Medido contra el ECG real del instituto:
+
+        orden de dibujado   3/4 marcadores  ('12SL', 'P-R-T AXES', 'VENT. RATE')
+        orden geométrico    1/4 marcadores  ('12SL',)
+
+    El motivo es que `sort=True` no reordena líneas ya formadas: reordena por
+    posición geométrica, y en el ECG el trazado de las 12 derivaciones se
+    superpone al header, así que "P-R-T AXES" y "VENT. RATE" quedan partidos y
+    dejan de existir como subcadena. Cambiar `detectar_tipo` para que lea
+    `paginas_ordenadas` haría que NINGÚN ECG real se reconociera. El docstring
+    anterior afirmaba lo contrario; se corrigió al medirlo.
 
     `paginas_ordenadas` es opcional en la construcción directa (p. ej. desde
     tests que arman un `TextoExtraido` a mano sin pasar por
