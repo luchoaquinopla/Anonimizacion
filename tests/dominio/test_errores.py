@@ -6,6 +6,7 @@ import pytest
 
 from anonimizacion.dominio.errores import (
     CodigoErrorDocumento,
+    DetalleParseoIncompleto,
     ErrorDocumento,
     ErrorParseo,
     EtapaDocumento,
@@ -77,7 +78,73 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         # ALTO 3: deliberadamente distinto de `error_transitorio_agotado`
         # -- ver `trabajadores/despacho_paralelo.py`.
         "proceso_interrumpido",
+        # Distinguen, dentro de lo que antes era un único `parseo_incompleto`
+        # indistinguible, dos causas con acción operativa completamente
+        # distinta (ver `extraccion/texto_pymupdf.py`): un escaneo necesita
+        # OCR, un archivo corrupto necesita pedirlo de nuevo al origen.
+        "sin_capa_de_texto",
+        "pdf_ilegible",
     }
+
+
+def test_detalle_parseo_incompleto_es_vocabulario_cerrado() -> None:
+    """Las seis causas de `PARSEO_INCOMPLETO` que hoy comparten código pero
+    ameritan una acción distinta (ver `parseo/ecg_mortara.py`,
+    `parseo/eco_doppler.py`, `parseo/laboratorio_general.py`)."""
+    detalles = {miembro.value for miembro in DetalleParseoIncompleto}
+    assert detalles == {
+        "header_ausente",
+        "nombre_ausente",
+        "fecha_ausente",
+        "fecha_ilegible",
+        "hora_ilegible",
+        "numero_peticion_inconsistente",
+    }
+
+
+def test_error_documento_admite_detalle_parseo_incompleto() -> None:
+    error = ErrorDocumento(
+        id_documento="doc-001",
+        etapa="parseo",
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+    )
+    assert error.detalle_parseo is DetalleParseoIncompleto.NOMBRE_AUSENTE
+
+
+def test_error_documento_rechaza_detalle_parseo_como_texto_libre() -> None:
+    """Centinela de la invariante "sin PII en cola, logs ni DLQ": `detalle_parseo`
+    es un vocabulario cerrado (enum), nunca un string arbitrario -- ni siquiera
+    uno que luzca inocuo. Si esto aceptara `str`, cualquier llamador futuro
+    podría filtrar un nombre de paciente o un fragmento del documento acá."""
+    with pytest.raises(ValueError):
+        ErrorDocumento(
+            id_documento="doc-001",
+            etapa="parseo",
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            detalle_parseo="paciente juan perez, dni 12345678",  # type: ignore[arg-type]
+        )
+
+
+def test_error_documento_rechaza_detalle_parseo_fuera_de_parseo_incompleto() -> None:
+    """`detalle_parseo` es exclusivo de `PARSEO_INCOMPLETO` (mismo precedente
+    que `tamano_bytes`/`tope_bytes`, exclusivos de `ARTEFACTO_SOBRETAMANO`)."""
+    with pytest.raises(ValueError):
+        ErrorDocumento(
+            id_documento="doc-001",
+            etapa="parseo",
+            codigo=CodigoErrorDocumento.TIPO_NO_RECONOCIDO,
+            detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+        )
+
+
+def test_error_parseo_transporta_detalle_parseo_incompleto() -> None:
+    excepcion = ErrorParseo(
+        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+        etapa="parseo",
+        detalle_parseo=DetalleParseoIncompleto.FECHA_ILEGIBLE,
+    )
+    assert excepcion.detalle_parseo is DetalleParseoIncompleto.FECHA_ILEGIBLE
 
 
 def test_reconciliacion_tiene_etapa_y_codigos_seguros() -> None:

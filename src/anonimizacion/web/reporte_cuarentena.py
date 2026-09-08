@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from anonimizacion.salida.modelos_orm import Cuarentena
 
-from .codigos_cuarentena import EXPLICACION_POR_CODIGO
+from .codigos_cuarentena import EXPLICACION_POR_CODIGO, EXPLICACION_POR_DETALLE_PARSEO
 
 _BYTES_POR_MIB = 1024 * 1024
 
@@ -41,6 +41,11 @@ class AccionRequerida(str, Enum):
     PEDIR_MATERIAL = "pedir_material"
     REVISAR_EL_PROGRAMA = "revisar_el_programa"
     REVISAR_A_MANO = "revisar_a_mano"
+    # Distinto de `REVISAR_EL_PROGRAMA` (Tarea "que la cuarentena diga qué se
+    # rompió"): un escaneo sin capa de texto no es un bug del parser, es
+    # material que necesita OCR antes de poder procesarse -- avisar al
+    # equipo de desarrollo sería la acción equivocada.
+    NECESITA_OCR = "necesita_ocr"
     SIN_CLASIFICAR = "sin_clasificar"
 
 
@@ -79,6 +84,13 @@ PRESENTACION: dict[AccionRequerida, PresentacionAccion] = {
         color="#d03b3b",
         simbolo="■",
     ),
+    AccionRequerida.NECESITA_OCR: PresentacionAccion(
+        titulo="Escaneo sin texto, necesita OCR",
+        que_significa="El documento es una imagen escaneada: no tiene una capa de texto nativa que se pueda extraer.",
+        que_hacer="Pasar el documento por OCR (o pedir al instituto la versión con texto nativo) y volver a procesarlo.",
+        color="#3b82c4",
+        simbolo="▤",
+    ),
     AccionRequerida.SIN_CLASIFICAR: PresentacionAccion(
         titulo="Sin clasificar",
         que_significa="Un motivo que todavía no está descrito en este reporte.",
@@ -102,6 +114,12 @@ _ACCION_POR_CODIGO: dict[str, AccionRequerida] = {
     "cobertura_ambigua": AccionRequerida.REVISAR_EL_PROGRAMA,
     "artefacto_sobretamano": AccionRequerida.REVISAR_EL_PROGRAMA,
     "error_transitorio_agotado": AccionRequerida.REVISAR_EL_PROGRAMA,
+    # PDF corrupto/vacío/inexistente: sigue sin ser un problema del
+    # documento en sí que el instituto pueda resolver -- avisar al equipo.
+    "pdf_ilegible": AccionRequerida.REVISAR_EL_PROGRAMA,
+    # Escaneo sin capa de texto: NO es un bug del programa (ver
+    # `AccionRequerida.NECESITA_OCR`).
+    "sin_capa_de_texto": AccionRequerida.NECESITA_OCR,
     # Distinto texto que "error_transitorio_agotado" (ver codigos_cuarentena.py),
     # misma acción: reprocesar sin cambios puede andar (el proceso murió, no
     # el documento), pero igual amerita avisar al equipo -- un patrón de
@@ -166,6 +184,14 @@ def _explicar(fila: Cuarentena) -> str:
         tamano = (fila.tamano_bytes or 0) / _BYTES_POR_MIB
         tope = (fila.tope_bytes or 0) / _BYTES_POR_MIB
         return f"El archivo pesa {tamano:.0f} MiB y el tope configurado es de {tope:.0f} MiB."
+    if fila.detalle_parseo:
+        # El detalle de QUÉ faltó (Tarea "que la cuarentena diga qué se
+        # rompió") reemplaza el mensaje genérico de `parseo_incompleto`:
+        # sin esto, el operador seguiría teniendo que abrir el documento a
+        # mano para saber qué campo revisar.
+        return EXPLICACION_POR_DETALLE_PARSEO.get(
+            fila.detalle_parseo, _EXPLICACION_POR_CODIGO.get(fila.codigo, "Motivo no descrito en este reporte.")
+        )
     return _EXPLICACION_POR_CODIGO.get(fila.codigo, "Motivo no descrito en este reporte.")
 
 

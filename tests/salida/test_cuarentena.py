@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorDocumento
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.modelos_orm import Base, Cuarentena
 
@@ -87,7 +87,27 @@ def test_registrar_persiste_solo_metadata_segura_de_reconciliacion() -> None:
         "tope_bytes",
         "creado_en",
         "corrida_id",
+        "detalle_parseo",
     }
+
+
+def test_registrar_persiste_detalle_parseo_incompleto() -> None:
+    """El detalle de QUÉ faltó (Tarea "que la cuarentena diga qué se rompió")
+    sobrevive la escritura real, no solo el `ErrorDocumento` en memoria."""
+    motor = _motor()
+    EscritorCuarentena(motor).registrar(
+        ErrorDocumento(
+            "doc-1",
+            "parseo",
+            CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+        )
+    )
+
+    with sa.orm.Session(motor) as sesion:
+        fila = sesion.scalars(sa.select(Cuarentena)).one()
+
+    assert fila.detalle_parseo == "nombre_ausente"
 
 
 def test_registrar_persiste_tipo_documento_seguro() -> None:

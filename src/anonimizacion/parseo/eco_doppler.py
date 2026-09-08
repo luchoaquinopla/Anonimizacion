@@ -43,7 +43,7 @@ from datetime import date, datetime
 
 from pydantic import SecretStr
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.referencias import selector_medida_eco
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -414,14 +414,28 @@ class ParseadorEcoDoppler:
         texto_completo = texto.texto_completo_ordenado
         header = _buscar_campos(texto_completo, _CAMPOS_HEADER)
 
-        if "nombre" not in header or "fecha" not in header:
-            raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
+        # Separados en dos chequeos (antes uno solo, indistinguible): ver
+        # `dominio/errores.py::DetalleParseoIncompleto`.
+        if "nombre" not in header:
+            raise ErrorParseo(
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+            )
+        if "fecha" not in header:
+            raise ErrorParseo(
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.FECHA_AUSENTE,
+            )
 
         try:
             fecha_estudio = _parsear_fecha(header["fecha"])
         except ValueError as _exc:
             raise ErrorParseo(
-                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.FECHA_ILEGIBLE,
             ) from _exc
 
         identidad = IdentidadCruda(

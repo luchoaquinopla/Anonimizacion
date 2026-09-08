@@ -95,6 +95,34 @@ def test_el_sobretamano_informa_el_tamano_real_y_el_tope() -> None:
     assert "50" in detalle.explicacion, "debe informar el tope aplicado en MiB"
 
 
+def test_sin_capa_de_texto_se_distingue_de_pdf_ilegible() -> None:
+    """Tarea "que la cuarentena diga qué se rompió": un escaneo necesita OCR,
+    un archivo corrupto necesita pedirse de nuevo -- acciones distintas, no
+    pueden caer en el mismo grupo."""
+    motor = _motor_con([
+        _fila("sin_capa_de_texto", etapa="extraccion"),
+        _fila("pdf_ilegible", etapa="extraccion"),
+    ])
+
+    reporte = construir_reporte(motor)
+
+    assert reporte.por_accion[AccionRequerida.NECESITA_OCR].total == 1
+    assert reporte.por_accion[AccionRequerida.REVISAR_EL_PROGRAMA].total == 1
+
+
+def test_detalle_parseo_incompleto_se_refleja_en_la_explicacion() -> None:
+    """El detalle de QUÉ faltó (nombre, fecha, etc.) tiene que llegar al
+    operador, no solo quedar en la base -- si no, la tarea no logró nada."""
+    motor = _motor_con([
+        _fila("parseo_incompleto", etapa="parseo", detalle_parseo="nombre_ausente"),
+    ])
+
+    reporte = construir_reporte(motor)
+
+    (detalle,) = reporte.por_accion[AccionRequerida.REVISAR_EL_PROGRAMA].detalles
+    assert "nombre" in detalle.explicacion.lower()
+
+
 def test_un_codigo_desconocido_no_se_pierde_en_silencio() -> None:
     """Si aparece un código nuevo y nadie lo clasifica, tiene que verse igual.
 

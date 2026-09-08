@@ -74,7 +74,7 @@ from datetime import date, datetime, time
 
 from pydantic import SecretStr
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -281,8 +281,21 @@ class ParseadorEcgMortara:
         header = _buscar_campos(texto_completo, _CAMPOS_HEADER)
         medidas = _extraer_medidas_ecg(texto_completo)
 
-        if "nombre" not in header or "fecha" not in header:
-            raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
+        # Separados en dos chequeos (antes uno solo, indistinguible): un
+        # nombre ausente y una fecha ausente ameritan revisar cosas
+        # distintas del layout (ver `dominio/errores.py::DetalleParseoIncompleto`).
+        if "nombre" not in header:
+            raise ErrorParseo(
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+            )
+        if "fecha" not in header:
+            raise ErrorParseo(
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.FECHA_AUSENTE,
+            )
 
         if "institucion" in header:
             header["institucion"] = _primer_segmento(header["institucion"])
@@ -293,7 +306,9 @@ class ParseadorEcgMortara:
             fecha_estudio, hora_estudio, precision_hora = _parsear_fecha(header["fecha"])
         except ValueError as _exc:
             raise ErrorParseo(
-                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.FECHA_ILEGIBLE,
             ) from _exc
 
         fecha_nac_normalizada = (

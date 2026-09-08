@@ -100,5 +100,6 @@ class EscritorCuarentena:
                 tamano_bytes=error.tamano_bytes,
                 tope_bytes=error.tope_bytes,
                 corrida_id=error.corrida_id,
+                detalle_parseo=error.detalle_parseo.value if error.detalle_parseo else None,
             )
         )

@@ -53,29 +53,34 @@ def test_extraer_texto_ecg_con_trazado_rasterizado_no_falla_por_texto_sparse(
 
 
 def test_extraer_texto_pdf_corrupto_falla_explicito(tmp_path: Path) -> None:
+    """Distinto de `SIN_CAPA_DE_TEXTO` (Tarea "que la cuarentena diga qué se
+    rompió"): acá el archivo ni siquiera se pudo abrir como PDF -- pedirlo de
+    nuevo al origen, no pasarlo por OCR."""
     ruta = crear_pdf_corrupto(tmp_path / "corrupto.pdf")
 
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto(ruta)
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.PDF_ILEGIBLE
     assert exc_info.value.etapa == "extraccion"
 
 
 def test_extraer_texto_sin_texto_extraible_falla_explicito(tmp_path: Path) -> None:
+    """Distinto de `PDF_ILEGIBLE`: el PDF es válido y tiene páginas, pero
+    ninguna trae texto nativo -- típicamente un escaneo, necesita OCR."""
     ruta = crear_pdf_con_texto(tmp_path / "vacio.pdf", paginas=["", ""])
 
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto(ruta)
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.SIN_CAPA_DE_TEXTO
 
 
 def test_extraer_texto_archivo_inexistente_falla_explicito(tmp_path: Path) -> None:
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto(tmp_path / "no_existe.pdf")
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.PDF_ILEGIBLE
 
 
 def test_extraer_texto_paginas_ordenadas_agrupa_etiqueta_y_valor_en_la_misma_linea(
@@ -157,7 +162,7 @@ def test_extraer_texto_de_flujo_pdf_corrupto_falla_explicito() -> None:
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto_de_flujo(flujo)
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.PDF_ILEGIBLE
     assert exc_info.value.etapa == "extraccion"
 
 
@@ -169,7 +174,7 @@ def test_extraer_texto_de_flujo_vacio_falla_explicito() -> None:
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto_de_flujo(flujo)
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.PDF_ILEGIBLE
     assert exc_info.value.etapa == "extraccion"
 
 
@@ -179,7 +184,7 @@ def test_extraer_texto_de_flujo_sin_texto_extraible_falla_explicito() -> None:
     with pytest.raises(ErrorParseo) as exc_info:
         extraer_texto_de_flujo(flujo)
 
-    assert exc_info.value.codigo == CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert exc_info.value.codigo == CodigoErrorDocumento.SIN_CAPA_DE_TEXTO
 
 
 def test_extraer_texto_reusa_extraer_texto_de_flujo(tmp_path: Path) -> None:

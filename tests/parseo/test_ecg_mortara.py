@@ -15,7 +15,7 @@ from datetime import time
 
 import pytest
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
@@ -212,6 +212,7 @@ def test_hora_estudio_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa() -> Non
         ParseadorEcgMortara().parsear(texto)
 
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_ILEGIBLE
 
 
 def test_header_ausente_lanza_error_parseo() -> None:
@@ -219,3 +220,18 @@ def test_header_ausente_lanza_error_parseo() -> None:
     with pytest.raises(ErrorParseo) as info:
         ParseadorEcgMortara().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.NOMBRE_AUSENTE
+
+
+def test_fecha_ausente_con_nombre_presente_distingue_el_detalle() -> None:
+    """`nombre` y `fecha` ausentes compartían el mismo `PARSEO_INCOMPLETO`
+    indistinguible -- ahora cada uno es identificable (Tarea "que la
+    cuarentena diga qué se rompió")."""
+    header_sin_fecha = "MORTARA ELI 380\nPrueba Sintetica~,                    ID:900321\n"
+    texto = TextoExtraido(paginas=(header_sin_fecha,))
+
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorEcgMortara().parsear(texto)
+
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_AUSENTE

@@ -271,6 +271,10 @@ class Cuarentena(Base):
     #: Corrida que produjo este apartado (spec `trazabilidad-por-corrida`,
     #: Requisito 1). Sin FK hacia `corrida`, mismo motivo que en `Estudio`.
     corrida_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: Exclusivo de `codigo == "parseo_incompleto"` (ver
+    #: `dominio/errores.py::DetalleParseoIncompleto`): qué faltó o fue
+    #: ilegible durante el parseo -- vocabulario cerrado, nunca texto libre.
+    detalle_parseo: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class CorridaOrm(Base):

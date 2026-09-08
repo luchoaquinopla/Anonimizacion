@@ -101,6 +101,73 @@ class CodigoErrorDocumento(str, Enum):
     # ocultaría al operador que la causa no está en el contenido del
     # documento sino en el proceso que lo procesaba (memoria, infra).
     PROCESO_INTERRUMPIDO = "proceso_interrumpido"
+    # `extraccion/texto_pymupdf.py`: el PDF se abrió y tiene páginas, pero
+    # NINGUNA trae texto nativo extraíble -- típicamente un escaneo (imagen
+    # sin capa de texto por debajo). Es la distinción de mayor valor
+    # operativo de todo este vocabulario: le dice al instituto "estos
+    # estudios son escaneos, necesitan pasar por OCR", una acción
+    # completamente distinta de "revisar el layout del parser". Antes de
+    # este código, compartía `PARSEO_INCOMPLETO` con `PDF_ILEGIBLE`
+    # (corrupto) y con cualquier campo de header ausente -- indistinguibles
+    # entre sí, obligando a abrir cada documento a mano para saber cuál de
+    # las tres cosas pasó.
+    SIN_CAPA_DE_TEXTO = "sin_capa_de_texto"
+    # `extraccion/texto_pymupdf.py`: el archivo NO se pudo ni siquiera abrir
+    # como PDF (bytes corruptos, cero páginas, o -- vía `extraer_texto`, uso
+    # de CLI/tests -- la ruta no existe). Distinto de `SIN_CAPA_DE_TEXTO`:
+    # ahí el PDF es válido y tiene páginas, acá el documento en sí está roto
+    # o no está. La acción es distinta: pedir el archivo de nuevo al origen,
+    # no pasar nada por OCR.
+    PDF_ILEGIBLE = "pdf_ilegible"
+
+
+class DetalleParseoIncompleto(str, Enum):
+    """Qué encontró (o no encontró) el parser cuando lanzó `PARSEO_INCOMPLETO`.
+
+    Decisión de diseño: exclusivo de `PARSEO_INCOMPLETO`, en un atributo
+    tipado NUEVO (`ErrorDocumento.detalle_parseo`) en vez de extender el
+    vocabulario de `campo` (`dominio/referencias.py::REFERENCIAS_PERMITIDAS`).
+    Se descartó extender `campo` porque ese vocabulario tiene una semántica
+    propia y posterior en el pipeline: identifica un dato YA RECONCILIADO
+    contra el PDF (`COBERTURA_INCOMPLETA`, `VALOR_DISCREPANTE`, etc., todos
+    en la etapa `reconciliacion`). Los seis valores de acá describen, en
+    cambio, qué faltó o fue ilegible durante el PARSEO -- una etapa anterior,
+    que ni siquiera llegó a producir un `DocumentoParseado` para reconciliar.
+    Conflacionar ambos vocabularios obligaría a inventar entradas como
+    `laboratorio.numero_peticion` (esa verificación no es un campo clínico
+    reconciliable, es una consistencia estructural entre páginas) y a la vez
+    permitiría que un código de PARSEO válido "ecg.nombre" filtrara,
+    accidentalmente, en un chequeo pensado para RECONCILIACION. Dos
+    vocabularios angostos, cada uno cerrado sobre su propia etapa, es más
+    seguro que uno ancho compartido entre etapas con significados distintos.
+
+    Como CUALQUIER metadata de `ErrorDocumento` (ver docstring del módulo):
+    vocabulario cerrado, nunca texto libre, nunca contenido del documento.
+    `ErrorDocumento.__post_init__` rechaza cualquier valor que no sea un
+    miembro de este enum -- ver el test que lo demuestra pasando un string
+    con forma de PII (`test_error_documento_rechaza_detalle_parseo_como_texto_libre`).
+    """
+
+    # `laboratorio_general.py`: ninguna página trajo un `numero_peticion`
+    # reconocible -- nunca se armó ningún header, distinto de "se armó el
+    # header pero falta nombre/fecha adentro".
+    HEADER_AUSENTE = "header_ausente"
+    # ECG, eco, laboratorio: el header se armó pero la etiqueta de nombre
+    # nunca apareció.
+    NOMBRE_AUSENTE = "nombre_ausente"
+    # ECG, eco, laboratorio: idem, para la etiqueta de fecha del estudio.
+    FECHA_AUSENTE = "fecha_ausente"
+    # La etiqueta de fecha apareció, pero su valor no matchea ningún formato
+    # de fecha conocido para ese equipo (`_parsear_fecha` lanza `ValueError`).
+    FECHA_ILEGIBLE = "fecha_ilegible"
+    # `laboratorio_general.py`: la hora de extracción está presente pero no
+    # matchea ningún formato conocido -- cuarentena, no ausencia silenciosa
+    # (Fase 8, mismo requisito documentado en el propio parser).
+    HORA_ILEGIBLE = "hora_ilegible"
+    # `laboratorio_general.py`: dos páginas del mismo documento traen
+    # `numero_peticion` DISTINTOS -- páginas de dos estudios distintos
+    # mezcladas en un solo artefacto.
+    NUMERO_PETICION_INCONSISTENTE = "numero_peticion_inconsistente"
 
 
 @dataclass(frozen=True)
@@ -124,6 +191,10 @@ class ErrorDocumento:
     # llamadores existentes -- incluidos los apartados por sobretamaño en
     # `FuenteLocal`, que ocurren antes de que exista ninguna corrida.
     corrida_id: str | None = None
+    # Exclusivo de `PARSEO_INCOMPLETO` -- ver el docstring de
+    # `DetalleParseoIncompleto` para la justificación de por qué es un
+    # atributo tipado nuevo y no una extensión de `campo`.
+    detalle_parseo: DetalleParseoIncompleto | None = None
 
     def __post_init__(self) -> None:
         if self.campo is not None:
@@ -132,6 +203,11 @@ class ErrorDocumento:
             raise ValueError("pagina debe comenzar en 1")
         if self.tipo_documento is not None and not isinstance(self.tipo_documento, TipoDocumento):
             raise ValueError("tipo_documento debe pertenecer al catálogo")
+        if self.detalle_parseo is not None:
+            if not isinstance(self.detalle_parseo, DetalleParseoIncompleto):
+                raise ValueError("detalle_parseo debe pertenecer al vocabulario cerrado")
+            if self.codigo is not CodigoErrorDocumento.PARSEO_INCOMPLETO:
+                raise ValueError("detalle_parseo es exclusivo de PARSEO_INCOMPLETO")
 
 
 class ErrorParseo(Exception):
@@ -147,13 +223,20 @@ class ErrorParseo(Exception):
         etapa: str | EtapaDocumento,
         campo: str | None = None,
         pagina: int | None = None,
+        detalle_parseo: DetalleParseoIncompleto | None = None,
     ) -> None:
         if campo is not None:
             validar_campo_reconciliacion(campo)
         if pagina is not None and pagina < 1:
             raise ValueError("pagina debe comenzar en 1")
+        if detalle_parseo is not None:
+            if not isinstance(detalle_parseo, DetalleParseoIncompleto):
+                raise ValueError("detalle_parseo debe pertenecer al vocabulario cerrado")
+            if codigo is not CodigoErrorDocumento.PARSEO_INCOMPLETO:
+                raise ValueError("detalle_parseo es exclusivo de PARSEO_INCOMPLETO")
         self.codigo = codigo
         self.etapa = etapa
         self.campo = campo
         self.pagina = pagina
+        self.detalle_parseo = detalle_parseo
         super().__init__(codigo.value)  # str(excepcion) legible; codigo.value, no el enum repr

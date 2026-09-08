@@ -28,10 +28,14 @@ def test_piloto_adversarial_ejecuta_cincuenta_casos_punta_a_punta(corridas_pilot
     assert resultado.documentos_en_cuarentena == 29
     assert resultado.registros_inspeccionados == 120
     assert resultado.valores_pii_verificados == 572
+    # Los 2 casos "corrupto" del corpus adversarial (`fixtures/corpus_piloto.py`)
+    # ahora caen en `pdf_ilegible`, no en el `parseo_incompleto` indistinguible
+    # de antes (Tarea "que la cuarentena diga qué se rompió",
+    # `extraccion/texto_pymupdf.py`).
     assert resultado.cuarentena_por_codigo == {
         "episodio_ambiguo": 8,
         "episodio_incompleto": 19,
-        "parseo_incompleto": 2,
+        "pdf_ilegible": 2,
     }
     assert resultado.pii_en_salida == 0
 

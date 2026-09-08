@@ -156,7 +156,7 @@ def test_oraculo_1k_declara_estados_y_codigos_completos() -> None:
     assert ORACULO_CARGA_1000.cuarentena_por_codigo == {
         "episodio_ambiguo": 8,
         "episodio_incompleto": 17,
-        "parseo_incompleto": 1,
+        "pdf_ilegible": 1,
     }
 
 
@@ -190,7 +190,7 @@ def test_perfil_10k_escala_la_mezcla_y_el_oraculo_sin_duplicar_logica() -> None:
         20,
         3_240,
         9_720,
-        {"episodio_ambiguo": 80, "episodio_incompleto": 170, "parseo_incompleto": 10},
+        {"episodio_ambiguo": 80, "episodio_incompleto": 170, "pdf_ilegible": 10},
         0,
         0,
     )

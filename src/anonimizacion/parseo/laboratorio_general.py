@@ -98,7 +98,7 @@ from datetime import date, datetime, time
 
 from pydantic import SecretStr
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -168,6 +168,36 @@ def _extraer_campos_header(pagina: str) -> dict[str, str]:
         if coincidencia:
             campos[clave] = _primer_segmento(coincidencia.group(1))
     return campos
+
+
+def _validar_header_completo(header: dict[str, str] | None) -> dict[str, str]:
+    """Distingue, en un vocabulario cerrado, las tres causas de un header
+    incompleto que antes compartían un único `PARSEO_INCOMPLETO`
+    indistinguible (ver `dominio/errores.py::DetalleParseoIncompleto`):
+    ninguna página trajo un Nº de Petición reconocible (`header is None`),
+    o lo trajo pero falta el nombre o la fecha adentro. Extraída de
+    `parsear` para no empujar su complejidad ciclomática por encima del
+    límite del proyecto (`pyproject.toml`, `max-complexity`).
+    """
+    if header is None:
+        raise ErrorParseo(
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            etapa=_ETAPA,
+            detalle_parseo=DetalleParseoIncompleto.HEADER_AUSENTE,
+        )
+    if "nombre" not in header:
+        raise ErrorParseo(
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            etapa=_ETAPA,
+            detalle_parseo=DetalleParseoIncompleto.NOMBRE_AUSENTE,
+        )
+    if "fecha" not in header:
+        raise ErrorParseo(
+            codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+            etapa=_ETAPA,
+            detalle_parseo=DetalleParseoIncompleto.FECHA_AUSENTE,
+        )
+    return header
 
 
 def _parsear_fecha(texto: str) -> date:
@@ -391,21 +421,24 @@ class ParseadorLaboratorioGeneral:
                     pagina_header = numero_pagina
                 elif numero_peticion_pagina != header.get("numero_peticion"):
                     raise ErrorParseo(
-                        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                        codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                        etapa=_ETAPA,
+                        detalle_parseo=DetalleParseoIncompleto.NUMERO_PETICION_INCONSISTENTE,
                     )
 
             resultados_pagina, seccion_actual = _extraer_resultados(pagina, seccion_actual)
             resultados.extend(resultados_pagina)
             paginas_resultados.extend([numero_pagina] * len(resultados_pagina))
 
-        if header is None or "nombre" not in header or "fecha" not in header:
-            raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
+        header = _validar_header_completo(header)
 
         try:
             fecha_estudio = _parsear_fecha(header["fecha"])
         except ValueError as _exc:
             raise ErrorParseo(
-                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                etapa=_ETAPA,
+                detalle_parseo=DetalleParseoIncompleto.FECHA_ILEGIBLE,
             ) from _exc
 
         hora_estudio: time | None = None
@@ -418,7 +451,9 @@ class ParseadorLaboratorioGeneral:
                 # silenciosa (Fase 8, Requirement: "Hora ilegible va a
                 # cuarentena, no a ausencia silenciosa").
                 raise ErrorParseo(
-                    codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA
+                    codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
+                    etapa=_ETAPA,
+                    detalle_parseo=DetalleParseoIncompleto.HORA_ILEGIBLE,
                 ) from _exc
 
         fecha_nac_normalizada = (

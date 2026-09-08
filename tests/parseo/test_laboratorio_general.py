@@ -11,7 +11,7 @@ from datetime import time
 
 import pytest
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
@@ -86,6 +86,7 @@ def test_numero_peticion_inconsistente_entre_paginas_lanza_error_parseo() -> Non
     with pytest.raises(ErrorParseo) as info:
         ParseadorLaboratorioGeneral().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.NUMERO_PETICION_INCONSISTENTE
 
 
 def test_fecha_nacimiento_se_normaliza_a_iso_8601() -> None:
@@ -122,6 +123,7 @@ def test_hora_extraccion_ilegible_va_a_cuarentena_no_a_ausencia_silenciosa() -> 
         ParseadorLaboratorioGeneral().parsear(texto)
 
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.HORA_ILEGIBLE
 
 
 def test_header_ausente_lanza_error_parseo() -> None:
@@ -129,6 +131,44 @@ def test_header_ausente_lanza_error_parseo() -> None:
     with pytest.raises(ErrorParseo) as info:
         ParseadorLaboratorioGeneral().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.HEADER_AUSENTE
+
+
+def test_nombre_ausente_con_header_presente_distingue_el_detalle() -> None:
+    """`header is None` (ningún `numero_peticion` reconocible) y "el header
+    se armó pero falta el nombre adentro" compartían el mismo
+    `PARSEO_INCOMPLETO` indistinguible -- ahora cada uno es identificable
+    (Tarea "que la cuarentena diga qué se rompió")."""
+    header_sin_nombre = _HEADER.replace("Apellido y Nombre: Perez Juan\n", "")
+    texto = TextoExtraido(
+        paginas=(header_sin_nombre + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorLaboratorioGeneral().parsear(texto)
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.NOMBRE_AUSENTE
+
+
+def test_fecha_ausente_con_nombre_presente_distingue_el_detalle() -> None:
+    header_sin_fecha = _HEADER.replace("Fecha: 10/01/2024\n", "")
+    texto = TextoExtraido(
+        paginas=(header_sin_fecha + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorLaboratorioGeneral().parsear(texto)
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_AUSENTE
+
+
+def test_fecha_ilegible_distingue_el_detalle_de_fecha_ausente() -> None:
+    header_fecha_ilegible = _HEADER.replace("Fecha: 10/01/2024", "Fecha: 99/99/9999")
+    texto = TextoExtraido(
+        paginas=(header_fecha_ilegible + "HEMATOLOGIA\nHemoglobina | 14.5 | g/dL | 12.0-16.0\n",)
+    )
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorLaboratorioGeneral().parsear(texto)
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_ILEGIBLE
 
 
 def test_header_real_con_espacio_antes_de_dos_puntos_y_etiquetas_alternativas() -> None:

@@ -7,6 +7,14 @@ algún lado (típicamente el header); un PDF corrupto o totalmente sin texto
 extraíble falla explícito, vía `ErrorParseo`, para no propagar datos vacíos
 silenciosamente etapas abajo.
 
+Los dos fallos anteriores usaban el mismo código (`PARSEO_INCOMPLETO`),
+indistinguibles entre sí -- un archivo corrupto y un escaneo sin capa de
+texto requieren acciones operativas completamente distintas (pedir el
+archivo de nuevo vs. pasarlo por OCR). Ahora tienen códigos propios:
+`CodigoErrorDocumento.PDF_ILEGIBLE` (no se pudo ni abrir como PDF, o no
+tiene páginas) y `CodigoErrorDocumento.SIN_CAPA_DE_TEXTO` (se abrió, tiene
+páginas, ninguna trae texto nativo) -- ver `dominio/errores.py`.
+
 Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
 extracción con sort=True + firmas ECG reales"): `page.get_text()` sin
 argumentos devuelve el texto en el orden de DIBUJADO del content stream del
@@ -95,18 +103,20 @@ def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
     Gotcha: un flujo vacío (`b""`) hace que PyMuPDF lance
     `pymupdf.EmptyFileError`, que es subclase de `FileDataError` -- ya cae en
     el mismo `except` que cualquier otro flujo no abrible, mapeado a
-    `PARSEO_INCOMPLETO` (el mismo código que usa el caso `corrupto` del
-    corpus piloto, del que depende ese ensayo).
+    `PDF_ILEGIBLE` (el mismo código que usa el caso `corrupto` del corpus
+    piloto, del que depende ese ensayo).
     """
     datos = flujo.read()
     try:
         documento = pymupdf.open(stream=datos, filetype="pdf")
     except (pymupdf.FileDataError, RuntimeError) as _exc:
-        raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA) from _exc
+        raise ErrorParseo(codigo=CodigoErrorDocumento.PDF_ILEGIBLE, etapa=_ETAPA) from _exc
 
     try:
         if documento.page_count == 0:
-            raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
+            # Estructuralmente roto (ni una página) -- distinto de
+            # `SIN_CAPA_DE_TEXTO` (abajo), donde el PDF SÍ tiene páginas.
+            raise ErrorParseo(codigo=CodigoErrorDocumento.PDF_ILEGIBLE, etapa=_ETAPA)
 
         paginas = tuple(pagina.get_text() for pagina in documento)
         paginas_ordenadas = tuple(pagina.get_text(sort=True) for pagina in documento)
@@ -114,7 +124,10 @@ def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
         documento.close()
 
     if not any(texto.strip() for texto in paginas):
-        raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA)
+        # El PDF se abrió y tiene páginas, pero ninguna trae texto nativo --
+        # típicamente un escaneo (imagen sin capa de texto). Acción distinta
+        # de `PDF_ILEGIBLE`: pasar por OCR, no pedir el archivo de nuevo.
+        raise ErrorParseo(codigo=CodigoErrorDocumento.SIN_CAPA_DE_TEXTO, etapa=_ETAPA)
 
     return TextoExtraido(paginas=paginas, paginas_ordenadas=paginas_ordenadas)
 
@@ -131,11 +144,11 @@ def extraer_texto(ruta: Path) -> TextoExtraido:
     estabilidad frente a los PDFs de muestra reales.
 
     `FileNotFoundError` se mapea acá (no en `extraer_texto_de_flujo`, que
-    nunca ve una ruta) al mismo `PARSEO_INCOMPLETO` que cualquier otro fallo
-    de apertura -- comportamiento ya existente, preservado.
+    nunca ve una ruta) al mismo `PDF_ILEGIBLE` que cualquier otro fallo de
+    apertura.
     """
     try:
         with ruta.open("rb") as flujo:
             return extraer_texto_de_flujo(flujo)
     except FileNotFoundError as _exc:
-        raise ErrorParseo(codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO, etapa=_ETAPA) from _exc
+        raise ErrorParseo(codigo=CodigoErrorDocumento.PDF_ILEGIBLE, etapa=_ETAPA) from _exc

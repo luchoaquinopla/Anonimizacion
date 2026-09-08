@@ -67,7 +67,10 @@ ORACULO_CARGA_1000 = OraculoCarga(
     # (spec `procesamiento-por-grupo`): las 25 cuarentenas de cobertura del corpus
     # sintetico eran TODAS de nivel episodio, ninguna de nivel campo. El total
     # sigue siendo 26; si cambiara, seria un defecto y no un efecto del cambio.
-    {"episodio_ambiguo": 8, "episodio_incompleto": 17, "parseo_incompleto": 1},
+    # El caso "corrupto" ahora cae en `pdf_ilegible`, no en el
+    # `parseo_incompleto` indistinguible de antes (Tarea "que la cuarentena
+    # diga qué se rompió", `extraccion/texto_pymupdf.py`).
+    {"episodio_ambiguo": 8, "episodio_incompleto": 17, "pdf_ilegible": 1},
     0,
     0,
 )

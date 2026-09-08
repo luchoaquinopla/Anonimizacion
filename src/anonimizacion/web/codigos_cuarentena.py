@@ -41,4 +41,23 @@ EXPLICACION_POR_CODIGO: dict[str, str] = {
     # este es un fallo del PROCESO que lo procesaba, sin que el documento
     # necesariamente haya llegado a ejecutarse.
     "proceso_interrumpido": "El proceso que lo estaba procesando se interrumpió inesperadamente (no es un problema del documento).",
+    # Antes indistinguibles bajo `parseo_incompleto` (Tarea "que la
+    # cuarentena diga qué se rompió"): un escaneo necesita OCR, un archivo
+    # corrupto necesita pedirse de nuevo al origen -- acciones distintas.
+    "sin_capa_de_texto": "El documento es un escaneo sin texto extraíble: necesita pasar por OCR.",
+    "pdf_ilegible": "El archivo no se pudo abrir como PDF (corrupto, vacío o inexistente).",
+}
+
+#: Traducción del detalle de un `parseo_incompleto` (ver
+#: `dominio/errores.py::DetalleParseoIncompleto`) -- qué faltó o fue
+#: ilegible durante el parseo. Mismo principio que `EXPLICACION_POR_CODIGO`:
+#: única fuente, un código/detalle sin traducción no se descarta, cada
+#: llamador decide su propio último recurso.
+EXPLICACION_POR_DETALLE_PARSEO: dict[str, str] = {
+    "header_ausente": "No se encontró ningún encabezado reconocible en el documento.",
+    "nombre_ausente": "Falta el nombre del paciente en el encabezado.",
+    "fecha_ausente": "Falta la fecha del estudio en el encabezado.",
+    "fecha_ilegible": "La fecha del estudio tiene un formato irreconocible.",
+    "hora_ilegible": "La hora de extracción tiene un formato irreconocible.",
+    "numero_peticion_inconsistente": "Dos páginas del documento traen números de petición distintos.",
 }

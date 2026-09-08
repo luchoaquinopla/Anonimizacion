@@ -597,6 +597,7 @@ class EjecutorPipeline:
             pagina=excepcion.pagina,
             tipo_documento=tipo_documento,
             corrida_id=corrida_id,
+            detalle_parseo=excepcion.detalle_parseo,
         )
         try:
             self._cuarentena.registrar(error)

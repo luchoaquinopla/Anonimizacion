@@ -11,7 +11,7 @@ from datetime import time
 
 import pytest
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
@@ -185,6 +185,28 @@ def test_header_ausente_lanza_error_parseo() -> None:
     with pytest.raises(ErrorParseo) as info:
         ParseadorEcoDoppler().parsear(texto)
     assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.NOMBRE_AUSENTE
+
+
+def test_fecha_ausente_con_nombre_presente_distingue_el_detalle() -> None:
+    """`nombre` y `fecha` ausentes compartían el mismo `PARSEO_INCOMPLETO`
+    indistinguible -- ahora cada uno es identificable (Tarea "que la
+    cuarentena diga qué se rompió")."""
+    texto = TextoExtraido(paginas=("Paciente: Fernandez Marta\nMEDIDAS\nAO | 28 | mm\n",))
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorEcoDoppler().parsear(texto)
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_AUSENTE
+
+
+def test_fecha_ilegible_va_a_cuarentena_con_detalle_distinto_de_ausente() -> None:
+    texto = TextoExtraido(
+        paginas=("Paciente: Fernandez Marta\nFecha Estudio: 99/99/9999\nMEDIDAS\nAO | 28 | mm\n",)
+    )
+    with pytest.raises(ErrorParseo) as info:
+        ParseadorEcoDoppler().parsear(texto)
+    assert info.value.codigo is CodigoErrorDocumento.PARSEO_INCOMPLETO
+    assert info.value.detalle_parseo is DetalleParseoIncompleto.FECHA_ILEGIBLE
 
 
 def test_usa_paginas_ordenadas_y_trunca_campos_que_comparten_linea_visual() -> None:
