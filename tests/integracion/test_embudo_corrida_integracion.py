@@ -105,6 +105,73 @@ def test_el_embudo_da_numeros_correctos_con_todo_el_inventario_en_inventariado()
     assert embudo.cierra is True
 
 
+def test_el_embudo_agrega_publicados_incompletos_por_campo_sin_afectar_apartados() -> None:
+    """Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+    aviso": `construir_embudo` lee `estudio.completo`/`.campos_no_extraidos`
+    (marca de completitud, migración `0012`) y los agrega por `id_campo` --
+    sin tocar `apartados`/`residuo`, porque un publicado incompleto sigue
+    siendo un publicado (`CAMPO_NO_EXTRAIDO` nunca llega a `cuarentena`)."""
+    engine = _motor_vacio()
+    repositorio = RepositorioCorridas(engine)
+    corrida_id = "corrida-completitud"
+    repositorio.crear_corrida(Corrida.crear(corrida_id))
+    repositorio.registrar_documentos(
+        [
+            DocumentoCorrida.inventariado(
+                corrida_id=corrida_id, huella_contenido=f"huella-{i}", ruta_autorizada=f"/ruta/{i}.pdf"
+            )
+            for i in range(3)
+        ]
+    )
+
+    with Session(engine) as sesion, sesion.begin():
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-completo",
+                corrida_id=corrida_id,
+                completo=True,
+                campos_no_extraidos=[],
+            )
+        )
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="ecg",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-incompleto-1",
+                corrida_id=corrida_id,
+                completo=False,
+                campos_no_extraidos=["ecg.pr_interval"],
+            )
+        )
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-incompleto-2",
+                corrida_id=corrida_id,
+                completo=False,
+                campos_no_extraidos=["laboratorio.resultado", "laboratorio.resultado"],
+            )
+        )
+
+    embudo = construir_embudo(engine, corrida_id)
+
+    assert embudo.entraron == 3
+    assert embudo.publicados == 3
+    assert embudo.apartados == 0
+    assert embudo.residuo == 0
+    assert embudo.publicados_incompletos == 2
+    assert embudo.campos_no_extraidos == {"ecg.pr_interval": 1, "laboratorio.resultado": 2}
+
+
 @dataclass
 class _DestinoConexionCaidaTrasCommit:
     """`escribir_registro` commitea de verdad y LUEGO simula la caída de red.

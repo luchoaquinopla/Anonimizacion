@@ -248,6 +248,13 @@ def _serializar_embudo(embudo: Embudo, estado: str) -> dict[str, object]:
         ],
         "throughput_por_hora": dict(embudo.throughput_por_hora),
         "estimacion": estimacion,
+        # Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+        # aviso": de los `publicados`, cuántos llevan la marca de
+        # completitud en `False` y por qué `id_campo` (vocabulario cerrado).
+        # NUNCA participan de `apartados`/`residuo` -- ver el comentario de
+        # `Embudo.publicados_incompletos`.
+        "publicados_incompletos": embudo.publicados_incompletos,
+        "campos_no_extraidos": dict(embudo.campos_no_extraidos),
     }
 
 

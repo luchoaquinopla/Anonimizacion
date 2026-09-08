@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Literal
 
 import sqlalchemy as sa
@@ -117,6 +118,14 @@ class Embudo:
     etapas: tuple[PerdidaEtapa, ...]
     throughput_por_hora: Mapping[str, float]
     estimacion: Estimacion
+    # Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+    # aviso": de los `publicados`, cuántos llevan la marca de completitud en
+    # `False` (`salida/modelos_orm.py::Estudio.completo`) y por qué `id_campo`
+    # (vocabulario cerrado, nunca texto libre -- mismo criterio de
+    # `codigos` en `PerdidaEtapa`). Default `0`/`{}`: ningún llamador
+    # existente que todavía no pasa estos agregados queda roto.
+    publicados_incompletos: int = 0
+    campos_no_extraidos: Mapping[str, int] = field(default_factory=dict)
 
 
 def _marcha(*, residuo: int, terminados_en_ventana: int) -> _Marcha:
@@ -194,6 +203,8 @@ def calcular_embudo(
     primero: datetime | None,
     ultimo: datetime | None,
     ahora: datetime,
+    publicados_incompletos: int = 0,
+    campos_no_extraidos: Mapping[str, int] = MappingProxyType({}),
 ) -> Embudo:
     """La aritmética pura del embudo -- sin motor, sin I/O (design.md, Decisión 8 y 9).
 
@@ -202,6 +213,16 @@ def calcular_embudo(
     `terminados_en_ventana`/`primero`/`ultimo` ya excluyen
     `artefacto_sobretamano` (Requisito 4): ese documento nunca se leyó, así
     que no participa del throughput ni de la serie de tiempo.
+
+    `publicados_incompletos`/`campos_no_extraidos` (requisito "que un campo
+    nuevo no rompa el parseo, sino que sea un aviso"): agregados ya
+    calculados por `construir_embudo` sobre `estudio.completo`/
+    `.campos_no_extraidos` -- esta función no los deriva, sólo los expone.
+    NO participan de `apartados`/`residuo`/`cierra`: un publicado incompleto
+    sigue siendo un publicado (`CAMPO_NO_EXTRAIDO` nunca llega a
+    `cuarentena`), así que no puede restar de `llegaron` en ninguna etapa ni
+    aparecer en `perdidas` -- ver el comentario de `ETAPAS_EMBUDO` sobre el
+    antecedente de conteos que se perdían con un código fuera de vocabulario.
     """
     apartados = sum(sum(codigos.values()) for codigos in perdidas.values())
     apartados_sobretamano = perdidas.get("ingesta", {}).get(_CODIGO_SOBRETAMANO, 0)
@@ -238,6 +259,8 @@ def calcular_embudo(
         etapas=tuple(etapas),
         throughput_por_hora=throughput,
         estimacion=estimacion,
+        publicados_incompletos=publicados_incompletos,
+        campos_no_extraidos=dict(campos_no_extraidos),
     )
 
 
@@ -352,6 +375,20 @@ def construir_embudo(
             .group_by(Cuarentena.etapa, Cuarentena.codigo)
         ).all()
 
+        # Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+        # aviso": sólo dos columnas de conteo/vocabulario cerrado (Requisito 6,
+        # igual que el resto de este módulo) -- nunca una fila completa ni
+        # nada que identifique el documento. `campos_no_extraidos` es JSON
+        # (lista de `id_campo`), así que no se puede agregar de forma
+        # portable en SQL (SQLite vs. Postgres) -- se agrega en Python, mismo
+        # criterio que `filas_cuarentena` arriba, sólo que ya no hace falta
+        # `group_by` porque el valor a contar vive DENTRO del JSON, no en una
+        # columna.
+        filas_incompletas = sesion.execute(
+            sa.select(Estudio.campos_no_extraidos)
+            .where(Estudio.corrida_id == corrida_id, Estudio.completo.is_(False))
+        ).scalars().all()
+
     perdidas: dict[str, dict[str, int]] = {}
     primero_apt: datetime | None = None
     ultimo_apt: datetime | None = None
@@ -366,6 +403,11 @@ def construir_embudo(
         ultimo_apt = _max_opcional(ultimo_apt, ultimo_grp)
         en_ventana_apt += en_ventana_grp or 0
 
+    campos_no_extraidos: dict[str, int] = {}
+    for campos in filas_incompletas:
+        for id_campo in campos or ():
+            campos_no_extraidos[id_campo] = campos_no_extraidos.get(id_campo, 0) + 1
+
     embudo = calcular_embudo(
         corrida_id=corrida_id,
         entraron=entraron,
@@ -374,6 +416,8 @@ def construir_embudo(
         terminados_en_ventana=en_ventana_pub + en_ventana_apt,
         primero=_min_opcional(primero_pub, primero_apt),
         ultimo=_max_opcional(ultimo_pub, ultimo_apt),
+        publicados_incompletos=len(filas_incompletas),
+        campos_no_extraidos=campos_no_extraidos,
         ahora=momento,
     )
     _CACHE[corrida_id] = (marca, embudo)

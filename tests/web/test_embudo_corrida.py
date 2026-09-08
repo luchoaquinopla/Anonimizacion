@@ -297,6 +297,50 @@ def test_corrida_completa_sin_fallos_de_infraestructura_cierra_en_cero() -> None
     assert embudo.cierra is True
 
 
+def test_publicados_incompletos_no_participan_de_apartados_ni_residuo() -> None:
+    """Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+    aviso": un publicado incompleto (`CAMPO_NO_EXTRAIDO`) sigue siendo un
+    publicado -- nunca resta de `llegaron` en ninguna etapa ni entra en
+    `perdidas`/`apartados`/`residuo`. Mismo antecedente documentado en
+    `ETAPAS_EMBUDO` sobre conteos que se pierden con un código nuevo."""
+    embudo = calcular_embudo(
+        corrida_id="c1",
+        entraron=10,
+        publicados=10,
+        perdidas={},
+        terminados_en_ventana=0,
+        primero=None,
+        ultimo=None,
+        ahora=_AHORA,
+        publicados_incompletos=4,
+        campos_no_extraidos={"ecg.pr_interval": 1, "laboratorio.resultado": 3},
+    )
+
+    assert embudo.residuo == 0
+    assert embudo.cierra is True
+    assert embudo.apartados == 0
+    assert embudo.publicados_incompletos == 4
+    assert embudo.campos_no_extraidos == {"ecg.pr_interval": 1, "laboratorio.resultado": 3}
+    assert all(etapa.apartados == 0 for etapa in embudo.etapas)
+
+
+def test_publicados_incompletos_por_defecto_es_cero() -> None:
+    """Ningún llamador existente que todavía no pasa estos agregados queda roto."""
+    embudo = calcular_embudo(
+        corrida_id="c1",
+        entraron=1,
+        publicados=1,
+        perdidas={},
+        terminados_en_ventana=0,
+        primero=None,
+        ultimo=None,
+        ahora=_AHORA,
+    )
+
+    assert embudo.publicados_incompletos == 0
+    assert embudo.campos_no_extraidos == {}
+
+
 def test_etapas_no_declaradas_no_participan_del_embudo() -> None:
     # Requisito 2: deteccion y deteccion_pii no producen cuarentena -- si
     # llegaran en `perdidas` (no deberían, pero el modelo de lectura no debe

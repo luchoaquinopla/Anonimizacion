@@ -261,6 +261,44 @@ def test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada(tmp_pa
     assert payload["estado"] == "inventariando"
 
 
+def test_el_json_del_embudo_expone_publicados_incompletos_por_campo(tmp_path) -> None:
+    """Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+    aviso": el contrato `GET /corridas/{id}/embudo` tiene que poder decir
+    "de los publicados, cuántos llevan campos no reconocidos y de qué tipo"
+    -- ver `web/embudo_corrida.py::Embudo.publicados_incompletos`/
+    `.campos_no_extraidos` y la migración `0012`."""
+    from datetime import date
+
+    from sqlalchemy.orm import Session
+
+    from anonimizacion.salida.modelos_orm import Estudio
+
+    (tmp_path / "uno.pdf").write_bytes(b"contenido-uno")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+
+    with Session(motor) as sesion, sesion.begin():
+        sesion.add(
+            Estudio(
+                id_episodio="ep-1",
+                tipo_documento="ecg",
+                fecha_estudio=date(2026, 1, 1),
+                precision_hora="ausente",
+                clave_documento="clave-completitud-json",
+                corrida_id=resultado.corrida_id,
+                completo=False,
+                campos_no_extraidos=["ecg.pr_interval"],
+            )
+        )
+
+    payload = construir_payload_embudo(motor, resultado.corrida_id)
+
+    assert payload is not None
+    assert payload["publicados_incompletos"] == 1
+    assert payload["campos_no_extraidos"] == {"ecg.pr_interval": 1}
+
+
 def test_reintentar_corrida_lanza_corridanoencontradaerror_si_no_existe(tmp_path) -> None:
     """Feature `reanudacion-de-corridas`: reintentar algo que no existe no
     puede responder silenciosamente con ceros."""
