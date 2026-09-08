@@ -16,15 +16,22 @@ esos scripts ya entienden.
 
 from __future__ import annotations
 
+import socket
 import tomllib
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
 from anonimizacion import cli
 from anonimizacion.diagnostico import Hallazgo
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
+from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Estudio
 from anonimizacion.web.secreto_panel import obtener_secreto_panel
+
+from .scripts.test_procesar_carpeta import _CONNECT_REAL, _URL_POSTGRES_REAL, _grupo_completo
 
 
 @pytest.fixture(autouse=True)
@@ -214,6 +221,70 @@ def test_procesar_usa_los_valores_del_archivo_de_configuracion_si_no_hay_bandera
     assert str(entrada) in argv_capturado
     assert "postgresql+psycopg://config/db" in argv_capturado
     assert "5" in argv_capturado
+
+
+# --- revisión adversarial, MAYOR 5: el camino de mayor riesgo no tenía test
+
+
+@pytest.fixture()
+def _postgres_real_para_cli(monkeypatch: pytest.MonkeyPatch):
+    """Mismo patrón que `tests/scripts/test_procesar_carpeta.py::_engine_postgres_real_para_script`
+    -- Postgres real de `docker-compose.yml`, o `skip` si no responde."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+        return
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_procesar_delega_de_punta_a_punta_al_script_real_con_procesos_reales(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, _postgres_real_para_cli
+) -> None:
+    """MAYOR 5 (revisión adversarial): todos los demás tests de `procesar`/
+    `servir` en este archivo mockean `_cargar_script` con un `_ScriptFalso`
+    -- ninguno ejercitaba el script REAL ni `ProcessPoolExecutor` por el
+    camino nuevo (`cli.py` -> carga por ruta -> `scripts/procesar_carpeta.py`
+    -> `despacho_paralelo`). Este es el único test de este archivo que NO
+    mockea `_cargar_script`: carga el script de verdad y despacha con
+    `--procesos 2` contra Postgres real -- si la traducción de argv de
+    `cli.py` alguna vez se rompe (un nombre de bandera cambiado, un tipo mal
+    convertido), este test lo detecta antes que un operador con 5 TB."""
+    monkeypatch.setenv("ANONIMIZACION_PEPPER", "pepper-test-cli-real-mayor5-nunca-real")
+    engine = _postgres_real_para_cli
+
+    carpeta_1 = tmp_path / "paciente-1"
+    carpeta_2 = tmp_path / "paciente-2"
+    carpeta_1.mkdir()
+    carpeta_2.mkdir()
+    _grupo_completo(carpeta_1, "cli-real-1", dni="20555888", nombre="Ana Cli Real Uno")
+    _grupo_completo(
+        carpeta_2, "cli-real-2", dni="20666999", nombre="Beatriz Cli Real Dos",
+        fecha_nac_lab="10/10/1985", fecha_nac_ecg="10-OCT-1985",
+    )
+
+    codigo = cli.main(
+        ["procesar", "--entrada", str(tmp_path), "--db-url", _URL_POSTGRES_REAL, "--procesos", "2"]
+    )
+
+    assert codigo == 0
+    with Session(engine) as sesion:
+        corridas = sesion.scalars(sa.select(CorridaOrm)).all()
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+    assert len(corridas) == 1
+    assert corridas[0].estado == "completada"
+    assert len(estudios) == 6, "particion exhaustiva: los dos pacientes se publican, cada uno en su proceso"
 
 
 def test_pyproject_registra_el_punto_de_entrada_unico() -> None:
