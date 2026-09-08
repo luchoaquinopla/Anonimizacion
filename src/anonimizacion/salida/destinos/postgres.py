@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import date
 
 from sqlalchemy import Engine, create_engine, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -121,6 +122,23 @@ from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEco
 POOL_RECYCLE_SEGUNDOS = 270
 POOL_SIZE = 5
 
+# Tope de conexión INICIAL contra RDS (revisión adversarial, CRÍTICO 3):
+# reproducido a mano contra un host que no responde -- sin este timeout,
+# psycopg queda esperando el handshake TCP/TLS varios minutos, con la
+# terminal del operador congelada y sin ningún mensaje (ni siquiera el de
+# `diagnostico.py`, que llama a esta misma función). `pool_pre_ping`
+# (arriba) protege una conexión que YA estaba viva y murió en el pool; esto
+# protege el primer intento de conexión, que `pool_pre_ping` no cubre.
+#
+# 5 segundos: generoso frente a la latencia medida contra RDS en
+# `sa-east-1` (~55 ms mediana, ver el bloque de comentarios de más abajo) --
+# incluso con un reconecte con handshake TLS completo (más caro que un ping
+# simple), 5 s da margen de sobra en la red interna del instituto -- pero
+# corto frente a los minutos que tardaba sin ningún tope: un médico que ve
+# la terminal congelada más de 5 s ya sabe que algo anda mal, en vez de
+# preguntarse si puede cerrar la ventana.
+CONNECT_TIMEOUT_SEGUNDOS = 5
+
 
 def construir_engine_postgres(url: str) -> Engine:
     """Arma el `Engine` de producción con la config de pool contra RDS.
@@ -129,8 +147,20 @@ def construir_engine_postgres(url: str) -> Engine:
     `scripts/servir_panel.py` llaman a esta función en vez de
     `sa.create_engine(url)` pelado -- ver el docstring del módulo para el
     razonamiento completo de cada parámetro.
+
+    `connect_args={"connect_timeout": ...}` sólo se agrega para el dialecto
+    `postgresql` -- SQLite (usado en tests, ver docstring del módulo) no
+    entiende esa palabra clave (su DBAPI usa `timeout`, otro nombre);
+    pasarla igual rompería cualquier uso de este módulo con SQLite.
     """
-    return create_engine(url, pool_pre_ping=True, pool_recycle=POOL_RECYCLE_SEGUNDOS, pool_size=POOL_SIZE)
+    kwargs: dict[str, object] = {
+        "pool_pre_ping": True,
+        "pool_recycle": POOL_RECYCLE_SEGUNDOS,
+        "pool_size": POOL_SIZE,
+    }
+    if make_url(url).get_backend_name() == "postgresql":
+        kwargs["connect_args"] = {"connect_timeout": CONNECT_TIMEOUT_SEGUNDOS}
+    return create_engine(url, **kwargs)
 
 
 _PIVOTE_MEDIDAS_ECO: dict[str, str] = {

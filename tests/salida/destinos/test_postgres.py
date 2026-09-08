@@ -38,6 +38,7 @@ from anonimizacion.parseo.eco_doppler import ContenidoEco, FirmaMedico, MedidaEc
 from anonimizacion.parseo.laboratorio_general import ContenidoLaboratorio, ResultadoLaboratorio
 from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
+from anonimizacion.salida.destinos import postgres as destinos_postgres
 from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
@@ -552,6 +553,45 @@ def test_construir_engine_postgres_activa_pre_ping_y_recycle_explicito() -> None
 def test_construir_engine_postgres_no_rompe_con_sqlite(motor) -> None:
     """SQLite no tiene pool de red: la config se acepta pero no representa nada
     real -- `pool_size` lo ignora `SingletonThreadPool`, sin error ni warning."""
+    engine = construir_engine_postgres("sqlite:///:memory:")
+    try:
+        with sa.orm.Session(engine) as sesion:
+            sesion.execute(sa.text("SELECT 1"))
+    finally:
+        engine.dispose()
+
+
+def test_construir_engine_postgres_fija_un_timeout_de_conexion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revisión adversarial, CRÍTICO 3 -- reproducido a mano: sin
+    `connect_args={"connect_timeout": ...}`, un host que no responde deja a
+    `construir_engine_postgres` colgado varios minutos (handshake TCP/TLS
+    de psycopg sin tope), con la terminal del operador congelada y sin
+    ningún mensaje. Se verifica que el argumento viaje hasta
+    `sqlalchemy.create_engine` -- no se reproduce acá el cuelgue real (la
+    suite bloquea toda conexión de red real, `tests/conftest.py`); esa
+    verificación se hizo a mano contra un puerto cerrado, ver el reporte."""
+    capturado: dict[str, object] = {}
+    original_create_engine = destinos_postgres.create_engine
+
+    def _espia(url: str, **kwargs: object):
+        capturado.update(kwargs)
+        return original_create_engine(url, **kwargs)
+
+    monkeypatch.setattr(destinos_postgres, "create_engine", _espia)
+
+    engine = construir_engine_postgres("postgresql+psycopg://usuario:clave@host-cualquiera:5433/db")
+    engine.dispose()
+
+    assert "connect_args" in capturado, "connect_args no llegó a create_engine -- sin timeout de conexión"
+    assert capturado["connect_args"]["connect_timeout"] > 0
+
+
+def test_construir_engine_postgres_no_le_pasa_connect_timeout_a_sqlite(motor) -> None:
+    """SQLite no entiende `connect_timeout` (su DBAPI usa `timeout`, otro
+    nombre) -- pasarlo igual rompería CUALQUIER uso de este módulo con
+    SQLite en la suite entera (todos los tests de este archivo). El timeout
+    de conexión sólo tiene sentido -- y sólo se agrega -- para el dialecto
+    `postgresql`."""
     engine = construir_engine_postgres("sqlite:///:memory:")
     try:
         with sa.orm.Session(engine) as sesion:
