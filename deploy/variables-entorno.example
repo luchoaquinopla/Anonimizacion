@@ -11,6 +11,20 @@ CELERY_WORKER_CONCURRENCY=4
 # Sólo desarrollo/pruebas sin Redis. En servicio real: 0 o ausente.
 CELERY_TASK_ALWAYS_EAGER=0
 
-# Requeridos por la composición institucional futura; nunca registrar ni versionar.
-DATABASE_URL=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
+# Pepper HMAC del pipeline. Nunca registrar ni versionar -- alternativa:
+# ANONIMIZACION_PEPPER_ARCHIVO=ruta/a/un/archivo con permisos restringidos.
 ANONIMIZACION_PEPPER=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
+
+# Secreto del panel de operación (HTTP Basic Auth). Obligatorio para exponer
+# el panel a la red del instituto (`anonimizacion servir --escuchar-red`);
+# opcional si el panel sólo escucha en esta máquina. Nunca registrar ni
+# versionar -- alternativa: ANONIMIZACION_PANEL_SECRETO_ARCHIVO=ruta/a/un/archivo.
+ANONIMIZACION_PANEL_SECRETO=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
+
+# Sólo para correr las migraciones de Alembic a mano (`alembic upgrade head`).
+# NO es la variable que usa "anonimizacion procesar"/"servir" para conectarse
+# a la base -- esa URL (no secreta) vive en el archivo de configuración del
+# operador (`db_url` en anonimizacion.toml, ver deploy/anonimizacion.toml.example).
+# DATABASE_URL (que aparecía antes en este archivo) nunca fue leída por
+# ningún módulo del repositorio -- era aspiracional, no real.
+ANONIMIZACION_DB_URL=__PROVEER_MEDIANTE_GESTOR_DE_SECRETOS__
