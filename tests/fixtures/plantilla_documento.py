@@ -267,18 +267,24 @@ def _fragmentos_en_orden_de_dibujado(
     así que reordenar la lista de EMISIÓN no degrada la agrupación por fila
     que necesitan `parseo/laboratorio_general.py` y `parseo/eco_doppler.py`.
 
-    Sólo se reordenan así los tokens que son ÚNICOS dentro de la página (un
-    único (fila, columna) tiene ese texto exacto) -- un token repetido (p. ej.
-    una unidad "%" que aparece en diez filas) no tiene una correspondencia
-    inequívoca contra la lista de líneas de dibujado; forzar un match
-    ambiguo arriesgaría dibujarlo en la fila equivocada, así que esos quedan
-    en orden natural (fila por fila, izquierda a derecha) al final, DESPUÉS
-    de los fragmentos ya ubicados con precisión. Es una limitación medida y
-    reportada, no disimulada -- ver el reporte de la tarea para el número
-    real de cobertura de orden que este compromiso logra."""
+    Un token repetido dentro de la página (p. ej. una unidad "%" que aparece
+    en diez filas) NO tiene una correspondencia inequívoca contra la lista de
+    líneas de dibujado por su valor solo -- se ancla por CONTEXTO en cambio
+    (`_asignar_posiciones_por_contexto`): las líneas ÚNICAS de la página
+    actúan de anclas fijas, y cada ocurrencia ambigua se resuelve dentro de
+    la VENTANA de filas delimitada por las anclas más cercanas antes/después
+    en la secuencia de dibujado -- alineamiento de secuencias sobre el
+    contexto vecino, no búsqueda de tokens sueltos. Fuera de esa ventana (o
+    si la página no trae anclas cerca) se degrada a la próxima ocurrencia
+    disponible en orden geométrico, para no descartar el fragmento. Medido y
+    reportado, no forzado -- ver el reporte de la tarea para el número real
+    de fidelidad de orden que este emparejamiento logra por tipo."""
     tokens_originales = [_tokenizar_fila(fila) for fila in pagina_geo_original.splitlines()]
     tokens_sustituidos = [_tokenizar_fila(fila) for fila in pagina_geo_sustituida.splitlines()]
-    posicion_unica = _indice_de_posiciones_unicas(tokens_originales)
+    ocurrencias = _indice_de_ocurrencias(tokens_originales)
+    rango = _rango_geometrico(tokens_originales)
+    lineas_dibujado = [linea.strip() for linea in pagina_dibujado_original.splitlines() if linea.strip()]
+    asignacion = _asignar_posiciones_por_contexto(lineas_dibujado, ocurrencias, rango)
 
     def _token_final(fila_idx: int, col_idx: int, token_original: tuple[str, bool]) -> tuple[str, bool]:
         fila_sustituida = tokens_sustituidos[fila_idx] if fila_idx < len(tokens_sustituidos) else []
@@ -288,11 +294,7 @@ def _fragmentos_en_orden_de_dibujado(
 
     usados: set[tuple[int, int]] = set()
     fragmentos: list[FragmentoPagina] = []
-    for linea in pagina_dibujado_original.splitlines():
-        contenido = linea.strip()
-        if not contenido:
-            continue
-        posicion = posicion_unica.get(contenido)
+    for posicion in asignacion:
         if posicion is None or posicion in usados:
             continue
         fila_idx, col_idx = posicion
@@ -309,15 +311,93 @@ def _fragmentos_en_orden_de_dibujado(
     return tuple(fragmentos)
 
 
-def _indice_de_posiciones_unicas(tokens_por_fila: list[list[tuple[str, bool]]]) -> dict[str, tuple[int, int]]:
-    """Mapea texto de token -> (fila, columna) para los tokens que aparecen
-    UNA sola vez en toda la página -- ver docstring de
-    `_fragmentos_en_orden_de_dibujado`, sección de tokens ambiguos."""
+def _indice_de_ocurrencias(tokens_por_fila: list[list[tuple[str, bool]]]) -> dict[str, list[tuple[int, int]]]:
+    """Mapea texto de token -> lista de (fila, columna) donde aparece, en
+    orden geométrico (fila por fila, izquierda a derecha) -- ver docstring de
+    `_fragmentos_en_orden_de_dibujado`. Un texto con una sola entrada en la
+    lista es una ANCLA (posición inequívoca); con más de una es ambiguo y se
+    resuelve por contexto en `_asignar_posiciones_por_contexto`."""
     ocurrencias: dict[str, list[tuple[int, int]]] = {}
     for fila_idx, tokens in enumerate(tokens_por_fila):
         for col_idx, (texto, _ancho) in enumerate(tokens):
             ocurrencias.setdefault(texto, []).append((fila_idx, col_idx))
-    return {texto: posiciones[0] for texto, posiciones in ocurrencias.items() if len(posiciones) == 1}
+    return ocurrencias
+
+
+def _rango_geometrico(tokens_por_fila: list[list[tuple[str, bool]]]) -> dict[tuple[int, int], int]:
+    """Asigna a cada posición (fila, columna) un ORDINAL de lectura
+    geométrica (fila por fila, izquierda a derecha, empezando en 0) -- eje
+    común usado para acotar la ventana de contexto de un token ambiguo entre
+    sus anclas vecinas, ver `_asignar_posiciones_por_contexto`."""
+    rango: dict[tuple[int, int], int] = {}
+    contador = 0
+    for fila_idx, tokens in enumerate(tokens_por_fila):
+        for col_idx in range(len(tokens)):
+            rango[(fila_idx, col_idx)] = contador
+            contador += 1
+    return rango
+
+
+def _asignar_posiciones_por_contexto(
+    lineas_dibujado: list[str],
+    ocurrencias: dict[str, list[tuple[int, int]]],
+    rango: dict[tuple[int, int], int],
+) -> list[tuple[int, int] | None]:
+    """Para cada línea de `lineas_dibujado`, decide qué posición (fila,
+    columna) de la grilla geométrica le corresponde -- ver docstring de
+    `_fragmentos_en_orden_de_dibujado`.
+
+    Dos pasadas:
+    1) Anclaje directo: una línea cuyo texto aparece UNA sola vez en toda la
+       página tiene una posición inequívoca -- se fija tal cual.
+    2) Contexto: para una línea ambigua (texto repetido), se acota una
+       ventana `[anterior, siguiente]` con el ordinal geométrico (`rango`)
+       de la ancla más cercana ANTES y DESPUÉS de esa línea en la secuencia
+       de dibujado, y se toma -- en orden de aparición del texto dentro de
+       esa ventana -- la primera ocurrencia todavía libre. Sin ninguna
+       ocurrencia dentro de la ventana (página sin anclas cerca, o todas ya
+       consumidas), se degrada a la próxima ocurrencia libre en orden
+       geométrico sin importar la ventana, para no descartar el fragmento."""
+    total = len(lineas_dibujado)
+    candidatos: list[list[tuple[int, int]]] = [ocurrencias.get(linea, []) for linea in lineas_dibujado]
+    asignacion: list[tuple[int, int] | None] = [cand[0] if len(cand) == 1 else None for cand in candidatos]
+
+    rango_anterior: list[int] = [-1] * total
+    ultimo = -1
+    for indice, posicion in enumerate(asignacion):
+        if posicion is not None:
+            ultimo = rango[posicion]
+        rango_anterior[indice] = ultimo
+    rango_siguiente: list[int] = [len(rango)] * total
+    siguiente = len(rango)
+    for indice in range(total - 1, -1, -1):
+        if asignacion[indice] is not None:
+            siguiente = rango[asignacion[indice]]
+        rango_siguiente[indice] = siguiente
+
+    usados: set[tuple[int, int]] = {posicion for posicion in asignacion if posicion is not None}
+    punteros: dict[str, int] = {}
+    for indice, linea in enumerate(lineas_dibujado):
+        if asignacion[indice] is not None:
+            continue
+        opciones = candidatos[indice]
+        if not opciones:
+            continue
+        limite_inferior, limite_superior = rango_anterior[indice], rango_siguiente[indice]
+        inicio = punteros.get(linea, 0)
+        elegido = next(
+            (i for i in range(inicio, len(opciones)) if opciones[i] not in usados and limite_inferior <= rango[opciones[i]] <= limite_superior),
+            None,
+        )
+        if elegido is None:
+            elegido = next((i for i in range(inicio, len(opciones)) if opciones[i] not in usados), None)
+        if elegido is None:
+            continue
+        posicion = opciones[elegido]
+        asignacion[indice] = posicion
+        usados.add(posicion)
+        punteros[linea] = elegido + 1
+    return asignacion
 
 
 def _numero_sintetico(rng: random.Random, digitos: int) -> str:

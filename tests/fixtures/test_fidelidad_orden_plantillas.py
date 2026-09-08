@@ -34,6 +34,23 @@ para los números completos por tipo. Se prioriza el orden de DIBUJADO (el
 que reproduce con más fidelidad, ver `plantilla_documento.py`); el
 geométrico se mide y se reporta, con piso bajo a propósito -- NO se fuerza
 a un número alto artificialmente.
+
+CIERRE DEL GAP DE DIBUJADO (tarea "cerrar la fidelidad de orden") --
+`_fragmentos_en_orden_de_dibujado` (`plantilla_documento.py`) anclaba sólo
+los tokens ÚNICOS en toda la página; un token repetido (p. ej. la unidad "%"
+en diez filas de la tabla de laboratorio) no tenía correspondencia
+inequívoca y quedaba relegado a orden natural al final, castigando la
+fidelidad medida. Se resolvió por CONTEXTO (`_asignar_posiciones_por_contexto`):
+los tokens únicos siguen de ancla, y cada ocurrencia ambigua se ubica dentro
+de la ventana de filas delimitada por las anclas más cercanas antes/después
+en la secuencia de dibujado -- alineamiento de secuencias sobre el contexto
+vecino, no búsqueda de tokens sueltos. Subió laboratorio (71.7% -> 90.7%) y
+ecocardiograma (60.1% -> 78.6%); ecg no cambia (90.4%) porque
+`preparar_ecg` no pasa por esa función (dibuja la plantilla literal, ver
+`plantilla_documento.py`). El geométrico no se mueve por este cambio (mismo
+número que antes): reordena la EMISIÓN, no la posición física (fila,
+columna) de cada fragmento, y `get_text(sort=True)` reconstruye por
+posición, no por orden de inserción.
 """
 
 from __future__ import annotations
@@ -51,9 +68,11 @@ from tests.fixtures.plantilla_documento import paginas_plantilla_dibujado, pagin
 
 # Piso FIJO de fidelidad de orden de DIBUJADO -- se prioriza este (Tarea 2,
 # "insertar los fragmentos en el mismo orden en que la plantilla los
-# declara"). Medido: ecg 90.4%, laboratorio 71.7%, ecocardiograma 60.1%
-# (semilla 777) -- piso con margen bajo esos números, no igual a ellos.
-_PISO_FIDELIDAD_DIBUJADO = {"ecg": 0.80, "laboratorio": 0.60, "ecocardiograma": 0.50}
+# declara"). Medido tras cerrar el gap con emparejamiento por contexto (ver
+# docstring del módulo): ecg 90.4% (sin cambios), laboratorio 90.7% (era
+# 71.7%), ecocardiograma 78.6% (era 60.1%) -- semilla 777. Piso con margen
+# bajo esos números, no igual a ellos.
+_PISO_FIDELIDAD_DIBUJADO = {"ecg": 0.80, "laboratorio": 0.80, "ecocardiograma": 0.65}
 
 # Piso FIJO de fidelidad de orden GEOMÉTRICO -- reportado, NO forzado a un
 # número alto. Medido: ecg 3.7% (esperado: el geométrico del ECG real está
