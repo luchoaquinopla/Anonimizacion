@@ -410,9 +410,21 @@ def _url_postgres_scratch(monkeypatch: pytest.MonkeyPatch):
     directo, sin Alembic; correr `alembic upgrade head` ahí chocaría con
     tablas ya creadas por ese otro camino). `skip` si Postgres real no
     responde -- mismo patrón que el resto de los tests marcados `postgres`.
+
+    Defecto medido: sin `connect_args={"connect_timeout": ...}`, `psycopg`
+    puede colgarse indefinidamente al conectar contra un puerto cerrado en
+    Windows (confirmado: un `socket.connect` Python plano al mismo puerto
+    rechaza en ~2s, pero `psycopg.connect(host="localhost", ...)` sin
+    timeout nunca retorna) -- sin Postgres real corriendo, este fixture
+    nunca llegaba a `pytest.skip`, colgaba la suite entera. Mismo patrón ya
+    usado en `tests/scripts/test_procesar_carpeta.py::_engine_postgres_real_para_script`
+    (`sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})`),
+    que esta fixture no había copiado.
     """
     monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
-    motor_admin = sa.create_engine(_URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT")
+    motor_admin = sa.create_engine(
+        _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+    )
     try:
         with motor_admin.connect() as conexion:
             conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH}"))
@@ -425,7 +437,9 @@ def _url_postgres_scratch(monkeypatch: pytest.MonkeyPatch):
         yield url_scratch
     finally:
         motor_admin.dispose()
-        with sa.create_engine(_URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT").connect() as conexion:
+        with sa.create_engine(
+            _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+        ).connect() as conexion:
             conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH}"))
 
 
