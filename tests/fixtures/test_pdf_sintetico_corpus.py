@@ -60,7 +60,7 @@ def test_laboratorio_y_eco_preservan_paginacion_y_secciones_extraibles(tmp_path)
     assert "Resultado" in texto_laboratorio[0]
     assert "Unidades" in texto_laboratorio[0]
     assert "Valores de Referencia" in texto_laboratorio[0]
-    assert "QUIMICA CLINICA" in texto_laboratorio[1]
+    assert "QUÍMICA CLÍNICA" in texto_laboratorio[1]
     assert "Pagina 3 de 3" in texto_laboratorio[2]
     assert texto_laboratorio[0].index("Resultado") < texto_laboratorio[0].index("HEMATOLOGIA")
     laboratorio.close()
@@ -145,7 +145,7 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
             "Valores de Referencia",
             "HEMATOLOGIA",
             "HEMOSTASIA",
-            "QUIMICA CLINICA",
+            "QUÍMICA CLÍNICA",
             "IONOGRAMA",
         ),
         "ecocardiograma": (
@@ -192,5 +192,5 @@ def test_corpus_conserva_campos_y_secciones_contractuales_de_cada_origen(tmp_pat
 
     texto_laboratorio = texto_de(rutas["laboratorio"])
     assert texto_laboratorio.index("HEMATOLOGIA") < texto_laboratorio.index("HEMOSTASIA")
-    assert texto_laboratorio.index("HEMOSTASIA") < texto_laboratorio.index("QUIMICA CLINICA")
-    assert texto_laboratorio.index("QUIMICA CLINICA") < texto_laboratorio.index("IONOGRAMA")
+    assert texto_laboratorio.index("HEMOSTASIA") < texto_laboratorio.index("QUÍMICA CLÍNICA")
+    assert texto_laboratorio.index("QUÍMICA CLÍNICA") < texto_laboratorio.index("IONOGRAMA")

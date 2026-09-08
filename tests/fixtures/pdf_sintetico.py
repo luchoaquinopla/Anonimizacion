@@ -270,7 +270,7 @@ def _crear_laboratorio(documento: pymupdf.Document, dni: str, fecha: date) -> No
             ("RIN", "1", "", "0 - 2"),
             ("Tiempo de Tromboplastina APTT", "30", "s", "25 - 40"),
             ("R", "1", "", ""),
-            ("QUIMICA CLINICA", "", "", ""),
+            ("QUÍMICA CLÍNICA", "", "", ""),
             ("Glucemia", "90", "mg/dL", "70 - 110"),
             ("Uremia", "30", "mg/dL", "15 - 45"),
             ("Creatinina serica", "0.9", "mg/dL", ""),
@@ -330,6 +330,8 @@ def _crear_ecocardiograma(documento: pymupdf.Document, dni: str, fecha: date) ->
     bloques = (
         (300, "MOTILIDAD SEGMENTARIA", "Descripcion sintetica de motilidad."),
         (345, "AURICULAS", "Descripcion sintetica de ambas auriculas."),
+        (360, "IZQUIERDA", ""),
+        (373, "DERECHA", ""),
         (390, "VALVULAS CARDIACAS", ""),
         (415, "AORTICA", "Descripcion sintetica de valvula aortica."),
         (455, "MITRAL", "Descripcion sintetica de valvula mitral."),
@@ -352,6 +354,7 @@ def _crear_ecocardiograma(documento: pymupdf.Document, dni: str, fecha: date) ->
     _insertar_texto(segunda, (62, 135), "Descripcion sintetica del flujo pulmonar.", 7)
     _insertar_texto(segunda, (42, 165), "FLUJO TRICUSPIDEO", 8)
     _insertar_texto(segunda, (62, 180), "Descripcion sintetica del flujo tricuspideo.", 7)
+    _insertar_texto(segunda, (42, 198), "DOPPLER TISULAR E/E': 7", 7)
     _insertar_texto(segunda, (250, 220), "CONCLUSIONES", 9)
     _insertar_texto(segunda, (62, 245), "Conclusiones sinteticas sin validez clinica.", 8)
     _insertar_texto(segunda, (360, 330), "PROFESIONAL MEDICO SINTETICO", 8)

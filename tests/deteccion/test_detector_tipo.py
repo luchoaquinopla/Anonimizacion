@@ -25,7 +25,10 @@ def test_detectar_tipo_reconoce_laboratorio() -> None:
 
 
 def test_detectar_tipo_reconoce_ecocardiograma() -> None:
-    texto = TextoExtraido(paginas=("ECOCARDIOGRAMA DOPPLER\nAO 28mm\nFA 35%",))
+    # "SERVICIO DE ECOCARDIOGRAFIA" es un marcador verificado contra el
+    # documento real (ver `firmas/eco_doppler.py`); "ECOCARDIOGRAMA DOPPLER"
+    # se retiró por no aparecer en el layout real.
+    texto = TextoExtraido(paginas=("SERVICIO DE ECOCARDIOGRAFIA\nAO 28mm\nFA 35%",))
     assert detectar_tipo(texto) is TipoDocumento.ECOCARDIOGRAMA
 
 

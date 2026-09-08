@@ -10,15 +10,21 @@ larga). Salieron de fixtures sintéticos que inventamos nosotros, nunca se
 verificaron contra una muestra real. El mismo defecto ya había ocurrido con
 ECG (ver docstring de `firmas/ecg_mortara.py`).
 
-"ECOCARDIOGRAMA DOPPLER" se conserva NO VERIFICADO contra ninguna muestra
-real: `tests/fixtures/v1/documentos.py::texto_eco` y varios tests de
-integración (`test_e2e_linkage`, `test_procesar_carpeta`, etc.) lo usan como
-único encabezado del layout sintético legado. Sacarlo rompería esos
-fixtures sin necesidad -- no hace daño dejarlo (`Firma.puntaje` ya no
-depende de un solo marcador para decidir, ver `firmas/base.py` y
-`detector_tipo.py`). "FRACCION DE ACORTAMIENTO" SÍ se saca: no aparece en el
-documento real, no la usa ningún fixture del repo, y el campo real es "FA"
-(dos letras, demasiado genérico para ser marcador de firma sin colisionar).
+"ECOCARDIOGRAMA DOPPLER" y "FRACCION DE ACORTAMIENTO" se RETIRARON (tarea
+"regenerar corpus sintético desde layouts reales"): ninguno de los dos
+aparece en el documento real -- verificado contra
+`tests/fixtures/esqueletos/eco-01.txt` y
+`tests/fixtures/parseables/eco-01.txt`, ambos derivados de un PDF real del
+Instituto de Cardiología de Corrientes (ver `esqueleto.py`). El único motivo
+por el que "ECOCARDIOGRAMA DOPPLER" seguía vivo era que
+`tests/fixtures/v1/documentos.py::texto_eco` lo usaba como único encabezado
+del layout sintético legado; ese fixture ahora genera el layout real
+(mismos marcadores que `tests/fixtures/pdf_sintetico.py`), así que el
+marcador fantasma ya no tiene ningún consumidor. Ver
+`tests/deteccion/test_centinela_esqueletos.py` y
+`tests/fixtures/test_pdf_sintetico_corpus.py::
+test_corpus_sintetico_no_declara_marcadores_no_verificados_contra_lo_real`
+para la prueba de que se puede retirar sin romper nada.
 
 "S.C." se conserva: 4 caracteres, sí aparece en el documento real ("S.C.
 2,42 m2"), y no colisiona con ningún marcador de laboratorio ni de ECG en
@@ -46,7 +52,6 @@ FIRMA = Firma(
         "ECOGRAFIA DOPPLER COLOR CARDIACA",
         "EVALUACION DE FLUJOS POR DOPPLER",
         "DOPPLER TISULAR",
-        "ECOCARDIOGRAMA DOPPLER",
         "S.C.",
     ),
 )

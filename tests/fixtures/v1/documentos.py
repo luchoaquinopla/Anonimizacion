@@ -48,7 +48,7 @@ def texto_laboratorio(
     """
     filas = resultados or (
         ("HEMATOLOGIA", "Hemoglobina", "14.5", "g/dL", "12-16"),
-        ("QUIMICA CLINICA", "Glucosa", "90", "mg/dL", "70-110"),
+        ("QUÍMICA CLÍNICA", "Glucosa", "90", "mg/dL", "70-110"),
     )
     por_seccion: dict[str, list[str]] = {}
     for seccion, prueba, resultado, unidades, referencia in filas:
@@ -122,12 +122,21 @@ def texto_eco(
     texto_conclusiones: str = "Funcion sistolica conservada",
     medidas: Sequence[tuple[str, str, str]] | None = None,
 ) -> list[str]:
-    """Layout de ecocardiograma Doppler: medidas + texto libre por sección + firma."""
+    """Layout de ecocardiograma Doppler: medidas + texto libre por sección + firma.
+
+    El encabezado usa los dos marcadores verificados contra el documento real
+    del Instituto de Cardiología de Corrientes ("SERVICIO DE ECOCARDIOGRAFIA"
+    / "ECOGRAFIA DOPPLER COLOR CARDIACA", ver `deteccion/firmas/eco_doppler.py`
+    y `tests/fixtures/esqueletos/eco-01.txt`) -- antes traía el encabezado
+    inventado "ECOCARDIOGRAMA DOPPLER", que nunca aparece en el documento real
+    y se retiró de la firma de detección (ver docstring de `eco_doppler.py`).
+    """
     filas_medidas = medidas or (("AO", "28", "mm"), ("FA", "35", "%"))
     lineas_medidas = "\n".join(f"{nombre_m} | {valor} | {unidad}" for nombre_m, valor, unidad in filas_medidas)
 
     pagina = (
-        "ECOCARDIOGRAMA DOPPLER\n"
+        "SERVICIO DE ECOCARDIOGRAFIA\n"
+        "ECOGRAFIA DOPPLER COLOR CARDIACA\n"
         f"Paciente: {nombre}\n"
         f"Documento: {dni}\n"
         f"No Estudio: {numero_estudio}\n"

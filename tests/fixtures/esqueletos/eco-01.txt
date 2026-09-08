@@ -1,6 +1,6 @@
 # esqueleto de formato -- generado con `anonimizacion esqueleto`
 # tipo_detectado: ecocardiograma
-# puntaje_firma: 5/6 marcadores
+# puntaje_firma: 5/5 marcadores
 
 ## pagina 1 (orden de dibujado)
 Fecha Estudio: 00/00/0000
