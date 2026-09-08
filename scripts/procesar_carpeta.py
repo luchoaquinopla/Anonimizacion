@@ -39,6 +39,21 @@ codigo que corre en el worker) -- para que `corrida_id` viaje hasta
 llamador de produccion real de `LanzadorCorrida`/`CuarentenaDeCorrida`
 (Fase 6.4-6.7): sin este cambio quedaban con tests pero sin ningun camino
 que los ejecutara fuera de la suite.
+
+Fix `arranque-para-el-instituto` (revision adversarial, CRITICO 1): este
+script llamaba `lanzador.marcar_procesando(...)` pero nunca
+`marcar_finalizada`/`marcar_fallida` al terminar -- a diferencia de
+`web/servicio_corridas.py`, que si cierra sus corridas. Mientras no existia
+el gate de "una corrida a la vez" (`ux_corrida_una_activa`, `modelos_orm.py`)
+esto era inofensivo. Con el gate ya en `main`, CUALQUIER corrida procesada
+por este script (exitosa o no) quedaba `activa=true` para siempre, y la
+proxima invocacion sobre CUALQUIER carpeta fallaba con `CorridaEnCursoError`
+citando una espera que nunca iba a terminar -- reproducido contra Postgres
+real. `ejecutar()` ahora cierra la corrida en los tres desenlaces posibles:
+`COMPLETADA`/`COMPLETADA_CON_CUARENTENA` al terminar el despacho,
+`FALLIDA` si no hay PDFs (la corrida nunca llega a `PROCESANDO`) y `FALLIDA`
+si el despacho lanza una excepcion inesperada (que igual se repropaga, mismo
+patron que `web/servicio_corridas.py::_despachar_y_cerrar`).
 """
 
 from __future__ import annotations
@@ -212,6 +227,54 @@ def _despachar_grupos(
     return resultado
 
 
+def _despachar_y_cerrar_corrida(
+    *,
+    lanzador: LanzadorCorrida,
+    corrida_id: str,
+    grupos_a_despachar: Iterator[tuple[dict[str, str], ...]],
+    procesos: int,
+    entrada: Path,
+    db_url: str | None,
+    tope_bytes: int | None,
+    cuarentena: EscritorCuarentena,
+    directorio_marcador_pid: Path | None,
+) -> tuple[list[dict[str, object]], int, int]:
+    """Marca `PROCESANDO`, despacha y cierra la corrida en el desenlace que
+    corresponda -- simétrico de `web/servicio_corridas.py::_despachar_y_cerrar`
+    (revisión adversarial, CRÍTICO 1: este script llamaba `marcar_procesando`
+    pero nunca `marcar_finalizada`/`marcar_fallida` al terminar, así que
+    CUALQUIER corrida procesada quedaba `activa=true` para siempre una vez
+    que existió el gate `ux_corrida_una_activa`). Una excepción inesperada
+    durante el despacho cierra la corrida como `FALLIDA` y se re-lanza --
+    cerrar la corrida no debe tragarse el error real.
+
+    Extraída de `ejecutar()` para mantener su complejidad ciclomática bajo
+    el límite (`ruff`/`C901`), mismo motivo que `_configurar_ejecutor_secuencial`
+    y `_despachar_grupos`."""
+    lanzador.marcar_procesando(corrida_id)
+    try:
+        resultados, total_documentos, total_grupos = _despachar_grupos(
+            corrida_id=corrida_id,
+            grupos_a_despachar=grupos_a_despachar,
+            procesos=procesos,
+            entrada=entrada,
+            db_url=db_url,
+            tope_bytes=tope_bytes,
+            cuarentena=cuarentena,
+            directorio_marcador_pid=directorio_marcador_pid,
+        )
+    except Exception:
+        try:
+            lanzador.marcar_fallida(corrida_id)
+        except Exception:
+            pass  # ya hay una excepcion real en curso; no la tapamos con esta
+        raise
+
+    hubo_cuarentena = any(resultado["estado"] != "exito" for resultado in resultados)
+    lanzador.marcar_finalizada(corrida_id, hubo_cuarentena=hubo_cuarentena)
+    return resultados, total_documentos, total_grupos
+
+
 def ejecutar(
     *,
     entrada: Path,
@@ -308,18 +371,25 @@ def ejecutar(
     primer_grupo = next(iterador_grupos, None)
     if primer_grupo is None:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
+        # Revisión adversarial, CRÍTICO 1: `lanzar()` ya dejó la corrida en
+        # INVENTARIANDO -- sin cerrarla acá, esa fila queda `activa=true`
+        # para siempre (`ux_corrida_una_activa`, ya en `main`) y bloquea la
+        # PRÓXIMA carpeta que se intente procesar, aunque esta corrida no
+        # haya hecho ni empezado a hacer ningún trabajo real.
+        # `INVENTARIANDO -> FALLIDA` es una transición válida (`dominio/corridas.py`).
+        lanzador.marcar_fallida(lanzamiento.corrida_id)
         return 1
 
     # `lanzador.lanzar()` sólo inventaría -- no avanza a PROCESANDO (cierre de
     # silencio de auditoría, `fix/silencios-de-ingesta-y-panel`): inventariar
     # y procesar son cosas distintas, y quien sólo inventaría no puede
-    # afirmar que está procesando. Este script es quien REALMENTE va a llamar
-    # `procesar_grupo` a continuación, así que es quien debe marcarlo.
-    lanzador.marcar_procesando(lanzamiento.corrida_id)
-
+    # afirmar que está procesando. `_despachar_y_cerrar_corrida` es quien
+    # REALMENTE va a llamar `procesar_grupo` a continuación (y quien cierra
+    # la corrida al terminar -- ver su docstring, CRÍTICO 1).
     grupos_a_despachar = itertools.chain([primer_grupo], iterador_grupos)
 
-    resultados, total_documentos, total_grupos = _despachar_grupos(
+    resultados, total_documentos, total_grupos = _despachar_y_cerrar_corrida(
+        lanzador=lanzador,
         corrida_id=lanzamiento.corrida_id,
         grupos_a_despachar=grupos_a_despachar,
         procesos=procesos,
@@ -329,6 +399,7 @@ def ejecutar(
         cuarentena=cuarentena,
         directorio_marcador_pid=directorio_marcador_pid,
     )
+
     print(f"Corrida {lanzamiento.corrida_id}: {total_documentos} documento(s) en {total_grupos} grupo(s).", file=sys.stderr)
 
     exitos = [r for r in resultados if r["estado"] == "exito"]

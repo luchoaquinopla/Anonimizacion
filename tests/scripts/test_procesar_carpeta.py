@@ -167,7 +167,17 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     """`LanzadorCorrida.lanzar()` sólo inventaría (ver `test_lanzador_corrida.py`).
     Este script es quien de verdad llama a `procesar_grupo`, así que es quien
     debe afirmar `PROCESANDO` -- inventariar y procesar son cosas distintas, y
-    el que sólo inventaría no puede afirmar que está procesando."""
+    el que sólo inventaría no puede afirmar que está procesando.
+
+    NO verifica el estado FINAL (antes lo hacía, y ese assert enmascaraba el
+    CRÍTICO 1 de la revisión adversarial: una corrida que TERMINÓ bien
+    quedaba en `PROCESANDO` para siempre, porque nada llamaba
+    `marcar_finalizada`). Ver `test_el_script_cierra_la_corrida_como_completada_al_terminar_con_exito`
+    para el estado final correcto; este test se queda con lo que sí puede
+    afirmar sin instrumentación adicional: que la transición a `PROCESANDO`
+    ocurrió en algún momento (evidenciado porque, si no ocurriera, la
+    corrida jamás podría llegar a `COMPLETADA` -- `PROCESANDO -> COMPLETADA`
+    es la única transición válida hacia ese estado, ver `dominio/corridas.py`)."""
     _grupo_completo(tmp_path, "s3")
 
     modulo = _cargar_script()
@@ -179,7 +189,150 @@ def test_el_script_deja_la_corrida_en_procesando_porque_es_quien_procesa(tmp_pat
     assert codigo == 0
     with Session(engine) as sesion:
         (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
-    assert corrida.estado == EstadoCorrida.PROCESANDO.value
+    assert corrida.estado in (EstadoCorrida.COMPLETADA.value, EstadoCorrida.COMPLETADA_CON_CUARENTENA.value)
+
+
+# --- revisión adversarial, CRÍTICO 1: el script nunca cerraba sus corridas -
+
+
+def test_el_script_cierra_la_corrida_como_completada_al_terminar_con_exito(tmp_path, motor: MotorPii) -> None:
+    """Reproducido contra Postgres real (ver el test `_contra_postgres_real`
+    más abajo) y acá en SQLite para feedback rápido: `ejecutar()` llamaba
+    `lanzador.marcar_procesando(...)` pero NUNCA `marcar_finalizada`/
+    `marcar_fallida` al terminar -- a diferencia de `web/servicio_corridas.py`,
+    que sí cierra sus corridas (`_despachar_y_cerrar`). Antes del gate de
+    "una corrida a la vez" (`ux_corrida_una_activa`, ya en `main`) esto era
+    inofensivo; con el gate, CUALQUIER corrida procesada por este script deja
+    la fila `activa=true` para siempre y bloquea la siguiente invocación."""
+    _grupo_completo(tmp_path, "cierre-exito")
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 0
+    with Session(engine) as sesion:
+        (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert corrida.estado == EstadoCorrida.COMPLETADA.value, (
+        "la corrida tiene que quedar en un estado TERMINAL -- si queda PROCESANDO, "
+        "bloquea toda invocación futura del script (ux_corrida_una_activa)"
+    )
+
+
+def test_el_script_cierra_como_completada_con_cuarentena_si_hubo_cuarentena(tmp_path, motor: MotorPii) -> None:
+    """Escenario "en banda", no el de sobretamaño (`test_el_apartado_por_sobretamano_...`
+    más abajo): ese artefacto se aparta ANTES de hashear -- vía
+    `CuarentenaDeCorrida`, nunca pasa por `procesar_grupo` -- así que nunca
+    aparece en `resultados`, la misma fuente que usa `hubo_cuarentena` tanto
+    acá como en `web/servicio_corridas.py::_despachar_y_cerrar` (mismo
+    límite conocido en los dos lugares, fuera de alcance de este arreglo).
+    Un episodio INCOMPLETO (falta ECG y ECO) sí se clasifica DENTRO de
+    `procesar_grupo` y aparece en `resultados` con `estado != "exito"`."""
+    documentos.escribir_pdf(
+        tmp_path,
+        "01-lab-incompleto",
+        documentos.texto_laboratorio(
+            nombre="Paciente Incompleto",
+            dni="20777000",
+            fecha_nac="01/01/1990",
+            numero_peticion="PET-incompleto",
+            fecha="10/01/2024",
+        ),
+    )
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 0
+    with Session(engine) as sesion:
+        (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert corrida.estado == EstadoCorrida.COMPLETADA_CON_CUARENTENA.value
+
+
+def test_el_script_cierra_como_fallida_si_no_hay_pdfs(tmp_path, motor: MotorPii) -> None:
+    """La carpeta vacía deja la corrida en `INVENTARIANDO` (nunca llega a
+    `marcar_procesando`, porque no hay nada que procesar) -- ANTES de este
+    arreglo, ese `return 1` temprano tampoco cerraba la corrida. Es una
+    transición válida (`INVENTARIANDO -> FALLIDA`, ver `dominio/corridas.py`).
+
+    `motor` sigue siendo obligatorio aunque la carpeta esté vacía:
+    `_configurar_ejecutor_secuencial` arma la fábrica ANTES de que
+    `lanzador.lanzar()` siquiera empiece a inventariar (ver `ejecutar()`)."""
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    codigo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert codigo == 1
+    with Session(engine) as sesion:
+        (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert corrida.estado == EstadoCorrida.FALLIDA.value
+
+
+def test_el_script_cierra_como_fallida_si_el_despacho_explota_y_repropaga(
+    tmp_path, motor: MotorPii, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simétrico de `web/servicio_corridas.py::_despachar_y_cerrar`: una
+    excepción INESPERADA durante el despacho tiene que cerrar la corrida
+    como `FALLIDA` (no dejarla en `PROCESANDO` para siempre) Y seguir
+    propagándose -- cerrar la corrida no debe tragarse el error real."""
+    _grupo_completo(tmp_path, "cierre-excepcion")
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    def _explota(*_args, **_kwargs):
+        raise RuntimeError("fallo inesperado simulado en el despacho")
+
+    monkeypatch.setattr(modulo.tareas, "procesar_grupo", _explota)
+
+    with pytest.raises(RuntimeError, match="fallo inesperado simulado"):
+        modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
+
+    with Session(engine) as sesion:
+        (corrida,) = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert corrida.estado == EstadoCorrida.FALLIDA.value
+
+
+def test_el_script_permite_lanzar_una_segunda_corrida_sobre_otra_carpeta_despues_de_la_primera(
+    tmp_path, motor: MotorPii
+) -> None:
+    """EL regression test del CRÍTICO 1: el escenario real es el instituto
+    corriendo `anonimizacion procesar --entrada <carpeta>` carpeta tras
+    carpeta sobre 5 TB. Reproducido: antes de este arreglo, la SEGUNDA
+    llamada a `ejecutar()` -- sobre una carpeta DISTINTA, con el mismo
+    engine -- fallaba con `CorridaEnCursoError` aunque la primera hubiera
+    terminado con total éxito, porque la primera corrida nunca se cerraba."""
+    carpeta_1 = tmp_path / "carpeta-1"
+    carpeta_2 = tmp_path / "carpeta-2"
+    carpeta_1.mkdir()
+    carpeta_2.mkdir()
+    _grupo_completo(carpeta_1, "seg-1", dni="20555888", nombre="Ana Sintetica Uno")
+    _grupo_completo(
+        carpeta_2, "seg-2", dni="20666999", nombre="Beatriz Sintetica Dos",
+        fecha_nac_lab="10/10/1985", fecha_nac_ecg="10-OCT-1985",
+    )
+
+    modulo = _cargar_script()
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    primero = modulo.ejecutar(entrada=carpeta_1, engine=engine, motor=motor, pepper=PEPPER)
+    segundo = modulo.ejecutar(entrada=carpeta_2, engine=engine, motor=motor, pepper=PEPPER)
+
+    assert primero == 0
+    assert segundo == 0, "la segunda corrida no debe bloquearse por una primera que ya terminó bien"
+    with Session(engine) as sesion:
+        corridas = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert len(corridas) == 2
+    assert all(c.estado == EstadoCorrida.COMPLETADA.value for c in corridas)
 
 
 def test_el_script_informa_con_claridad_si_ya_hay_una_corrida_activa(tmp_path, motor: MotorPii, capsys) -> None:
@@ -190,14 +343,30 @@ def test_el_script_informa_con_claridad_si_ya_hay_una_corrida_activa(tmp_path, m
     la BASE le impone (`ux_corrida_una_activa`, `CorridaEnCursoError`). El
     script tiene que traducir ese rechazo en un mensaje claro y un código de
     salida propio -- no dejar que una excepción cruda le llegue a la
-    consola del operador."""
+    consola del operador.
+
+    Corrección post CRÍTICO 1: esta prueba simulaba la corrida activa con el
+    efecto secundario del propio bug (una corrida de ESTE script que nunca
+    se cerraba sola). Ahora que `ejecutar()` cierra sus corridas, eso ya no
+    alcanza -- la corrida activa se arma como la dejaría un proceso
+    GENUINAMENTE concurrente (el panel, u otra instancia de este mismo
+    script todavía en curso): vía `LanzadorCorrida` directo, sin cerrarla,
+    ANTES de invocar el script bajo prueba."""
+    from anonimizacion.ingesta.lanzador_corrida import LanzadorCorrida
+    from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
+    from anonimizacion.salida.cuarentena import EscritorCuarentena
+
     _grupo_completo(tmp_path, "s-gate")
     modulo = _cargar_script()
     engine = sa.create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
-    primero = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
-    assert primero == 0  # deja la corrida en PROCESANDO -- este camino nunca la cierra
+    otra_carpeta_en_curso = tmp_path / "otra-corrida-en-curso"
+    otra_carpeta_en_curso.mkdir()
+    lanzador_de_otro_proceso = LanzadorCorrida(
+        repositorio=RepositorioCorridas(engine), cuarentena=EscritorCuarentena(engine)
+    )
+    lanzador_de_otro_proceso.lanzar(otra_carpeta_en_curso)  # queda activa, deliberadamente sin cerrar
 
     segundo = modulo.ejecutar(entrada=tmp_path, engine=engine, motor=motor, pepper=PEPPER)
 
@@ -400,6 +569,44 @@ def _engine_postgres_real_para_script(monkeypatch: pytest.MonkeyPatch):
     Base.metadata.create_all(engine)
     yield engine
     engine.dispose()
+
+
+@pytest.mark.postgres
+def test_el_script_procesa_carpeta_tras_carpeta_sin_bloquearse_contra_postgres_real(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, _engine_postgres_real_para_script
+) -> None:
+    """Reproducción EXACTA del CRÍTICO 1 (revisión adversarial) contra
+    Postgres real, con el gate `ux_corrida_una_activa` de verdad (no
+    disponible en SQLite antes de esta suite -- acá SÍ es el mismo motor
+    real que usa producción): el escenario reportado es el instituto
+    corriendo `anonimizacion procesar --entrada <carpeta>` carpeta tras
+    carpeta sobre 5 TB. Antes del arreglo, la segunda carpeta fallaba con
+    `CorridaEnCursoError` aunque la primera hubiera terminado con éxito
+    total -- reproducido dos veces por el equipo de revisión, secuencial y
+    con `--procesos 2`."""
+    monkeypatch.setenv("ANONIMIZACION_PEPPER", "pepper-test-critico1-postgres-nunca-real")
+    engine = _engine_postgres_real_para_script
+    carpeta_1 = tmp_path / "carpeta-1"
+    carpeta_2 = tmp_path / "carpeta-2"
+    carpeta_1.mkdir()
+    carpeta_2.mkdir()
+    _grupo_completo(carpeta_1, "pg-seg-1", dni="20555888", nombre="Ana Postgres Uno")
+    _grupo_completo(
+        carpeta_2, "pg-seg-2", dni="20666999", nombre="Beatriz Postgres Dos",
+        fecha_nac_lab="10/10/1985", fecha_nac_ecg="10-OCT-1985",
+    )
+
+    modulo = _cargar_script()
+
+    primero = modulo.ejecutar(entrada=carpeta_1, engine=engine, motor=None, pepper=PEPPER, procesos=2, db_url=_URL_POSTGRES_REAL)
+    segundo = modulo.ejecutar(entrada=carpeta_2, engine=engine, motor=None, pepper=PEPPER, procesos=2, db_url=_URL_POSTGRES_REAL)
+
+    assert primero == 0
+    assert segundo == 0, "la segunda carpeta no debe bloquearse por una primera que ya terminó bien"
+    with Session(engine) as sesion:
+        corridas = sesion.scalars(sa.select(CorridaOrm)).all()
+    assert len(corridas) == 2
+    assert all(c.estado == EstadoCorrida.COMPLETADA.value for c in corridas)
 
 
 @pytest.mark.postgres
