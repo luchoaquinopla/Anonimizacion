@@ -470,15 +470,17 @@ def recuperar_corridas_abandonadas(
     `web/embudo_corrida.py::construir_embudo`): producción usa el default y
     el reloj real; los tests fijan ambos para no depender de dormir de verdad.
 
-    `FALLIDA`, no un intento de reanudación: la reanudación por documento
-    está fuera de alcance (`reintentar_corrida` sigue devolviendo 501, ver
-    `web/rutas_corridas.py`) -- sin ella, no hay forma honesta de saber
-    cuánto del inventario ya se procesó antes de la caída. Los documentos que
-    sí llegaron a escribirse en `estudio`/`cuarentena` (Postgres, con su
-    propio `corrida_id`) no se pierden ni se revierten: sólo el renglón
-    administrativo de `corrida` queda `FALLIDA`, la misma distinción que ya
-    hace `LanzadorCorrida._inventariar_y_generar_referencias` entre
-    trazabilidad administrativa y datos clínicos reales.
+    `FALLIDA`, no un intento de reanudación: esta función sólo marca el
+    renglón administrativo, no reintenta nada por sí misma -- la reanudación
+    por documento ya existe como operación separada, disparada por el
+    usuario (`ServicioCorridas.reintentar_corrida`, `web/reintento_corrida.py`;
+    `web/rutas_corridas.py::_reintentar_corrida` sólo cae al 501 como rama de
+    compatibilidad para dobles de test que todavía no la implementen). Los
+    documentos que sí llegaron a escribirse en `estudio`/`cuarentena`
+    (Postgres, con su propio `corrida_id`) no se pierden ni se revierten:
+    sólo el renglón administrativo de `corrida` queda `FALLIDA`, la misma
+    distinción que ya hace `LanzadorCorrida._inventariar_y_generar_referencias`
+    entre trazabilidad administrativa y datos clínicos reales.
 
     Asume un ÚNICO proceso SERVIDOR (sin réplicas ni balanceador delante del
     panel): con más de una instancia de PANEL corriendo a la vez, una corrida
