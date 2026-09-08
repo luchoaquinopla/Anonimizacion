@@ -29,6 +29,15 @@ destino del pipeline). Responsabilidades de `construir_registro`:
    `pii/redaccion.py::redactar_texto` sobre cada sección de texto libre
    antes de armar `ContenidoEcoSalida.secciones_texto`.
 
+   Además (Tarea 2, red de contención por comparación exacta): antes de
+   pseudonimizar al médico, `construir_registro` junta los nombres YA
+   CONOCIDOS de este documento -- `documento.identidad.nombre` (paciente),
+   `adicionales["medico_solicitante"]` y `contenido.firma.nombre` (médico) --
+   y se los pasa a `redactar_texto` como `nombres_conocidos`. Esa capa NO
+   depende del NER: si el texto libre menciona literalmente al propio
+   paciente o al médico de ESTE documento, se redacta siempre, con o sin
+   `motor_pii` inyectado (ver `pii/redaccion.py::redactar_por_nombres_conocidos`).
+
 5. Propagar `clave_documento` (spec `escritura-idempotente`): argumento
    obligatorio de palabra clave -- ya derivado por el llamador
    (`pipeline/ejecutor.py::_resolver_documento`, vía
@@ -73,6 +82,26 @@ def _pseudonimizar_medico_de_adicionales(
 
 def _adicionales_sin_personal(adicionales: dict) -> dict:
     return {clave: valor for clave, valor in adicionales.items() if clave not in _CLAVES_PERSONAL}
+
+
+def _nombres_conocidos_documento(documento: DocumentoParseado) -> tuple[str, ...]:
+    """Nombres YA CONOCIDOS de este documento: paciente + médico (Tarea 2).
+
+    Duck typing sobre `contenido.firma`, mismo patrón que
+    `pii/politica.py::_elementos_medico` -- este módulo tampoco importa
+    `anonimizacion.parseo` directamente. Se usa para redactar por
+    comparación exacta (`pii/redaccion.py::redactar_por_nombres_conocidos`),
+    no para pseudonimizar -- eso sigue pasando por `generar_id_medico`.
+    """
+    nombres = [documento.identidad.nombre.get_secret_value()]
+    medico_solicitante = documento.adicionales.get(_CLAVE_MEDICO_SOLICITANTE)
+    if medico_solicitante:
+        nombres.append(str(medico_solicitante))
+    firma = getattr(documento.contenido, "firma", None)
+    nombre_firma = getattr(firma, "nombre", None) if firma is not None else None
+    if nombre_firma:
+        nombres.append(nombre_firma)
+    return tuple(nombres)
 
 
 def _parsear_float(texto: str) -> float | None:
@@ -136,6 +165,7 @@ def _contenido_eco_salida(
     pepper: bytes,
     id_medico_solicitante: str | None,
     motor_pii: DetectorEntidades | None,
+    nombres_conocidos: tuple[str, ...],
 ) -> ContenidoEcoSalida:
     contenido = documento.contenido
     firma = contenido.firma
@@ -150,10 +180,15 @@ def _contenido_eco_salida(
         for medida in contenido.medidas
     )
     # Fix aditivo PR9 (cierra gap PR7/PR8): texto libre dictado puede traer
-    # PII incidental (ver docstring del módulo y `pii/redaccion.py`).
+    # PII incidental (ver docstring del módulo y `pii/redaccion.py`). Tarea 2:
+    # además del regex de DNI y el NER, se compara contra `nombres_conocidos`
+    # (paciente/médico de ESTE documento) -- esa capa no depende del NER.
     secciones_texto = tuple(
         FilaTextoSeccionEco(
-            nombre=seccion.nombre, texto=redactar_texto(seccion.texto, motor_pii=motor_pii)
+            nombre=seccion.nombre,
+            texto=redactar_texto(
+                seccion.texto, motor_pii=motor_pii, nombres_conocidos=nombres_conocidos
+            ),
         )
         for seccion in contenido.secciones_texto
     )
@@ -192,7 +227,10 @@ def construir_registro(
         id_medico_solicitante = _pseudonimizar_medico_de_adicionales(
             adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE
         )
-        contenido = _contenido_eco_salida(documento, pepper, id_medico_solicitante, motor_pii)
+        nombres_conocidos = _nombres_conocidos_documento(documento)
+        contenido = _contenido_eco_salida(
+            documento, pepper, id_medico_solicitante, motor_pii, nombres_conocidos
+        )
     else:
         raise ValueError(f"tipo_documento no soportado por construir_registro: {documento.tipo_documento!r}")
 

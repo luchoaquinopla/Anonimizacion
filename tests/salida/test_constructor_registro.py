@@ -255,6 +255,71 @@ def test_eco_texto_libre_con_nombre_se_redacta_via_motor_pii_inyectado() -> None
     assert "Roberto Fernandez" not in texto_redactado
 
 
+def test_eco_texto_libre_menciona_al_propio_paciente_se_redacta_sin_motor() -> None:
+    """Tarea 2: red de contención por comparación exacta, NO por NER.
+
+    Antes de esta Tarea, `pii/politica.py` documentaba en un comentario la
+    intención de comparar un hallazgo de texto libre contra el nombre ya
+    conocido del paciente/médico de ese mismo documento -- pero
+    `construir_registro` nunca lo hacía: sin `motor_pii` inyectado, el texto
+    libre solo pasaba por el regex de DNI. Este test prueba que ahora SÍ se
+    redacta el nombre del propio paciente, incluso sin motor de PII."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Ceferino Yegros")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(
+            medidas=(),
+            secciones_texto=(
+                SeccionTextoEco(
+                    nombre="CONCLUSIONES",
+                    texto="Se comenta el caso con el paciente Ceferino Yegros y familia.",
+                ),
+            ),
+            firma=None,
+        ),
+        adicionales={},
+    )
+
+    registro = construir_registro(
+        documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+
+    texto_redactado = registro.contenido.secciones_texto[0].texto
+    assert "Ceferino Yegros" not in texto_redactado
+    assert "Ceferino" not in texto_redactado
+    assert "Yegros" not in texto_redactado
+
+
+def test_eco_texto_libre_menciona_al_medico_solicitante_se_redacta_sin_motor() -> None:
+    """Mismo mecanismo, para el médico solicitante (`adicionales`) de ESTE documento."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(
+            medidas=(),
+            secciones_texto=(
+                SeccionTextoEco(
+                    nombre="CONCLUSIONES",
+                    texto="Se deriva nuevamente a Kalil Nasif para seguimiento.",
+                ),
+            ),
+            firma=None,
+        ),
+        adicionales={"medico_solicitante": "Dr. Kalil Nasif"},
+    )
+
+    registro = construir_registro(
+        documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+
+    texto_redactado = registro.contenido.secciones_texto[0].texto
+    assert "Kalil Nasif" not in texto_redactado
+
+
 def test_construir_registro_propaga_hora_estudio_y_precision_sin_transformar() -> None:
     """Requirement: "Hora local sin conversión de huso" -- `construir_registro`
     propaga `hora_estudio`/`precision_hora` del `DocumentoParseado` al
