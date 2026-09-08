@@ -116,3 +116,50 @@ sí son constantes que un parser real ya sabe reconocer
 `parseo/eco_doppler.py::_TEXTO_FIRMA_EXCLUIDO`) -- se agregan como líneas
 sintéticas explícitas, igual que el pie "DOCUMENTO SINTETICO - SOLO
 PRUEBAS", para seguir calibrando esas dos ramas.
+
+## Tarea "usar la plantilla completa"
+
+El "100%" de vocabulario de la sección anterior era real pero ENGAÑOSO como
+prueba de que "la plantilla se usa completa": `laboratorio_general.py` y
+`eco_doppler.py` dibujaban el orden GEOMÉTRICO de la plantilla (`sort=True`,
+el que fusiona varias columnas en una sola línea de texto) como UNA sola
+cadena por fila. Medido con PyMuPDF contra el PDF que `generar_corpus_clinico`
+terminaba escribiendo: laboratorio reproducía 91 de las 226 líneas reales
+(orden de dibujado, sin `sort`), ecocardiograma 68 de 173, ECG 57 de 52 (ya
+sobre el 100%, sin cambios). El vocabulario (conjunto de PALABRAS) seguía
+dando ~100% porque NINGUNA palabra se perdía al fusionar columnas en menos
+líneas -- pero las dos representaciones que expone
+`extraccion/texto_pymupdf.py` (`paginas` orden de dibujado / `paginas_ordenadas`
+orden geométrico) terminaban siendo casi idénticas entre sí, así que ningún
+test ejercitaba la razón por la que existen las dos (ver su docstring: contra
+el ECG real, 3/4 marcadores en orden de dibujado vs 1/4 en geométrico).
+
+Fix: `plantilla_documento.py` tokeniza cada fila geométrica en sus columnas
+(`_tokenizar_fila` -- separador de 2+ espacios más una partición fina de
+"Etiqueta: valor" y "número unidad" unidos por un solo espacio) y dibuja cada
+token como un `insert_text` INDEPENDIENTE (`pdf_sintetico._dibujar_fragmentos_plantilla`),
+posicionado en su fila/columna real pero EMITIDO (orden de llamada) según la
+sección "orden de dibujado" de la plantilla para los tokens que son únicos en
+la página (`_fragmentos_en_orden_de_dibujado`) -- ver el reporte completo de
+la tarea para las cifras de fidelidad de orden logradas (altas para dibujado,
+más bajas y reportadas sin forzar para geométrico) y dos hallazgos de
+posicionamiento (intercalado de caracteres por subestimar el ancho real a
+fontsize chico; reconstrucción de "valor unidad" como dos columnas en vez de
+una por un espaciado entre columnas demasiado ancho).
+
+Centinelas nuevos:
+- `tests/fixtures/test_fidelidad_lineas_plantillas.py` -- piso fijo de
+  cantidad de líneas no vacías (orden de dibujado) por tipo, ≥95% de la
+  plantilla real, con test dedicado que prueba que detecta la regresión
+  concreta que motivó esta tarea.
+- `tests/fixtures/test_fidelidad_orden_plantillas.py` -- fidelidad de orden
+  (subsecuencia común más larga) contra ambas representaciones, con pisos
+  fijos medidos, priorizando dibujado sobre geométrico.
+
+Costo del banco de 1.000 documentos (mismo oráculo: 972 aprobados / 26 en
+cuarentena, sin cambios): tiempo total subió de 81.4s (47.8s preparación +
+29.4s procesamiento + 4.2s verificación) a 140.5s (106.0s preparación + 30.3s
+procesamiento + 4.2s verificación) -- el aumento es casi todo en preparación
+(más `insert_text` por documento, uno por columna en vez de uno por fila), tal
+como se esperaba al dibujar la plantilla completa; no se recortó la plantilla
+para evitarlo.
