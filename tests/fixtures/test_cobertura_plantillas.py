@@ -174,11 +174,17 @@ def test_el_piso_de_cobertura_detecta_una_regresion_real(monkeypatch) -> None:
     """Prueba el propio centinela: si `generar_corpus_clinico` dejara de
     dibujar el cuerpo tomado de la plantilla (la regresión concreta que esta
     tarea existe para impedir que vuelva a pasar desapercibida), este test
-    debe fallar. Se verifica monkeyparacheando `_dibujar_cuerpo_plantilla`
-    a un no-op -- no se toca el generador real."""
+    debe fallar. Se verifica monkeyparcheando `_dibujar_fragmentos_plantilla`
+    a un no-op -- no se toca el generador real.
+
+    Laboratorio dibuja su cuerpo con `_dibujar_fragmentos_plantilla` (tarea
+    "usar la plantilla completa", ver `plantilla_documento.py`), no ya con
+    `_dibujar_cuerpo_plantilla` (esa sólo la usa ECG) -- si este test siguiera
+    parcheando la función vieja, dejaría de ejercitar ninguna regresión real
+    sobre laboratorio/eco."""
     import tests.fixtures.pdf_sintetico as pdf_sintetico
 
-    monkeypatch.setattr(pdf_sintetico, "_dibujar_cuerpo_plantilla", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pdf_sintetico, "_dibujar_fragmentos_plantilla", lambda *args, **kwargs: None)
 
     cobertura, _faltantes, _tamano = medir_cobertura("laboratorio", semilla=54321)
 

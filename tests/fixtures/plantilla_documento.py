@@ -139,6 +139,187 @@ def _aplicar_sustituciones(
     return pagina
 
 
+@dataclass(frozen=True)
+class FragmentoPagina:
+    """Un fragmento de texto a dibujar como un `insert_text` INDEPENDIENTE.
+
+    `fila`/`columna` ubican el fragmento en la grilla geométrica de la
+    página: `fila` es el índice de línea de `paginas_ordenadas`, `columna`
+    es la posición ORDINAL (0, 1, 2...) del token dentro de esa fila -- NO
+    un offset de caracter. La coordenada X real (ancho de fuente, sin
+    solapar con el token anterior de la misma fila) se calcula recién al
+    dibujar (`pdf_sintetico._dibujar_fragmentos_plantilla`), con
+    `pymupdf.get_text_length` -- ver el hallazgo documentado ahí: un offset
+    de caracter escalado a ciegas subestimaba el ancho real a fontsize
+    pequeño y hacía que `get_text(sort=True)` intercalara caracteres de dos
+    fragmentos vecinos ("F.Nacimiento :" + valor). El orden en que
+    `_fragmentos_en_orden_de_dibujado` EMITE la lista (no la posición fila/
+    columna) es lo que reproduce el orden de dibujado real -- ver esa
+    función."""
+
+    fila: int
+    columna: int
+    texto: str
+    # `True` si, EN LA PLANTILLA, este token empieza un grupo de columna
+    # nuevo (separado del anterior por 2+ espacios) -- necesita un espacio
+    # ANCHO al dibujarlo para que `get_text(sort=True)` lo reconstruya
+    # también separado por 2+ espacios (convención `_primer_segmento`/
+    # `\\s{2,}` que usan los parsers de producción). `False` si es una
+    # sub-pieza de un token que la plantilla trae unido por UN solo espacio
+    # ("81 mm", "Etiqueta: valor") -- necesita un espacio ANGOSTO para que
+    # `sort=True` lo reconstruya también con un solo espacio (ver hallazgo:
+    # `parseo/eco_doppler.py::_parsear_fila_medidas_dos_columnas` separa
+    # columnas con `\\s{2,}` -- un gap ancho entre "81" y "mm" los vuelve DOS
+    # columnas en vez de un solo valor con unidad).
+    separador_ancho: bool = True
+
+
+_PATRON_TOKEN_COLUMNA = re.compile(r"\S.*?(?=\s{2,}|\Z)")
+# Etiqueta = 1 a 4 palabras (letras/puntos) terminadas en ":" -- generaliza
+# `_CAMPOS_HEADER["fecha"]` de eco (etiqueta+valor unidos por UN espacio) al
+# caso de VARIAS etiquetas encadenadas en la misma fila sin separador de 2+
+# espacios (p. ej. "Fecha Estudio: 12/01/2022 PACIENTE: NOMBRE" -- una sola
+# fila real de la plantilla de eco).
+#  Sin dígitos a propósito: excluye valores con forma de fecha/número
+# ("12/01/2022") de la ventana de "palabras" de la etiqueta -- si se
+# permitieran dígitos, un valor SIN etiqueta propia pegado justo antes de la
+# próxima etiqueta ("Fecha Estudio: 12/01/2022 PACIENTE: ...") se tragaría
+# como si fuera parte de esa etiqueta siguiente en vez de quedar aislado
+# como su propio token.
+_PATRON_ETIQUETAS_ENCADENADAS = re.compile(r"([^\s:\d]+(?:\s[^\s:\d]+){0,3}:)")
+# Separa "81 mm" en ("81", "mm") -- celda de medida con unidad pegada por un
+# solo espacio (tabla de medidas del eco). NO matchea "< 34 mm" (no arranca
+# con dígito): esa forma ya es una única línea de la plantilla, no dos.
+_PATRON_NUMERO_UNIDAD = re.compile(r"^(-?\d+(?:[.,]\d+)?)\s+([A-Za-zÀ-ÿ%./]{1,10})$")
+
+
+def _dividir_etiquetas_encadenadas(texto: str) -> list[str]:
+    """Parte `texto` en sus etiquetas ("Palabra:") y los valores que las
+    siguen, cuando hay VARIAS etiquetas pegadas en la misma fila sin
+    separador de columna. Sin etiquetas reconocibles, devuelve `[texto]`
+    tal cual."""
+    partes = _PATRON_ETIQUETAS_ENCADENADAS.split(texto)
+    if len(partes) == 1:
+        return [texto]
+    piezas: list[str] = []
+    previo = partes[0].strip()
+    if previo:
+        piezas.append(previo)
+    for indice in range(1, len(partes), 2):
+        etiqueta = partes[indice]
+        piezas.append(etiqueta)
+        valor = partes[indice + 1].strip() if indice + 1 < len(partes) else ""
+        if valor:
+            piezas.append(valor)
+    return piezas
+
+
+def _dividir_numero_unidad(texto: str) -> list[str]:
+    coincidencia = _PATRON_NUMERO_UNIDAD.match(texto)
+    if coincidencia is None:
+        return [texto]
+    return [coincidencia.group(1), coincidencia.group(2)]
+
+
+def _tokenizar_fila(fila: str) -> list[tuple[str, bool]]:
+    """Divide UNA fila de `paginas_ordenadas` (orden geométrico) en sus
+    tokens de columna, EN ORDEN IZQUIERDA A DERECHA -- misma convención de
+    separador que `_primer_segmento` (2+ espacios) -- y además parte en
+    piezas más finas los tokens que unen VARIAS etiquetas ("Etiqueta1:
+    valor1 Etiqueta2: valor2") o un número+unidad ("81 mm") con UN solo
+    espacio: el separador de 2+ espacios no alcanza para esos casos, y sin
+    partirlos el `get_text()` sin `sort` del PDF generado reproduce muchas
+    menos líneas que la plantilla real (Tarea 1, "usar la plantilla
+    completa"). La posición ORDINAL de cada token en la lista devuelta ES su
+    número de columna -- ver `FragmentoPagina`.
+
+    Devuelve `[(texto, separador_ancho), ...]` -- `separador_ancho` marca si
+    ESTE token abre un grupo de columna nuevo de la plantilla (separado del
+    anterior por 2+ espacios) o es una sub-pieza de un token unido por un
+    solo espacio -- ver `FragmentoPagina.separador_ancho`."""
+    tokens: list[tuple[str, bool]] = []
+    for coincidencia in _PATRON_TOKEN_COLUMNA.finditer(fila):
+        crudo = coincidencia.group()
+        inicio_de_grupo = True
+        for etiqueta_o_valor in _dividir_etiquetas_encadenadas(crudo):
+            for subpieza in _dividir_numero_unidad(etiqueta_o_valor):
+                texto = subpieza.strip()
+                if texto:
+                    tokens.append((texto, inicio_de_grupo))
+                    inicio_de_grupo = False
+    return tokens
+
+
+def _fragmentos_en_orden_de_dibujado(
+    pagina_geo_original: str, pagina_geo_sustituida: str, pagina_dibujado_original: str
+) -> tuple[FragmentoPagina, ...]:
+    """Devuelve los fragmentos de UNA página, en el MISMO orden en que
+    `pagina_dibujado_original` (sección "orden de dibujado" de la plantilla)
+    los declara -- Tarea 2 de la tarea "usar la plantilla completa": producción
+    extrae dos representaciones (`extraccion/texto_pymupdf.py`) que NO son
+    intercambiables, y el corpus sintético debía reproducir la diferencia en
+    vez de dibujar en un orden cómodo donde ambas salen casi iguales.
+
+    Cada fragmento conserva la posición (fila/columna) que su token ocupaba
+    en `pagina_geo_original` (orden geométrico) -- PyMuPDF reconstruye
+    `get_text(sort=True)` por posición X/Y, NO por orden de llamada a
+    `insert_text` (verificado empíricamente: ver el reporte de esta tarea),
+    así que reordenar la lista de EMISIÓN no degrada la agrupación por fila
+    que necesitan `parseo/laboratorio_general.py` y `parseo/eco_doppler.py`.
+
+    Sólo se reordenan así los tokens que son ÚNICOS dentro de la página (un
+    único (fila, columna) tiene ese texto exacto) -- un token repetido (p. ej.
+    una unidad "%" que aparece en diez filas) no tiene una correspondencia
+    inequívoca contra la lista de líneas de dibujado; forzar un match
+    ambiguo arriesgaría dibujarlo en la fila equivocada, así que esos quedan
+    en orden natural (fila por fila, izquierda a derecha) al final, DESPUÉS
+    de los fragmentos ya ubicados con precisión. Es una limitación medida y
+    reportada, no disimulada -- ver el reporte de la tarea para el número
+    real de cobertura de orden que este compromiso logra."""
+    tokens_originales = [_tokenizar_fila(fila) for fila in pagina_geo_original.splitlines()]
+    tokens_sustituidos = [_tokenizar_fila(fila) for fila in pagina_geo_sustituida.splitlines()]
+    posicion_unica = _indice_de_posiciones_unicas(tokens_originales)
+
+    def _token_final(fila_idx: int, col_idx: int, token_original: tuple[str, bool]) -> tuple[str, bool]:
+        fila_sustituida = tokens_sustituidos[fila_idx] if fila_idx < len(tokens_sustituidos) else []
+        if col_idx < len(fila_sustituida):
+            return fila_sustituida[col_idx]
+        return token_original  # la fila cambió de forma tras sustituir -- no debería pasar contra la plantilla versionada
+
+    usados: set[tuple[int, int]] = set()
+    fragmentos: list[FragmentoPagina] = []
+    for linea in pagina_dibujado_original.splitlines():
+        contenido = linea.strip()
+        if not contenido:
+            continue
+        posicion = posicion_unica.get(contenido)
+        if posicion is None or posicion in usados:
+            continue
+        fila_idx, col_idx = posicion
+        usados.add(posicion)
+        texto, ancho = _token_final(fila_idx, col_idx, tokens_originales[fila_idx][col_idx])
+        fragmentos.append(FragmentoPagina(fila_idx, col_idx, texto, ancho))
+
+    for fila_idx, tokens in enumerate(tokens_sustituidos):
+        for col_idx, (texto, ancho) in enumerate(tokens):
+            if (fila_idx, col_idx) in usados:
+                continue
+            fragmentos.append(FragmentoPagina(fila_idx, col_idx, texto, ancho))
+
+    return tuple(fragmentos)
+
+
+def _indice_de_posiciones_unicas(tokens_por_fila: list[list[tuple[str, bool]]]) -> dict[str, tuple[int, int]]:
+    """Mapea texto de token -> (fila, columna) para los tokens que aparecen
+    UNA sola vez en toda la página -- ver docstring de
+    `_fragmentos_en_orden_de_dibujado`, sección de tokens ambiguos."""
+    ocurrencias: dict[str, list[tuple[int, int]]] = {}
+    for fila_idx, tokens in enumerate(tokens_por_fila):
+        for col_idx, (texto, _ancho) in enumerate(tokens):
+            ocurrencias.setdefault(texto, []).append((fila_idx, col_idx))
+    return {texto: posiciones[0] for texto, posiciones in ocurrencias.items() if len(posiciones) == 1}
+
+
 def _numero_sintetico(rng: random.Random, digitos: int) -> str:
     return str(rng.randint(10 ** (digitos - 1), 10 ** digitos - 1))
 
@@ -203,13 +384,17 @@ def generar_identidad_sintetica(rng: random.Random, dni: str, fecha_referencia: 
 
 def preparar_laboratorio(
     rng: random.Random, identidad: IdentidadSintetica, fecha: date
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[tuple[FragmentoPagina, ...], ...], tuple[str, ...]]:
     """Devuelve `(paginas_a_dibujar, valores_pii_generados)` para laboratorio.
 
-    `paginas_a_dibujar` usa el orden GEOMÉTRICO de la plantilla (`sort=True`):
-    es el que deja "Etiqueta: valor" adyacentes en la misma línea, formato que
-    espera `parseo/laboratorio_general.py` -- ver `extraccion/texto_pymupdf.py`.
-    """
+    Cada página es una tupla de `FragmentoPagina` -- ver
+    `_fragmentos_en_orden_de_dibujado` -- posicionados según el orden
+    GEOMÉTRICO de la plantilla (`sort=True`, el que deja "Etiqueta: valor"
+    adyacentes en la misma línea reconstruida, formato que espera
+    `parseo/laboratorio_general.py`) pero EMITIDOS (orden de la tupla) según
+    la sección "orden de dibujado" de la plantilla -- ver
+    `extraccion/texto_pymupdf.py` y el reporte de la tarea "usar la plantilla
+    completa"."""
     plantilla = _plantilla("laboratorio")
     pagina1 = plantilla.paginas_ordenadas[0]
     edad = str(fecha.year - identidad.nacimiento.year)
@@ -234,9 +419,15 @@ def preparar_laboratorio(
         # en vez de generar un documento sin Nº de Petición (el parser real
         # lo exige, `DetalleParseoIncompleto.HEADER_AUSENTE`).
         raise AssertionError("la plantilla de laboratorio no trae Nº de Petición reconocible")
-    paginas = tuple(
+    paginas_sustituidas = tuple(
         _aplicar_sustituciones(pagina, _CAMPOS_LAB, sustitutos, tipo="laboratorio")
         for pagina in plantilla.paginas_ordenadas
+    )
+    paginas = tuple(
+        _fragmentos_en_orden_de_dibujado(pagina_original, pagina_sustituida, pagina_dibujado)
+        for pagina_original, pagina_sustituida, pagina_dibujado in zip(
+            plantilla.paginas_ordenadas, paginas_sustituidas, plantilla.paginas, strict=True
+        )
     )
     pii = (identidad.nombre_lab, identidad.dni, sustitutos["fecha_nac"], numero_peticion)
     return paginas, pii
@@ -295,7 +486,7 @@ def _recuperar_boilerplate_eco(pagina: str) -> str:
 
 def preparar_ecocardiograma(
     rng: random.Random, identidad: IdentidadSintetica, fecha: date
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[tuple[FragmentoPagina, ...], ...], tuple[str, ...]]:
     """Igual que `preparar_laboratorio`, para ecocardiograma (también orden
     geométrico: `parseo/eco_doppler.py` también lee `paginas_ordenadas`)."""
     plantilla = _plantilla("ecocardiograma")
@@ -308,12 +499,37 @@ def preparar_ecocardiograma(
         "numero_estudio": numero_estudio,
         "fecha": fecha.strftime("%d/%m/%Y"),
     }
+    # `_recuperar_boilerplate_eco` puede OMITIR una línea entera (`_LINEA_OMITIDA_ECO`)
+    # -- eso corre los índices de fila de la página sustituida respecto de la
+    # original. Se recalculan los fragmentos ANTES de recuperar/omitir nada
+    # (mismo orden de filas que `plantilla.paginas_ordenadas`) y se aplica la
+    # recuperación de boilerplate en cada fragmento individual, no en la
+    # página ya ensamblada.
     paginas = tuple(
-        _recuperar_boilerplate_eco(_aplicar_sustituciones(pagina, _CAMPOS_ECO, sustitutos, tipo="ecocardiograma"))
-        for pagina in plantilla.paginas_ordenadas
+        _fragmentos_eco_en_orden_de_dibujado(pagina_original, sustitutos, pagina_dibujado)
+        for pagina_original, pagina_dibujado in zip(plantilla.paginas_ordenadas, plantilla.paginas, strict=True)
     )
     pii = (identidad.nombre_eco, identidad.dni, numero_estudio)
     return paginas, pii
+
+
+def _fragmentos_eco_en_orden_de_dibujado(
+    pagina_geo_original: str, sustitutos: dict[str, str], pagina_dibujado_original: str
+) -> tuple[FragmentoPagina, ...]:
+    """Como `preparar_laboratorio`, pero aplicando la sustitución y la
+    recuperación de boilerplate del eco (`_recuperar_boilerplate_eco`) A NIVEL
+    DE FRAGMENTO -- necesario porque esa recuperación puede OMITIR una línea
+    entera (`_LINEA_OMITIDA_ECO`), y `_fragmentos_en_orden_de_dibujado` asume
+    que la página sustituida tiene la MISMA cantidad de filas que la
+    original."""
+    pagina_sustituida = _aplicar_sustituciones(pagina_geo_original, _CAMPOS_ECO, sustitutos, tipo="ecocardiograma")
+    fragmentos = _fragmentos_en_orden_de_dibujado(pagina_geo_original, pagina_sustituida, pagina_dibujado_original)
+    recuperados = []
+    for fragmento in fragmentos:
+        texto = _recuperar_boilerplate_eco(fragmento.texto)
+        if texto.strip():
+            recuperados.append(FragmentoPagina(fragmento.fila, fragmento.columna, texto, fragmento.separador_ancho))
+    return tuple(recuperados)
 
 
 _PATRON_LINEA_SEXO_ECG = re.compile(r"(\(\d+\s*yr\))\s*\S+")

@@ -32,6 +32,7 @@ from pathlib import Path
 import pymupdf
 
 from .plantilla_documento import (
+    FragmentoPagina,
     generar_identidad_sintetica,
     preparar_ecg,
     preparar_ecocardiograma,
@@ -174,6 +175,73 @@ def _dibujar_cuerpo_plantilla(
             break
 
 
+def _dibujar_fragmentos_plantilla(
+    pagina: pymupdf.Page,
+    fragmentos: tuple[FragmentoPagina, ...],
+    *,
+    fontsize: float = 5.0,
+    interlinea: float = 7.2,
+    margen_x: float = 18,
+    margen_y: float = 22,
+    espacio_columna_ancho: float = 12.0,
+    espacio_columna_angosto: float = 3.0,
+) -> None:
+    """Como `_dibujar_cuerpo_plantilla`, pero dibuja `fragmentos` -- tokens de
+    columna individuales, no una línea entera por `insert_text` -- en el
+    ORDEN en que `fragmentos` los declara (orden de dibujado real, ver
+    `plantilla_documento._fragmentos_en_orden_de_dibujado`), cada uno
+    posicionado según su propia (fila, columna) de la grilla geométrica.
+
+    Hallazgo (reporte de la tarea "usar la plantilla completa"): la primera
+    versión ubicaba la X de cada fragmento escalando el OFFSET de caracter
+    del token dentro de la fila original (`x = offset * 1.8`) -- una
+    aproximación que valía cuando cada fila era UN solo `insert_text`, pero
+    con más de un fragmento por fila subestimaba el ancho real renderizado a
+    `fontsize` chico: "F.Nacimiento :" (14 caracteres) ocupa más de los
+    17*1.8=30.6pt que el offset del siguiente token asumía disponibles, así
+    que `get_text(sort=True)` terminaba intercalando el valor DENTRO del
+    texto de la etiqueta ("F.Nacimiento15/01/1946:"). Ahora la X se calcula
+    por fila, en dos pasadas: se agrupan los fragmentos por `fila`, se
+    ordenan por `columna` (orden IZQUIERDA A DERECHA real, no el de emisión)
+    y se acumula el ancho real de cada token (`pymupdf.get_text_length`) más
+    un espacio fijo -- garantiza que dos columnas vecinas nunca se solapen,
+    sin importar el orden en que después se ITERE `fragmentos` para dibujar.
+
+    La posición (X/Y) sale de `fragmento.fila`/`fragmento.columna`, NUNCA del
+    orden en que se itera esta lista -- por eso, a diferencia de
+    `_dibujar_cuerpo_plantilla`, acá NO se puede cortar apenas se excede
+    `alto_maximo`: los fragmentos no llegan ordenados por fila, así que se
+    filtran (se saltean, no se corta el loop) los que caerían fuera de
+    página."""
+    alto_maximo = pagina.rect.height - margen_y
+    por_fila: dict[int, list[FragmentoPagina]] = {}
+    for fragmento in fragmentos:
+        por_fila.setdefault(fragmento.fila, []).append(fragmento)
+
+    x_de_columna: dict[tuple[int, int], float] = {}
+    for fila_idx, items in por_fila.items():
+        items_ordenados = sorted(items, key=lambda f: f.columna)
+        x = margen_x
+        for indice, item in enumerate(items_ordenados):
+            x_de_columna[(fila_idx, item.columna)] = x
+            ancho = pymupdf.get_text_length(item.texto, fontsize=fontsize, fontname="helv")
+            siguiente = items_ordenados[indice + 1] if indice + 1 < len(items_ordenados) else None
+            # El espacio que sigue a ESTE token depende de si el PRÓXIMO
+            # token abre un grupo de columna nuevo (`separador_ancho`) o es
+            # su continuación unida por un solo espacio en la plantilla.
+            espacio = espacio_columna_angosto
+            if siguiente is not None and siguiente.separador_ancho:
+                espacio = espacio_columna_ancho
+            x += ancho + espacio
+
+    for fragmento in fragmentos:
+        y = margen_y + fragmento.fila * interlinea
+        if y > alto_maximo:
+            continue
+        x = x_de_columna[(fragmento.fila, fragmento.columna)]
+        _insertar_texto(pagina, (x, y), fragmento.texto, fontsize)
+
+
 def generar_corpus_clinico(
     directorio: Path,
     *,
@@ -215,7 +283,19 @@ def generar_corpus_clinico(
             pagina = documento.new_page(width=tamano[0], height=tamano[1])
             if banner is not None:
                 _insertar_texto(pagina, (42, 12), banner, 9)
-            _dibujar_cuerpo_plantilla(pagina, texto_pagina, margen_y=24 if banner else 18)
+            margen_y = 24 if banner else 18
+            if tipo == "ecg":
+                # ECG dibuja línea por línea, en orden de dibujado real (ver
+                # `preparar_ecg`) -- no necesita reagrupar por columna: su
+                # parser sólo lee `paginas` (orden de dibujado), nunca
+                # `paginas_ordenadas` (ver `extraccion/texto_pymupdf.py`).
+                _dibujar_cuerpo_plantilla(pagina, texto_pagina, margen_y=margen_y)
+            else:
+                # Laboratorio/eco dibujan fragmento por fragmento (token de
+                # columna), posicionados según la grilla geométrica pero
+                # EMITIDOS en orden de dibujado -- ver
+                # `plantilla_documento._fragmentos_en_orden_de_dibujado`.
+                _dibujar_fragmentos_plantilla(pagina, texto_pagina, margen_y=margen_y)
             if tipo == "ecg":
                 # Separadas por al menos 20pt entre sí y del pie de página
                 # (`_pie_pagina` dibuja desde `alto - 38`): a menos distancia,
