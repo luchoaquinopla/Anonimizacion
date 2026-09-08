@@ -313,3 +313,49 @@ def test_reintentar_responde_501_cuando_el_servicio_no_lo_implementa(tmp_path: P
 
     assert estado == "501 Not Implemented"
     assert cuerpo == {"codigo": "reintento_no_implementado"}
+
+
+def test_reintentar_responde_409_si_hay_otra_corrida_activa(tmp_path: Path) -> None:
+    """Feature `reanudacion-de-corridas`: mismo mapeo 409 que `_crear_corrida`."""
+
+    @dataclass
+    class _ServicioOcupado:
+        def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def reintentar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise CorridaEnCursoError("corrida-activa-1")
+
+    aplicacion = crear_aplicacion_corridas([tmp_path], _ServicioOcupado())
+
+    estado, _encabezados, cuerpo = _solicitar(aplicacion, "POST", "/corridas/corrida-1/reintentar")
+
+    assert estado == "409 Conflict"
+    assert cuerpo == {"codigo": "corrida_en_curso", "id_corrida_activa": "corrida-activa-1"}
+
+
+def test_reintentar_responde_404_si_la_corrida_no_existe(tmp_path: Path) -> None:
+    """Feature `reanudacion-de-corridas`: reintentar algo que no existe no
+    responde silenciosamente con ceros."""
+    from anonimizacion.ingesta.lanzador_corrida import CorridaNoEncontradaError
+
+    @dataclass
+    class _ServicioSinCorrida:
+        def crear_corrida(self, ruta_autorizada: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def consultar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise AssertionError("no se llama en este test")
+
+        def reintentar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
+            raise CorridaNoEncontradaError(id_corrida)
+
+    aplicacion = crear_aplicacion_corridas([tmp_path], _ServicioSinCorrida())
+
+    estado, _encabezados, cuerpo = _solicitar(aplicacion, "POST", "/corridas/corrida-1/reintentar")
+
+    assert estado == "404 Not Found"
+    assert cuerpo == {"codigo": "corrida_no_encontrada"}

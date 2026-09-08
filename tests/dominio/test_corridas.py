@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from anonimizacion.dominio.corridas import Corrida, DocumentoCorrida
 from anonimizacion.dominio.estados_corrida import EstadoCorrida, EstadoDocumentoCorrida
 
@@ -51,6 +53,46 @@ def test_corrida_creada_puede_marcarse_fallida_por_recuperacion_de_arranque() ->
     corrida = Corrida.crear("corrida-abandonada-en-creada")
     corrida.avanzar_a(EstadoCorrida.FALLIDA)
     assert corrida.estado is EstadoCorrida.FALLIDA
+
+
+def test_corrida_crea_con_ruta_autorizada_opcional() -> None:
+    """Feature `reanudacion-de-corridas`: campo opcional al final, mismo
+    precedente que `clave_documento` -- nace `None` para no romper
+    llamadores existentes."""
+    sin_ruta = Corrida.crear("corrida-1")
+    assert sin_ruta.ruta_autorizada is None
+
+    con_ruta = Corrida.crear("corrida-2", ruta_autorizada="/datos/entrada")
+    assert con_ruta.ruta_autorizada == "/datos/entrada"
+
+
+def test_fallida_y_completada_con_cuarentena_pueden_reintentarse() -> None:
+    """Feature `reanudacion-de-corridas`: la ÚNICA salida de un estado
+    terminal en todo el mapa de transiciones -- `ServicioCorridasReal.reintentar_corrida`
+    es su única escritora."""
+    fallida = Corrida.crear("corrida-fallida")
+    fallida.avanzar_a(EstadoCorrida.FALLIDA)
+    fallida.avanzar_a(EstadoCorrida.PROCESANDO)
+    assert fallida.estado is EstadoCorrida.PROCESANDO
+
+    con_cuarentena = Corrida.crear("corrida-cuarentena")
+    con_cuarentena.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    con_cuarentena.avanzar_a(EstadoCorrida.PROCESANDO)
+    con_cuarentena.avanzar_a(EstadoCorrida.COMPLETADA_CON_CUARENTENA)
+    con_cuarentena.avanzar_a(EstadoCorrida.PROCESANDO)
+    assert con_cuarentena.estado is EstadoCorrida.PROCESANDO
+
+
+def test_completada_sin_cuarentena_no_admite_reintento() -> None:
+    """`COMPLETADA` (cero apartados) NO tiene salida a propósito: no hay nada
+    que reintentar -- ver el comentario junto a `_TRANSICIONES_CORRIDA`."""
+    completada = Corrida.crear("corrida-completa")
+    completada.avanzar_a(EstadoCorrida.INVENTARIANDO)
+    completada.avanzar_a(EstadoCorrida.PROCESANDO)
+    completada.avanzar_a(EstadoCorrida.COMPLETADA)
+
+    with pytest.raises(ValueError):
+        completada.avanzar_a(EstadoCorrida.PROCESANDO)
 
 
 def test_documento_reanuda_desde_ultimo_estado_confirmado() -> None:

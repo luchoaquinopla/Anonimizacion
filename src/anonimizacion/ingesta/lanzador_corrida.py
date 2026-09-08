@@ -119,6 +119,19 @@ class CorridaEnCursoError(RuntimeError):
         super().__init__(f"ya hay una corrida activa{detalle} -- esperá a que termine antes de lanzar otra")
 
 
+class CorridaNoEncontradaError(LookupError):
+    """`id_corrida` no existe -- feature `reanudacion-de-corridas`.
+
+    La ruta la traduce a `404` (ver `web/rutas_corridas.py::_reintentar_corrida`):
+    reintentar algo que no existe no puede responder silenciosamente con
+    ceros, sería indistinguible de "existe pero no tiene nada para reintentar".
+    """
+
+    def __init__(self, id_corrida: str) -> None:
+        self.id_corrida = id_corrida
+        super().__init__(f"no existe una corrida con id {id_corrida}")
+
+
 @dataclass(frozen=True)
 class CuarentenaDeCorrida:
     """Estampa la corrida en cada error antes de delegar en el sumidero real.
@@ -205,7 +218,7 @@ class LanzadorCorrida:
         corrida que sigue activa.
         """
         corrida_id = str(uuid4())
-        corrida = Corrida.crear(corrida_id)
+        corrida = Corrida.crear(corrida_id, ruta_autorizada=str(ruta))
         try:
             self.repositorio.crear_corrida(corrida)
         except IntegrityError as error:
@@ -349,10 +362,21 @@ class LanzadorCorrida:
         `marcar_finalizada` y `marcar_fallida`: los tres leen la corrida
         desde el repositorio (nunca en memoria, a diferencia de `lanzar()`)
         porque su llamador puede ser un hilo/proceso distinto del que la
-        creó."""
+        creó.
+
+        Idempotente si `corrida_id` YA está en `destino` (feature
+        `reanudacion-de-corridas`): `ServicioCorridasReal.reintentar_corrida`
+        transiciona a `PROCESANDO` de forma SÍNCRONA, dentro de su lock, para
+        cerrar la misma ventana TOCTOU que `crear_corrida` ya cierra al
+        crear -- así que cuando `_despachar_y_cerrar` (en el hilo de fondo)
+        llama `marcar_procesando` de nuevo, la corrida ya está ahí. Sin este
+        no-op, esa segunda llamada explotaría contra `_TRANSICIONES_CORRIDA`
+        (`PROCESANDO` no es transición válida hacia sí misma)."""
         corrida = self.repositorio.obtener_corrida(corrida_id)
         if corrida is None:
             raise ValueError(f"no existe una corrida con id {corrida_id}")
+        if corrida.estado is destino:
+            return
         self._avanzar_y_persistir(corrida, destino)
 
     def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:

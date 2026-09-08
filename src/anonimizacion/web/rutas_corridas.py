@@ -149,27 +149,38 @@ def _responder(
 def _reintentar_corrida(
     entorno: dict[str, object], iniciar_respuesta: InicioRespuesta, servicio: ServicioCorridas, id_corrida: str
 ) -> Iterable[bytes]:
-    """501, no un 202 falso (design.md, 'ServicioCorridas real').
-
-    La reanudación por documento está fuera de alcance de este cambio; la
-    ruta funciona hoy, así que sin este `try` un `POST` real respondería 202
-    sobre algo que no reintenta nada -- el silencio que este cambio cierra.
+    """202 con el desglose reintentados/descartados (feature `reanudacion-de-corridas`).
 
     Mismo chequeo de `Content-Type: application/json` que `_crear_corrida`
-    (revisión de seguridad, feature `acceso-al-panel`): hoy esta ruta
-    siempre da 501, así que un CSRF vía `<form>` (Basic Auth cacheado por el
-    navegador, ver `autenticacion_panel.py`) es inofensivo -- pero el día
-    que se implemente el reintento de verdad, un formulario sin una línea de
-    JavaScript podría disparar un reintento real sin que ningún preflight
-    CORS lo frene. Se cierra ahora, cuando es barato, no cuando alguien
-    implemente el reintento sin acordarse de este chequeo.
+    (revisión de seguridad, feature `acceso-al-panel`): sin esto, un
+    `<form>` sin una línea de JavaScript (Basic Auth cacheado por el
+    navegador, ver `autenticacion_panel.py`) podría disparar un reintento
+    real sin que ningún preflight CORS lo frene.
+
+    `CorridaEnCursoError`/`CorridaNoEncontradaError` viven en
+    `ingesta/lanzador_corrida.py` -- import diferido, misma razón que en
+    `_crear_corrida`. `NotImplementedError` se conserva por compatibilidad
+    con implementaciones de `ServicioCorridas` que todavía no reintenten de
+    verdad (ver `tests/web/test_rutas_corridas.py`, el doble que la sigue
+    lanzando a propósito).
     """
     if str(entorno.get("CONTENT_TYPE", "")).split(";", 1)[0] != "application/json":
         return _responder(iniciar_respuesta, "415 Unsupported Media Type", {"codigo": "tipo_de_contenido_no_admitido"})
+
+    from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError, CorridaNoEncontradaError
+
     try:
         return _responder(iniciar_respuesta, "202 Accepted", servicio.reintentar_corrida(id_corrida))
     except NotImplementedError:
         return _responder(iniciar_respuesta, "501 Not Implemented", {"codigo": "reintento_no_implementado"})
+    except CorridaEnCursoError as error:
+        return _responder(
+            iniciar_respuesta,
+            "409 Conflict",
+            {"codigo": "corrida_en_curso", "id_corrida_activa": error.id_corrida_activa},
+        )
+    except CorridaNoEncontradaError:
+        return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "corrida_no_encontrada"})
 
 
 def _embudo_corrida(

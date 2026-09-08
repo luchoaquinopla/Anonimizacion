@@ -327,6 +327,15 @@ class CorridaOrm(Base):
     actualizada_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_ahora_utc, onupdate=_ahora_utc, nullable=False
     )
+    # Raíz autorizada inventariada por `LanzadorCorrida.lanzar` (feature
+    # `reanudacion-de-corridas`). Nullable: las corridas creadas antes de esta
+    # columna quedan en `NULL` -- no se rellena retroactivamente, mismo
+    # criterio que `estudio.creado_en` en la migración `0008`. Sin este dato
+    # `reintentar_corrida` no puede reconstruir la raíz autorizada que exige
+    # `despacho_paralelo.inicializar_trabajador` (`entrada`), así que una
+    # corrida vieja sin este campo no admite reintento -- ver
+    # `web/reintento_corrida.py`.
+    ruta_autorizada: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DocumentoCorridaOrm(Base):

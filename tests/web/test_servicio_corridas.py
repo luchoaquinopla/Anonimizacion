@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -260,14 +261,116 @@ def test_el_json_del_embudo_informa_el_estado_real_de_una_corrida_lanzada(tmp_pa
     assert payload["estado"] == "inventariando"
 
 
-def test_reintentar_corrida_lanza_notimplementederror(tmp_path) -> None:
-    """9.8/9.9: la ruta traduce esto a 501, no a un 202 falso."""
+def test_reintentar_corrida_lanza_corridanoencontradaerror_si_no_existe(tmp_path) -> None:
+    """Feature `reanudacion-de-corridas`: reintentar algo que no existe no
+    puede responder silenciosamente con ceros."""
+    from anonimizacion.ingesta.lanzador_corrida import CorridaNoEncontradaError
+
     motor = _motor_con_esquema(tmp_path)
     lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
     servicio = ServicioCorridasReal(lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1)
 
-    with pytest.raises(NotImplementedError):
-        servicio.reintentar_corrida("cualquier-id")
+    with pytest.raises(CorridaNoEncontradaError):
+        servicio.reintentar_corrida("no-existe")
+
+
+def _corrida_terminal_con_cuarentena(tmp_path, *, codigos_por_archivo: dict[str, str]):
+    """Crea una corrida real (con inventario real vía `LanzadorCorrida`),
+    la lleva a un estado terminal, y apila una fila de `cuarentena` por
+    archivo con el código pedido -- usando el sha256 REAL de cada archivo
+    como `id_documento`, igual que produciría el pipeline real."""
+    from sqlalchemy.orm import Session
+
+    from anonimizacion.salida.modelos_orm import Cuarentena
+
+    for nombre in codigos_por_archivo:
+        (tmp_path / nombre).write_bytes(f"contenido-{nombre}".encode())
+
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    resultado = lanzador.lanzar(tmp_path)
+    referencias = [referencia for grupo in resultado.referencias for referencia in grupo]
+    lanzador.marcar_procesando(resultado.corrida_id)
+
+    with Session(motor) as sesion, sesion.begin():
+        for referencia in referencias:
+            nombre = Path(referencia["uri"]).name
+            sesion.add(
+                Cuarentena(
+                    id_documento=referencia["id_documento"],
+                    etapa="reconciliacion",
+                    codigo=codigos_por_archivo[nombre],
+                    corrida_id=resultado.corrida_id,
+                )
+            )
+    lanzador.marcar_finalizada(resultado.corrida_id, hubo_cuarentena=True)
+    return motor, lanzador, resultado.corrida_id, referencias
+
+
+def test_reintentar_corrida_reencola_solo_los_reintentables_y_descarta_deterministicos(tmp_path) -> None:
+    """El desglose que necesita un operador antes de confiar en el botón:
+    cuántos se reencolan y cuántos se descartan, por código."""
+    motor, lanzador, corrida_id, referencias = _corrida_terminal_con_cuarentena(
+        tmp_path,
+        codigos_por_archivo={"uno.pdf": "error_transitorio_agotado", "dos.pdf": "parseo_incompleto"},
+    )
+    despachador = _DespachadorFake()
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=despachador
+    )
+
+    resultado = servicio.reintentar_corrida(corrida_id)
+    servicio.esperar_despachos_en_curso()
+
+    assert resultado.reintentados == 1
+    assert resultado.descartados_deterministicos == 1
+    assert resultado.descartados_por_codigo == {"parseo_incompleto": 1}
+    (llamada,) = despachador.llamadas
+    assert llamada["corrida_id"] == corrida_id
+    referencias_despachadas = [referencia for grupo in llamada["grupos"] for referencia in grupo]
+    id_reintentable = next(r["id_documento"] for r in referencias if Path(r["uri"]).name == "uno.pdf")
+    assert [r["id_documento"] for r in referencias_despachadas] == [id_reintentable]
+
+
+def test_reintentar_corrida_sin_reintentables_no_lanza_ningun_hilo(tmp_path) -> None:
+    """Todo determinístico -> nada que reencolar, igual que `crear_corrida`
+    con una carpeta sin PDFs: no se lanza ningún hilo de despacho."""
+    motor, lanzador, corrida_id, _referencias = _corrida_terminal_con_cuarentena(
+        tmp_path, codigos_por_archivo={"uno.pdf": "parseo_incompleto"}
+    )
+    despachador = _DespachadorFake()
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=despachador
+    )
+
+    resultado = servicio.reintentar_corrida(corrida_id)
+
+    assert resultado.reintentados == 0
+    assert resultado.descartados_deterministicos == 1
+    assert despachador.llamadas == [], "nada reintentable -- no hay que despachar nada"
+
+
+def test_reintentar_corrida_rechaza_si_hay_otra_corrida_activa(tmp_path) -> None:
+    """Mismo gate que `crear_corrida`: un reintento no puede arrancar si hay
+    otra corrida no terminal -- incluida la propia corrida que se quiere
+    reintentar, si por algún motivo sigue no terminal."""
+    (tmp_path / "activa").mkdir()
+    (tmp_path / "activa" / "uno.pdf").write_bytes(b"contenido")
+    motor = _motor_con_esquema(tmp_path)
+    lanzador = LanzadorCorrida(repositorio=RepositorioCorridas(motor), cuarentena=_CuarentenaFake())
+    activa = lanzador.lanzar(tmp_path / "activa")
+    list(activa.referencias)
+
+    despachador = _DespachadorFake()
+    servicio = ServicioCorridasReal(
+        lanzador=lanzador, motor=motor, db_url=_DB_URL_NUNCA_REAL, procesos=1, despachador=despachador
+    )
+
+    with pytest.raises(CorridaEnCursoError) as excinfo:
+        servicio.reintentar_corrida(activa.corrida_id)
+
+    assert excinfo.value.id_corrida_activa == activa.corrida_id
+    assert despachador.llamadas == []
 
 
 # --- apagado ordenado (revisión adversarial crítico 2) -----------------------

@@ -10,6 +10,7 @@ from anonimizacion.dominio.errores import (
     ErrorDocumento,
     ErrorParseo,
     EtapaDocumento,
+    es_reintentable,
 )
 
 
@@ -85,6 +86,54 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "sin_capa_de_texto",
         "pdf_ilegible",
     }
+
+
+def test_es_reintentable_es_la_unica_definicion_y_cubre_todo_el_catalogo() -> None:
+    """`es_reintentable` (`dominio/errores.py`) es la ÚNICA fuente de verdad
+    sobre qué código admite reintento -- ninguna otra capa (web, ingesta)
+    puede mantener su propia lista. Centinela de completitud explícito, no un
+    `default False`: enumera CADA miembro del catálogo a mano, así que un
+    código nuevo que no se agregue acá rompe este test por `KeyError`, no
+    queda clasificado por accidente.
+
+    Determinísticos (reprocesar sin cambios da el mismo fallo):
+    `TIPO_NO_RECONOCIDO`, `PARSEO_INCOMPLETO`, `CLAVE_PII_AMBIGUA`,
+    `EVIDENCIA_AUSENTE`, `EVIDENCIA_AMBIGUA`, `VALOR_DISCREPANTE`,
+    `COBERTURA_INCOMPLETA`, `COBERTURA_AMBIGUA`, `EPISODIO_AMBIGUO` (ambigua
+    = requiere revisión manual, igual que `CLAVE_PII_AMBIGUA`),
+    `ARTEFACTO_SOBRETAMANO`/`FORMATO_NO_SOPORTADO` (propiedad del archivo, no
+    cambia sola), `SIN_CAPA_DE_TEXTO` (necesita OCR, no un reproceso) y
+    `PDF_ILEGIBLE` (necesita pedir el archivo de nuevo, no reprocesarlo).
+
+    Reintentables (el error original no era determinístico, o la evidencia
+    que faltaba puede haber llegado): `CLAVE_PII_NO_RESUELTA`,
+    `ERROR_TRANSITORIO_AGOTADO`, `EPISODIO_INCOMPLETO`, `PROCESO_INTERRUMPIDO`.
+    """
+    esperado = {
+        CodigoErrorDocumento.TIPO_NO_RECONOCIDO: False,
+        CodigoErrorDocumento.PARSEO_INCOMPLETO: False,
+        CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA: True,
+        CodigoErrorDocumento.CLAVE_PII_AMBIGUA: False,
+        CodigoErrorDocumento.ERROR_TRANSITORIO_AGOTADO: True,
+        CodigoErrorDocumento.EVIDENCIA_AUSENTE: False,
+        CodigoErrorDocumento.EVIDENCIA_AMBIGUA: False,
+        CodigoErrorDocumento.VALOR_DISCREPANTE: False,
+        CodigoErrorDocumento.COBERTURA_INCOMPLETA: False,
+        CodigoErrorDocumento.COBERTURA_AMBIGUA: False,
+        CodigoErrorDocumento.EPISODIO_INCOMPLETO: True,
+        CodigoErrorDocumento.EPISODIO_AMBIGUO: False,
+        CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO: False,
+        CodigoErrorDocumento.FORMATO_NO_SOPORTADO: False,
+        CodigoErrorDocumento.PROCESO_INTERRUMPIDO: True,
+        CodigoErrorDocumento.SIN_CAPA_DE_TEXTO: False,
+        CodigoErrorDocumento.PDF_ILEGIBLE: False,
+    }
+    # Si el catálogo ganó un miembro nuevo sin actualizar `esperado`, este
+    # `assert` explota ANTES del loop de abajo -- más legible que un
+    # `KeyError` a mitad de iteración.
+    assert {miembro for miembro in CodigoErrorDocumento} == set(esperado)
+    for codigo, reintentable in esperado.items():
+        assert es_reintentable(codigo) is reintentable, codigo.value
 
 
 def test_detalle_parseo_incompleto_es_vocabulario_cerrado() -> None:

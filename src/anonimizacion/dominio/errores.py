@@ -121,6 +121,38 @@ class CodigoErrorDocumento(str, Enum):
     PDF_ILEGIBLE = "pdf_ilegible"
 
 
+# Única fuente de verdad de "este código admite reintento" (ver el docstring
+# de la clase de arriba para el criterio). Ninguna otra capa -- en particular
+# `web/reintento_corrida.py`, que traduce esto a un plan de reintento por
+# corrida -- puede mantener su propia copia de esta lista: dos copias de la
+# misma regla es exactamente la clase de bomba de tiempo que este proyecto ya
+# documentó haber sufrido con el clustering de episodios
+# (`pipeline/coordinador_episodios.py`).
+#
+# `EPISODIO_AMBIGUO` NO está acá (a diferencia de `EPISODIO_INCOMPLETO`):
+# significa que hay más de un candidato de agrupamiento posible para el mismo
+# documento -- requiere revisión manual, igual que `CLAVE_PII_AMBIGUA`.
+# Reprocesar sin que un humano resuelva la ambigüedad reproduce el mismo
+# empate.
+CODIGOS_REINTENTABLES: frozenset[CodigoErrorDocumento] = frozenset(
+    {
+        CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA,
+        CodigoErrorDocumento.ERROR_TRANSITORIO_AGOTADO,
+        CodigoErrorDocumento.EPISODIO_INCOMPLETO,
+        CodigoErrorDocumento.PROCESO_INTERRUMPIDO,
+    }
+)
+
+
+def es_reintentable(codigo: CodigoErrorDocumento) -> bool:
+    """`True` si reprocesar el documento sin cambios puede tener éxito.
+
+    Ver `CODIGOS_REINTENTABLES` para el porqué de cada código, y el docstring
+    de `CodigoErrorDocumento` para la distinción determinístico/transitorio.
+    """
+    return codigo in CODIGOS_REINTENTABLES
+
+
 class DetalleParseoIncompleto(str, Enum):
     """Qué encontró (o no encontró) el parser cuando lanzó `PARSEO_INCOMPLETO`.
 

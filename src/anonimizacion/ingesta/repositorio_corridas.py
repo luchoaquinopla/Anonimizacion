@@ -66,6 +66,7 @@ class RepositorioCorridas:
                         estado=corrida.estado.value,
                         version=corrida.version,
                         activa=_es_activa(corrida.estado),
+                        ruta_autorizada=corrida.ruta_autorizada,
                     )
                 )
 
@@ -82,7 +83,12 @@ class RepositorioCorridas:
             fila = sesion.get(CorridaOrm, id_corrida)
         if fila is None:
             return None
-        return Corrida(id_corrida=fila.id_corrida, estado=EstadoCorrida(fila.estado), version=fila.version)
+        return Corrida(
+            id_corrida=fila.id_corrida,
+            estado=EstadoCorrida(fila.estado),
+            version=fila.version,
+            ruta_autorizada=fila.ruta_autorizada,
+        )
 
     def listar_corridas_no_terminales(self) -> list[Corrida]:
         """Corridas en cualquier estado ACTIVO (no `COMPLETADA`/

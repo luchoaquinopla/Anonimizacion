@@ -194,6 +194,22 @@ def test_lanzar_persiste_la_transicion_a_inventariando_pero_no_a_procesando(tmp_
     assert fila.estado == "inventariando"
 
 
+def test_lanzar_persiste_la_ruta_autorizada(tmp_path) -> None:
+    """Feature `reanudacion-de-corridas`: `reintentar_corrida` necesita esta
+    raíz para reencolar los apartados reintentables."""
+    _pdf(tmp_path, "uno.pdf", b"contenido-uno")
+
+    motor = _motor_con_esquema()
+    repositorio = RepositorioCorridas(motor)
+    lanzador = LanzadorCorrida(repositorio=repositorio, cuarentena=_CuarentenaFake())
+
+    resultado = lanzador.lanzar(tmp_path)
+
+    with Session(motor) as sesion:
+        fila = sesion.get(CorridaOrm, resultado.corrida_id)
+    assert fila.ruta_autorizada == str(tmp_path)
+
+
 def test_lanzar_agrupa_por_subdirectorio_y_la_particion_es_disjunta(tmp_path) -> None:
     """openspec `paralelismo-de-procesamiento` PR 2: `lanzar()` devuelve
     grupos, no una tupla plana -- cada subcarpeta es un grupo (un paciente),

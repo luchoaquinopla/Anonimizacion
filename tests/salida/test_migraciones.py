@@ -149,6 +149,48 @@ def test_migraciones_tienen_una_unica_cabecera() -> None:
     assert len(script.get_heads()) == 1
 
 
+def test_migracion_0011_agrega_ruta_autorizada_nullable_en_corrida(tmp_path) -> None:
+    """Feature `reanudacion-de-corridas`: sin backfill -- las corridas
+    existentes quedan en `NULL`, la verdad ("no se sabe qué raíz se usó")."""
+    ruta_db = tmp_path / "ruta_autorizada_en_corrida.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "0010_detalle_parseo_cuarentena")
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        conexion.execute(
+            sa.text("INSERT INTO corrida (id_corrida, estado, version, activa) VALUES ('previa', 'fallida', 0, 0)")
+        )
+
+    command.upgrade(cfg, "head")
+
+    motor = sa.create_engine(url)
+    inspector = sa.inspect(motor)
+    columnas = {columna["name"]: columna for columna in inspector.get_columns("corrida")}
+    assert "ruta_autorizada" in columnas
+    assert columnas["ruta_autorizada"]["nullable"] is True
+
+    with motor.connect() as conexion:
+        valor = conexion.execute(
+            sa.text("SELECT ruta_autorizada FROM corrida WHERE id_corrida = 'previa'")
+        ).scalar_one()
+    assert valor is None, "sin backfill -- una corrida previa a esta migracion no tiene forma de saber su raiz"
+
+
+def test_downgrade_de_0011_vuelve_al_esquema_de_0010(tmp_path) -> None:
+    ruta_db = tmp_path / "ruta_autorizada_downgrade.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0010_detalle_parseo_cuarentena")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    columnas = {columna["name"] for columna in inspector.get_columns("corrida")}
+    assert "ruta_autorizada" not in columnas
+
+
 def test_migracion_estudio_agrega_fk_nullable_en_las_tres_mediciones(tmp_path) -> None:
     """SQLite no soporta `ALTER TABLE` con FK: la migración usa `batch_alter_table`."""
     ruta_db = tmp_path / "estudio_fk.db"

@@ -41,9 +41,20 @@ _TRANSICIONES_CORRIDA = {
     },
     EstadoCorrida.RECONCILIANDO: {EstadoCorrida.PUBLICANDO, EstadoCorrida.COMPLETADA_CON_CUARENTENA, EstadoCorrida.FALLIDA},
     EstadoCorrida.PUBLICANDO: {EstadoCorrida.COMPLETADA, EstadoCorrida.COMPLETADA_CON_CUARENTENA, EstadoCorrida.FALLIDA},
+    # `FALLIDA`/`COMPLETADA_CON_CUARENTENA` -> `PROCESANDO` (feature
+    # `reanudacion-de-corridas`): la ÚNICA salida de un estado terminal en
+    # todo este mapa, y a propósito angosta. `ServicioCorridasReal.reintentar_corrida`
+    # es la única escritora de esta transición -- reencola sólo los apartados
+    # con código reintentable (`dominio/errores.py::es_reintentable`) bajo el
+    # MISMO `corrida_id`, nunca crea una corrida nueva. `COMPLETADA` (cero
+    # apartados) deliberadamente NO tiene salida: no hay nada que reintentar,
+    # y agregar la transición ahí sería ofrecer un botón sin ningún camino
+    # real detrás -- misma lógica que `_GRUPO_ES_UNIDAD_COMPLETA` en
+    # `pipeline/ejecutor.py` (no exponer una perilla sin la contabilidad
+    # detrás).
     EstadoCorrida.COMPLETADA: set(),
-    EstadoCorrida.COMPLETADA_CON_CUARENTENA: set(),
-    EstadoCorrida.FALLIDA: set(),
+    EstadoCorrida.COMPLETADA_CON_CUARENTENA: {EstadoCorrida.PROCESANDO},
+    EstadoCorrida.FALLIDA: {EstadoCorrida.PROCESANDO},
 }
 
 _TRANSICIONES_DOCUMENTO = {
@@ -87,10 +98,19 @@ class Corrida:
     id_corrida: str
     estado: EstadoCorrida = EstadoCorrida.CREADA
     version: int = 0
+    # Raíz autorizada que se inventarió para esta corrida (feature
+    # `reanudacion-de-corridas`). Campo opcional al final, mismo precedente
+    # que `clave_documento`/`corrida_id` en otros dataclasses: nace `None`
+    # para no romper fixtures ni llamadores existentes. Sin esto, un
+    # reintento no tiene forma de reconstruir la raíz autorizada que
+    # `trabajadores.despacho_paralelo.inicializar_trabajador` exige (`entrada`)
+    # para volver a validar que cada documento sigue dentro de una raíz
+    # permitida -- ver `web/reintento_corrida.py`.
+    ruta_autorizada: str | None = None
 
     @classmethod
-    def crear(cls, id_corrida: str) -> Corrida:
-        return cls(id_corrida=id_corrida)
+    def crear(cls, id_corrida: str, *, ruta_autorizada: str | None = None) -> Corrida:
+        return cls(id_corrida=id_corrida, ruta_autorizada=ruta_autorizada)
 
     def avanzar_a(self, destino: EstadoCorrida) -> None:
         if destino not in _TRANSICIONES_CORRIDA[self.estado]:

@@ -10,11 +10,16 @@ termina de inventariar, sin esperar horas de procesamiento.
 
 `consultar_corrida` lee el embudo real y mapea `documentos_pendientes` /
 `cuarentenas` desde ahí, así que conserva `EstadoCorridaPortal` y con él los
-tests de ruta con dobles de prueba. `reintentar_corrida` lanza
-`NotImplementedError`: la reanudación por documento está fuera de alcance, y
-la ruta ya funciona hoy -- un `POST` real llegaría a su rama y devolvería un
-202 sobre algo que no reintenta nada. El 501 hace visible el hueco en vez de
-disimularlo.
+tests de ruta con dobles de prueba.
+
+`reintentar_corrida` (feature `reanudacion-de-corridas`) reencola SÓLO los
+apartados con código reintentable de esa corrida (`dominio.errores.es_reintentable`
+vía `web/reintento_corrida.py::construir_plan_reintento`) -- los determinísticos
+no se tocan. Reusa el MISMO camino de despacho que `crear_corrida`
+(`_despachar_y_cerrar`, el mismo gate de "una corrida a la vez"): no hay un
+despachador paralelo para reintentos. Devuelve `ResultadoReintento`, que
+extiende `EstadoCorridaPortal` con el desglose de cuántos se reencolan y
+cuántos se descartan por código.
 
 Este módulo también arma el payload completo de `GET /corridas/{id}/embudo`
 (`construir_payload_embudo`): NO es un método de `ServicioCorridas` -- esa
@@ -26,7 +31,7 @@ from __future__ import annotations
 
 import itertools
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,12 +41,14 @@ from sqlalchemy.orm import Session
 from anonimizacion.ingesta.lanzador_corrida import (
     MARGEN_INACTIVIDAD_DEFAULT,
     CorridaEnCursoError,
+    CorridaNoEncontradaError,
     LanzadorCorrida,
 )
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.salida.modelos_orm import CorridaOrm
 from anonimizacion.trabajadores import despacho_paralelo
 from anonimizacion.web.embudo_corrida import Embudo, construir_embudo
+from anonimizacion.web.reintento_corrida import construir_plan_reintento
 from anonimizacion.web.rutas_corridas import EstadoCorridaPortal
 
 Grupo = tuple[dict[str, str], ...]
@@ -251,6 +258,23 @@ def construir_payload_embudo(motor: Engine, id_corrida: str) -> dict[str, object
         return None
     embudo = construir_embudo(motor, id_corrida)
     return _serializar_embudo(embudo, estado)
+
+
+@dataclass(frozen=True)
+class ResultadoReintento(EstadoCorridaPortal):
+    """`EstadoCorridaPortal` + el desglose que pide un operador antes de
+    confiar en el botón "reintentar" (feature `reanudacion-de-corridas`): de
+    los apartados de la corrida, cuántos se reencolan y cuántos se descartan
+    por ser determinísticos, con el código de cada descarte -- no sólo un
+    total. Subclase, no un campo nuevo en `EstadoCorridaPortal`: así
+    `crear_corrida`/`consultar_corrida` (que sí necesitan seguir devolviendo
+    exactamente las cuatro claves de siempre, ver los tests de
+    `tests/web/test_rutas_corridas.py` que comparan el JSON completo)
+    no ganan campos extra en `null` que nadie pidió."""
+
+    reintentados: int = 0
+    descartados_deterministicos: int = 0
+    descartados_por_codigo: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -501,8 +525,83 @@ class ServicioCorridasReal:
             cuarentenas=embudo.apartados,
         )
 
-    def reintentar_corrida(self, id_corrida: str) -> EstadoCorridaPortal:
-        raise NotImplementedError(
-            "reintentar_corrida: la reanudacion por documento esta fuera de alcance de "
-            "panel-de-operacion (design.md, 'ServicioCorridas real')"
+    def reintentar_corrida(self, id_corrida: str) -> ResultadoReintento:
+        """Reencola SÓLO los apartados con código reintentable de `id_corrida`
+        (feature `reanudacion-de-corridas`) -- los determinísticos no se
+        tocan. Mismo gate y mismo camino de despacho que `crear_corrida`
+        (`_despachar_y_cerrar`): nunca un despachador paralelo separado.
+
+        Levanta `CorridaEnCursoError` si hay OTRA corrida no terminal (mismo
+        gate que `crear_corrida` -- incluye el caso en que `id_corrida` misma
+        sigue no terminal: no tiene sentido reintentar algo que todavía está
+        corriendo) y `CorridaNoEncontradaError` si `id_corrida` no existe.
+
+        Si no hay ningún reintentable (todo determinístico, o cero apartados),
+        no lanza ningún hilo -- no hay nada que reencolar, igual que
+        `crear_corrida` con una carpeta sin PDFs.
+        """
+        with self._lock_creacion:
+            activas = self.lanzador.repositorio.listar_corridas_no_terminales()
+            if activas:
+                raise CorridaEnCursoError(activas[0].id_corrida)
+
+            plan = construir_plan_reintento(self.motor, id_corrida)
+            if plan is None:
+                raise CorridaNoEncontradaError(id_corrida)
+
+            if plan.reintentables and not plan.ruta_autorizada:
+                # Corrida creada antes de la migración 0011 (sin backfill):
+                # no hay forma de reconstruir la raíz autorizada que exige
+                # `despacho_paralelo.inicializar_trabajador`. Fallar ruidoso
+                # en vez de adivinar una raíz -- ver `dominio/corridas.py::Corrida.ruta_autorizada`.
+                raise RuntimeError(
+                    f"reintentar_corrida: {id_corrida} no tiene ruta_autorizada persistida "
+                    "(corrida anterior a la migracion 0011) -- no se puede reintentar sin la "
+                    "raiz autorizada original"
+                )
+
+            if plan.reintentables:
+                # Transicionar a PROCESANDO (y por lo tanto `activa=True`)
+                # DENTRO del lock, antes de soltar -- cierra la misma ventana
+                # TOCTOU que `crear_corrida` ya cierra para la creación: sin
+                # esto, otra petición podría pasar el gate de arriba entre
+                # que este método libera el lock y el hilo de fondo (más
+                # abajo) llega a marcar `PROCESANDO`. `LanzadorCorrida.marcar_procesando`
+                # es idempotente si la corrida YA está en `PROCESANDO`
+                # (`_transicionar`), así que la llamada que hace
+                # `_despachar_y_cerrar` dentro del hilo no vuelve a fallar
+                # por repetir esta misma transición.
+                self.lanzador.marcar_procesando(id_corrida)
+
+        if plan.reintentables:
+            grupo: Grupo = tuple(plan.reintentables)  # UN grupo: el coordinador reagrupa por paciente
+            hilo = threading.Thread(
+                target=_despachar_y_cerrar,
+                kwargs={
+                    "lanzador": self.lanzador,
+                    "corrida_id": id_corrida,
+                    "grupos": iter([grupo]),
+                    "entrada": Path(plan.ruta_autorizada),
+                    "db_url": self.db_url,
+                    "procesos": self.procesos,
+                    "tope_bytes": self.tope_bytes,
+                    "despachador": self.despachador,
+                    "detener": self._evento_apagado,
+                    "latido_intervalo_seg": self.latido_intervalo_seg,
+                    "registro_de_pool": self._registro_de_pool,
+                },
+                daemon=True,
+            )
+            self._hilos_en_curso.append(hilo)
+            hilo.start()
+
+        estado = self.consultar_corrida(id_corrida)
+        return ResultadoReintento(
+            id_corrida=estado.id_corrida,
+            estado=estado.estado,
+            documentos_pendientes=estado.documentos_pendientes,
+            cuarentenas=estado.cuarentenas,
+            reintentados=len(plan.reintentables),
+            descartados_deterministicos=plan.total_descartados,
+            descartados_por_codigo=dict(plan.descartados_por_codigo),
         )

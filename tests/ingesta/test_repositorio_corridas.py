@@ -50,6 +50,22 @@ def test_repositorio_actualiza_estado_solo_con_version_esperada() -> None:
     assert repositorio.actualizar_documento(documento, version_esperada=0) is False
 
 
+def test_repositorio_persiste_y_recupera_ruta_autorizada_de_corrida() -> None:
+    """Feature `reanudacion-de-corridas`: `reintentar_corrida` necesita poder
+    reconstruir la raíz autorizada que se inventarió para pasarla como
+    `entrada` al reencolar los apartados reintentables."""
+    motor = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(motor)
+    repositorio = RepositorioCorridas(motor)
+    corrida = Corrida.crear("corrida-1", ruta_autorizada="/datos/entrada")
+
+    repositorio.crear_corrida(corrida)
+    recuperada = repositorio.obtener_corrida("corrida-1")
+
+    assert recuperada is not None
+    assert recuperada.ruta_autorizada == "/datos/entrada"
+
+
 def test_repositorio_actualiza_estado_de_corrida_solo_con_version_esperada() -> None:
     """Mismo patrón de bloqueo optimista que `actualizar_documento`, para `Corrida`.
 
