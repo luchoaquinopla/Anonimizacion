@@ -165,6 +165,30 @@ def test_post_reintentar_no_se_rompe_por_el_orden_de_despacho_nuevo(tmp_path: Pa
     assert servicio.solicitudes == [("reintentar", "corrida-1")]
 
 
+def test_reintentar_rechaza_content_type_que_no_sea_json(tmp_path: Path) -> None:
+    """Revisión de seguridad (feature `acceso-al-panel`, hallazgo MEDIA):
+    `_crear_corrida` ya exige `Content-Type: application/json` exacto -- un
+    `<form method="POST">` sin una línea de JavaScript no puede mandar eso,
+    lo que corta un CSRF vía Basic Auth cacheado (ver `autenticacion_panel.py`).
+    `_reintentar_corrida` NO tenía el mismo chequeo: hoy es inofensiva porque
+    siempre da 501, pero el día que se implemente de verdad, un formulario
+    simple dispararía un reintento real sin preflight que lo detenga. Mismo
+    chequeo, mismo código de error, para no dejar la puerta entornada."""
+    servicio = _ServicioFake([])
+    aplicacion = crear_aplicacion_corridas([tmp_path], servicio)
+
+    estado, _encabezados, respuesta = _solicitar(
+        aplicacion,
+        "POST",
+        "/corridas/corrida-1/reintentar",
+        cuerpo=b"",
+        tipo="application/x-www-form-urlencoded",
+    )
+
+    assert (estado, respuesta) == ("415 Unsupported Media Type", {"codigo": "tipo_de_contenido_no_admitido"})
+    assert servicio.solicitudes == []
+
+
 def test_embudo_sin_base_de_lectura_responde_no_disponibilidad(tmp_path: Path) -> None:
     """9.10/9.11: el plano de control arranca sin motor y la ruta responde 503, no rompe."""
     servicio = _ServicioFake([])
