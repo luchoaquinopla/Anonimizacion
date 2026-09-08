@@ -81,39 +81,47 @@ restricción por analito no expresa la garantía buscada.
 
 ## Requisito 4: publicar un episodio conserva todos sus documentos
 
-Publicar un episodio con N documentos **MUST** dejar los N documentos en el formato analítico.
+Publicar un episodio con N documentos **MUST** dejar los N documentos escritos en PostgreSQL,
+cada uno en su propia fila de `estudio` con la medición correspondiente.
 
 Ningún documento del episodio **MUST** sobrescribir a otro del mismo episodio.
+
+**Nota (2026-09-08)**: la redacción original de este requisito y del Requisito 5 hablaba de
+"formato analítico" y "manifiesto" — el mecanismo de publicación por archivo (`EscritorParquet`,
+`PublicadorBundles`) que existía cuando se escribió esta spec. Ese mecanismo se eliminó en
+`3410d6c` (`fix(salida): elimina la ruta de salida Parquet, sin llamador de produccion`) por no
+tener llamador de producción; la publicación real ocurre exclusivamente vía
+`src/anonimizacion/salida/destinos/postgres.py`. Se reformula el Requisito 4 en términos de la
+salida real y se retira el Requisito 5 (ver abajo), sin perder trazabilidad de que existieron.
 
 #### Escenario: episodio de tres estudios
 
 - **Given** un episodio con un electrocardiograma, un laboratorio y un ecocardiograma
-- **When** se publica el bundle del episodio
-- **Then** el formato analítico contiene los tres documentos
+- **When** se publica el episodio
+- **Then** PostgreSQL contiene las tres filas de `estudio`, una por documento
 - **And** los tres tipos de documento están representados
 
 #### Escenario: republicar el mismo episodio no altera el resultado
 
 - **Given** un episodio ya publicado
 - **When** se publica nuevamente con los mismos documentos
-- **Then** el contenido publicado es idéntico al de la primera publicación
+- **Then** el contenido en PostgreSQL es idéntico al de la primera publicación (la guarda de
+  `clave_documento` del Requisito 3 evita filas duplicadas)
 - **And** no se agregan ni se pierden documentos
 
-## Requisito 5: republicar con un documento adicional
+## Requisito 5 (RETIRADO 2026-09-08): republicar con un documento adicional
 
-Cuando un episodio se republica incluyendo un documento que antes faltaba, el manifiesto
-**MUST** reflejar la unión de los documentos publicados, y el formato analítico **MUST**
-contenerlos a todos.
+Redacción original: "Cuando un episodio se republica incluyendo un documento que antes
+faltaba, el **manifiesto** MUST reflejar la unión de los documentos publicados, y el
+**formato analítico** MUST contenerlos a todos [...] Un manifiesto desactualizado MUST NOT
+conservarse."
 
-Un manifiesto desactualizado **MUST NOT** conservarse: describe un contenido que no coincide con
-lo publicado, y ése es exactamente el defecto que este cambio cierra.
-
-#### Escenario: llega el estudio que faltaba
-
-- **Given** un episodio publicado con dos de sus tres documentos
-- **When** se republica incluyendo el tercero
-- **Then** el manifiesto enumera los tres documentos
-- **And** el formato analítico contiene los tres
+**Por qué se retira**: dependía enteramente del manifiesto de archivo de `PublicadorBundles`,
+eliminado en `3410d6c` junto con `EscritorParquet` por no tener llamador de producción (ver
+nota del Requisito 4). No existe manifiesto que pueda quedar desactualizado. El comportamiento
+equivalente sobre la salida real (cada documento nuevo del episodio agrega su propia fila de
+`estudio` vía `escribir_registro`, sin sobrescribir las anteriores) ya queda cubierto por el
+Requisito 4 y por la guarda de idempotencia del Requisito 3 — no hace falta un requisito propio.
 
 ## Requisito 6: la ausencia de la clave no rompe lo ya escrito
 

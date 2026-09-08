@@ -28,11 +28,17 @@ intermedio).
 - WHEN se inspecciona cualquier artefacto generado después de la etapa de pseudonimización
 - THEN el DNI en texto plano no aparece en ningún campo ni log
 
-### Requirement: Salt almacenado separado del dataset — detalle BLOQUEADO
-El salt usado para el HMAC MUST almacenarse separado del dataset de features anonimizado,
-con acceso restringido. El mecanismo concreto de almacenamiento del salt está **BLOQUEADO
-pendiente de sdd-design** (pregunta abierta #1 de storage), pero la separación lógica
-salt/dataset es un requisito no negociable de esta especificación.
+### Requirement: Salt (pepper) almacenado separado del dataset
+El salt (llamado "pepper" en el código, `pseudonimizacion/almacen_pepper.py`) usado para el
+HMAC MUST almacenarse separado del dataset de features anonimizado, con acceso restringido,
+y MUST NOT persistirse en el repositorio ni loguearse.
+
+**Resuelto** (originalmente BLOQUEADO pendiente de sdd-design, pregunta abierta #1 de
+storage; ver `design.md`, "Almacenamiento del pepper"): el mecanismo concreto es variable de
+entorno `ANONIMIZACION_PEPPER`, o alternativamente `ANONIMIZACION_PEPPER_ARCHIVO` apuntando
+a un archivo local cifrado en reposo (responsabilidad de infraestructura). Si ninguna fuente
+está configurada, `obtener_pepper()` lanza `ErrorPepperNoConfigurado` y el pipeline no
+arranca.
 
 #### Scenario: Salt no accesible junto al dataset
 - GIVEN el dataset anonimizado final

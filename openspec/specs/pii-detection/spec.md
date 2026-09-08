@@ -42,15 +42,20 @@ negativos, riesgo R2).
 - WHEN se ejecuta la detección de PII
 - THEN el documento se marca para revisión en lugar de emitirse como si no tuviera PII
 
-### Requirement: Política sobre nombre del médico derivante/informante — BLOQUEADO
-El nombre del médico derivante/informante es PII de un profesional, no del paciente.
-La política de anonimización para este campo específico está **BLOQUEADA pendiente de
-sdd-design** (pregunta abierta #3 de la propuesta). Esta especificación NO asume ni
-resuelve si debe anonimizarse igual que la PII del paciente o retenerse como dato
-profesional.
+### Requirement: Política sobre nombre del médico derivante/informante
+El nombre del médico derivante/solicitante/informante es PII de un profesional, no del
+paciente. El sistema MUST pseudonimizarlo en un namespace propio (`id_medico`), separado
+del namespace del paciente y nunca vinculado al mismo grafo de identidad.
 
-#### Scenario: TBD — a definir en sdd-design
-- GIVEN que la política del nombre del médico derivante aún no está definida
-- WHEN se implemente esta especificación
-- THEN debe existir una decisión explícita documentada en design.md antes de emitir salida
-  con o sin ese campo
+**Resuelto** (originalmente BLOQUEADO pendiente de sdd-design, pregunta abierta #3 de la
+propuesta; ver `design.md`, decisión Q3, y `src/anonimizacion/pii/politica.py`,
+`NAMESPACE_MEDICO`): el nombre del médico se recolecta tanto de campos de header
+(`medico_derivante`/`medico_solicitante`) como de la firma al pie del informe, y se
+pseudonimiza bajo `id_medico` con el mismo mecanismo HMAC que `id_paciente`, pero en un
+namespace independiente.
+
+#### Scenario: Nombre del médico pseudonimizado en namespace propio
+- GIVEN un documento con el nombre del médico derivante en su header o en la firma
+- WHEN se ejecuta la detección y clasificación de PII
+- THEN el nombre se pseudonimiza como `id_medico`
+- AND ese identificador nunca se mezcla ni se vincula con `id_paciente`
