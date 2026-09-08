@@ -23,8 +23,16 @@ class ReconciliadorDocumento(Protocol):
 
     tipo_documento: TipoDocumento
 
-    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
-        """Comprueba la procedencia y fidelidad del documento parseado."""
+    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> tuple[str, ...]:
+        """Comprueba la procedencia y fidelidad del documento parseado.
+
+        Devuelve los `id_campo` (vocabulario cerrado, ver `dominio/referencias.py`)
+        que el PDF trae y el modelo no citó -- caso benigno de
+        `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO` (ver su docstring). Una
+        tupla vacía significa "documento completo". El llamador (`pipeline/
+        ejecutor.py`) la adjunta a la marca de completitud del registro
+        publicado; nunca lanza por sí sola.
+        """
         ...
 
 

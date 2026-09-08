@@ -60,6 +60,11 @@ def reconciliar_referencias(
 
 def reconciliar_cobertura(
     documento: DocumentoParseado, inventario: tuple[HallazgoCobertura, ...]
-) -> None:
-    """Comprueba PDF→modelo después de validar la evidencia modelo→PDF."""
-    verificar_cobertura(inventario, documento.fuentes)
+) -> tuple[str, ...]:
+    """Comprueba PDF→modelo después de validar la evidencia modelo→PDF.
+
+    Devuelve los `id_campo` que el PDF trae y el modelo no citó (caso
+    benigno, ver `inventario.py::verificar_cobertura`) para que el llamador
+    los agregue a la marca de completitud del registro publicado.
+    """
+    return verificar_cobertura(inventario, documento.fuentes)

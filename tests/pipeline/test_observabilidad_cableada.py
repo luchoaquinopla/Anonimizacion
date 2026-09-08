@@ -271,7 +271,9 @@ def _vincular_episodios_fake(documentos, pepper):
     )
 
 
-def _construir_registro_fake(documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None):
+def _construir_registro_fake(
+    documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None, campos_no_extraidos=()
+):
     return RegistroAnonimizado(
         id_paciente=claves.id_paciente,
         id_episodio=id_episodio,
@@ -281,6 +283,7 @@ def _construir_registro_fake(documento, claves, *, id_episodio, pepper, clave_do
         contenido=object(),
         adicionales={},
         clave_documento=clave_documento,
+        campos_no_extraidos=campos_no_extraidos,
     )
 
 
@@ -310,7 +313,7 @@ def test_bitacora_registra_exactamente_una_vez_por_resultado() -> None:
 
     class _ReconciliadorFake:
         def reconciliar(self, documento, texto):
-            return None
+            return ()
 
     ejecutor = EjecutorPipeline(
         resolutor=object(),

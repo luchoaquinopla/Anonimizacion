@@ -37,7 +37,7 @@ class EtapaDocumento(str, Enum):
 
 
 class CodigoErrorDocumento(str, Enum):
-    """Códigos de fallo terminal — todos van a cuarentena.
+    """Códigos de fallo terminal — todos van a cuarentena, salvo uno.
 
     Los primeros cuatro son determinísticos: nunca se reintentan, un
     reproceso sin cambios produce el mismo fallo (ver design.md,
@@ -46,6 +46,11 @@ class CodigoErrorDocumento(str, Enum):
     transitorio (IO/conexión) -- ver `pipeline/ejecutor.py`. Reprocesar ESE
     documento más tarde puede tener éxito (el error original no era
     determinístico), a diferencia de los otros cuatro.
+
+    Única excepción a "todos van a cuarentena": `CAMPO_NO_EXTRAIDO` (ver su
+    comentario abajo). Nunca se lanza como `ErrorParseo`, nunca produce una
+    fila en `cuarentena` -- viaja como marca de completitud sobre un
+    documento que SÍ se publica.
     """
 
     TIPO_NO_RECONOCIDO = "tipo_no_reconocido"
@@ -67,8 +72,36 @@ class CodigoErrorDocumento(str, Enum):
     # unica fuente del PDF (`reconciliacion/inventario.py`,
     # `reconciliacion/laboratorio_general.py`). Es un problema del parser o del
     # layout: reprocesar el mismo documento no lo arregla solo.
+    #
+    # `COBERTURA_INCOMPLETA` y `CAMPO_NO_EXTRAIDO` (abajo) solian ser el MISMO
+    # codigo para dos direcciones opuestas de la comparacion inventario<->modelo
+    # (`reconciliacion/inventario.py::verificar_cobertura`): un dato que el
+    # MODELO afirma haber extraido y el PDF no respalda (integridad -- seguimos
+    # publicando algo que no podemos probar), y un dato que el PDF trae y el
+    # modelo simplemente no llego a citar (el modelo publicado es incompleto,
+    # pero nada de lo publicado es falso). Conflacionarlas impedia aplicar
+    # politicas distintas a cada una. `COBERTURA_INCOMPLETA` conserva el
+    # significado original -- el modelo afirma algo que el PDF no respalda --
+    # y sigue siendo terminal: va a cuarentena, sin excepcion.
     COBERTURA_INCOMPLETA = "cobertura_incompleta"
     COBERTURA_AMBIGUA = "cobertura_ambigua"
+    # Direccion opuesta a `COBERTURA_INCOMPLETA` (ver el comentario de arriba):
+    # el inventario independiente encontro un campo en el PDF que el modelo
+    # parseado no cito en `fuentes` -- típicamente un campo de encabezado que
+    # el parser todavia no conoce, o que no supo asociar en ESTE documento
+    # puntual. A diferencia de los demas miembros de este enum, `CAMPO_NO_EXTRAIDO`
+    # NUNCA se lanza via `ErrorParseo` y NUNCA llega a `cuarentena`: es
+    # deliberadamente la unica excepcion a la regla de la clase ("todos van a
+    # cuarentena"). `reconciliacion/inventario.py::verificar_cobertura` lo
+    # devuelve (no lo lanza) como parte de la marca de completitud que viaja
+    # pegada al registro publicado (`RegistroAnonimizado.campos_no_extraidos`,
+    # `salida/modelos_orm.py::Estudio.campos_no_extraidos`) -- nunca se publica
+    # un dato falso, pero tampoco se descarta un documento entero por un campo
+    # de mas. Si en algun punto la direccion no puede determinarse con certeza
+    # (p.ej. `reconciliacion/laboratorio_general.py::_verificar_asociacion_filas`
+    # cuando el conteo de filas no alcanza para decidir), la regla conservadora
+    # es `COBERTURA_INCOMPLETA` -- ante la duda, cuarentena, nunca este codigo.
+    CAMPO_NO_EXTRAIDO = "campo_no_extraido"
     # EPISODIO_*: nivel EPISODIO. El documento esta bien; lo que falla es el
     # grupo al que pertenece (`pipeline/coordinador_episodios.py`). Se separan de
     # COBERTURA_* porque son problemas operativos distintos: "a este paciente le

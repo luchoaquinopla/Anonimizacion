@@ -364,6 +364,12 @@ class EscritorPostgres:
             precision_hora=registro.precision_hora.value,
             clave_documento=registro.clave_documento,
             corrida_id=registro.corrida_id,
+            # Marca de completitud (ver `dominio/modelos.py::RegistroAnonimizado.completo`,
+            # derivada de `campos_no_extraidos` -- nunca un segundo estado
+            # independiente): siempre se completa acá, a diferencia de la
+            # columna nullable de filas preexistentes sin esta marca.
+            completo=registro.completo,
+            campos_no_extraidos=list(registro.campos_no_extraidos),
         )
         sesion.add(estudio)
         sesion.flush()  # asigna id_estudio sin cerrar la transaccion

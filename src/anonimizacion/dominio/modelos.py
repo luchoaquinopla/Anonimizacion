@@ -91,3 +91,21 @@ class RegistroAnonimizado:
     # no conocen su corrida. `procesar_lote`/`procesar_grupo` lo propagan
     # (Tramo 2 de `panel-de-operacion`, fuera de alcance de este cambio).
     corrida_id: str | None = None
+    # Marca de completitud (requisito "que un campo nuevo no rompa el
+    # parseo, sino que sea un aviso"): `campos_no_extraidos` son los
+    # `id_campo` (vocabulario cerrado, `dominio/referencias.py`) que el PDF
+    # traía y el parser no citó -- devueltos por
+    # `ReconciliadorDocumento.reconciliar` (ver `reconciliacion/base.py` y
+    # `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`). NUNCA texto libre ni
+    # contenido del documento, sólo estos identificadores ya validados.
+    # Puede repetir un `id_campo` (una ocurrencia por instancia faltante,
+    # p.ej. varias filas de `laboratorio.resultado`), así que no es un
+    # `frozenset`. Default `()`: un registro sin marca es, por definición,
+    # un registro completo -- ningún llamador existente que todavía no
+    # conoce esta marca queda roto.
+    campos_no_extraidos: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def completo(self) -> bool:
+        """Derivada de `campos_no_extraidos`, nunca un segundo estado independiente."""
+        return not self.campos_no_extraidos

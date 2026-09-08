@@ -189,12 +189,36 @@ class ReconciliadorLaboratorioGeneral:
 
     def _verificar_asociacion_filas(
         self, documento: DocumentoParseado, contenido: ContenidoLaboratorio, texto: TextoExtraido
-    ) -> bool:
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Compara filas PDF vs. modelo; devuelve (asociación estructurada usable, campos no extraídos).
+
+        El conteo de filas puede diferir en dos direcciones opuestas (ver
+        `dominio/errores.py::CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`):
+
+        - El PDF trae MÁS filas que el modelo: el parser omitió resultados
+          que sí están en el documento. Caso benigno -- lo que el modelo
+          publica es correcto, sólo incompleto. No se lanza; se devuelve
+          `(False, campos_no_extraidos)` con una ocurrencia de
+          `"laboratorio.resultado"` por cada fila de más en el PDF, para que
+          el llamador la sume a la marca de completitud. `False` porque, sin
+          un emparejamiento posicional confiable entre las dos listas de
+          distinto largo, no hay forma segura de decidir CUÁL fila del
+          modelo corresponde a cuál del PDF -- se cede la verificación fila
+          por fila a `reconciliar_referencias` (evidencia genérica de
+          página), regla conservadora: ante la duda de POSICIÓN, no de
+          dirección, no se inventa un emparejamiento.
+        - El PDF trae MENOS filas que el modelo: el modelo afirma resultados
+          que el PDF no respalda. Problema de integridad -- sigue siendo
+          `ErrorParseo(COBERTURA_INCOMPLETA)`, terminal, sin excepción.
+        """
         filas_pdf = self._filas_inventariadas(texto)
         if not filas_pdf:
-            return False
-        if len(filas_pdf) != len(contenido.resultados):
-            pagina = filas_pdf[min(len(contenido.resultados), len(filas_pdf) - 1)].pagina if filas_pdf else 1
+            return False, ()
+        if len(filas_pdf) > len(contenido.resultados):
+            faltantes = len(filas_pdf) - len(contenido.resultados)
+            return False, ("laboratorio.resultado",) * faltantes
+        if len(filas_pdf) < len(contenido.resultados):
+            pagina = filas_pdf[-1].pagina if filas_pdf else 1
             raise ErrorParseo(
                 CodigoErrorDocumento.COBERTURA_INCOMPLETA,
                 EtapaDocumento.RECONCILIACION,
@@ -231,9 +255,9 @@ class ReconciliadorLaboratorioGeneral:
                     "laboratorio.resultado",
                     fila_pdf.pagina,
                 )
-        return True
+        return True, ()
 
-    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
+    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> tuple[str, ...]:
         contenido = documento.contenido
         if not isinstance(contenido, ContenidoLaboratorio):
             raise TypeError("contenido laboratorio inválido")
@@ -245,9 +269,41 @@ class ReconciliadorLaboratorioGeneral:
             valores[("laboratorio.hora_extraccion", 0)] = documento.hora_estudio.strftime(formato_hora)
         inventario = self.inventariar(texto)
         tiene_asociacion_estructurada = False
+        campos_no_extraidos: tuple[str, ...] = ()
         if inventario:
-            reconciliar_cobertura(documento, inventario)
-            tiene_asociacion_estructurada = self._verificar_asociacion_filas(documento, contenido, texto)
+            # `laboratorio.resultado` (clase "coleccion") usa como ordinal la
+            # posición SECUENCIAL entre las filas que cada lado reconoció
+            # (PDF vs. parseador) -- no un identificador estable de fila. Si
+            # el conteo de ambos lados difiere, un ordinal compartido puede
+            # señalar filas DISTINTAS a cada lado (el parser pudo haber
+            # descartado una fila que no es la última, corriendo el resto).
+            # El cruce genérico de `verificar_cobertura` por (id_campo,
+            # ordinal) asume identidad estable -- correcta cuando los
+            # conteos COINCIDEN, no confiable cuando difieren. Por eso se
+            # excluye `laboratorio.resultado` de ese cruce sólo cuando los
+            # conteos no coinciden, y se delega esa dirección enteramente a
+            # `_verificar_asociacion_filas` (abajo), que decide por
+            # DIFERENCIA DE CONTEO -- una señal que no depende de qué fila
+            # puntual se corrió. El resto de campos (p.ej.
+            # `laboratorio.hora_extraccion`, siempre ordinal 0, sin colección)
+            # sigue el cruce genérico sin cambios.
+            filas_pdf = self._filas_inventariadas(texto)
+            resultados_alineados = len(filas_pdf) == len(contenido.resultados)
+            if resultados_alineados:
+                cobertura_inventario, cobertura_documento = inventario, documento
+            else:
+                cobertura_inventario = tuple(
+                    hallazgo for hallazgo in inventario if hallazgo.id_campo != "laboratorio.resultado"
+                )
+                cobertura_documento = replace(
+                    documento,
+                    fuentes=tuple(f for f in documento.fuentes if f.id_campo != "laboratorio.resultado"),
+                )
+            campos_no_extraidos += reconciliar_cobertura(cobertura_documento, cobertura_inventario)
+            tiene_asociacion_estructurada, campos_de_filas = self._verificar_asociacion_filas(
+                documento, contenido, texto
+            )
+            campos_no_extraidos += campos_de_filas
 
         # Gotcha 2 (design.md decisión 4, "la parte más frágil"): el
         # `validador_asociacion` anclado a `Hora de Extracción:` MUST aplicar
@@ -270,3 +326,4 @@ class ReconciliadorLaboratorioGeneral:
             valores,
             validador_asociacion=_asociacion_laboratorio,
         )
+        return campos_no_extraidos

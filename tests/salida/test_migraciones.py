@@ -149,6 +149,22 @@ def test_migraciones_tienen_una_unica_cabecera() -> None:
     assert len(script.get_heads()) == 1
 
 
+def test_revision_id_de_cada_migracion_entra_en_alembic_version(tmp_path) -> None:
+    """`alembic_version.version_num` es `VARCHAR(32)` por default de Alembic
+    -- SQLite no lo hace cumplir (guarda cualquier largo sin error), pero
+    Postgres real sí (`StringDataRightTruncation`). Centinela: un `revision`
+    de más de 32 caracteres pasa la suite local en verde y recién explota
+    contra Postgres real, exactamente la clase de defecto que este test
+    existe para atrapar ANTES de esa sorpresa (hallazgo real de esta
+    migración: `0012_marca_completitud_en_estudio`, 33 caracteres, se
+    renombró a `0012_completitud_en_estudio`)."""
+    script = ScriptDirectory.from_config(_config_alembic("sqlite://"))
+
+    largos = {revision.revision: len(revision.revision) for revision in script.walk_revisions()}
+    demasiado_largas = {rev: largo for rev, largo in largos.items() if largo > 32}
+    assert not demasiado_largas, demasiado_largas
+
+
 def test_migracion_0011_agrega_ruta_autorizada_nullable_en_corrida(tmp_path) -> None:
     """Feature `reanudacion-de-corridas`: sin backfill -- las corridas
     existentes quedan en `NULL`, la verdad ("no se sabe qué raíz se usó")."""
@@ -189,6 +205,57 @@ def test_downgrade_de_0011_vuelve_al_esquema_de_0010(tmp_path) -> None:
     inspector = sa.inspect(sa.create_engine(url))
     columnas = {columna["name"] for columna in inspector.get_columns("corrida")}
     assert "ruta_autorizada" not in columnas
+
+
+def test_migracion_0012_agrega_marca_de_completitud_nullable_en_estudio(tmp_path) -> None:
+    """Requisito "que un campo nuevo no rompa el parseo, sino que sea un
+    aviso" -- sin backfill: un estudio publicado antes de esta migración no
+    tiene forma de saber si estaba completo, y `NULL` es la verdad."""
+    ruta_db = tmp_path / "marca_completitud_en_estudio.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "0011_ruta_autorizada_en_corrida")
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        conexion.execute(sa.text("INSERT INTO episodio (id_episodio, id_paciente, fecha_ancla) VALUES ('ep-1', 'pac-1', '2026-01-01')"))
+        conexion.execute(
+            sa.text(
+                "INSERT INTO estudio (id_episodio, tipo_documento, fecha_estudio, precision_hora) "
+                "VALUES ('ep-1', 'laboratorio', '2026-01-01', 'ausente')"
+            )
+        )
+
+    command.upgrade(cfg, "head")
+
+    motor = sa.create_engine(url)
+    inspector = sa.inspect(motor)
+    columnas = {columna["name"]: columna for columna in inspector.get_columns("estudio")}
+    assert "completo" in columnas
+    assert columnas["completo"]["nullable"] is True
+    assert "campos_no_extraidos" in columnas
+    assert columnas["campos_no_extraidos"]["nullable"] is True
+
+    with motor.connect() as conexion:
+        fila = conexion.execute(
+            sa.text("SELECT completo, campos_no_extraidos FROM estudio WHERE id_episodio = 'ep-1'")
+        ).one()
+    assert fila.completo is None, "sin backfill -- un estudio previo a esta migracion no tiene forma de saber si estaba completo"
+    assert fila.campos_no_extraidos is None
+
+
+def test_downgrade_de_0012_vuelve_al_esquema_de_0011(tmp_path) -> None:
+    ruta_db = tmp_path / "marca_completitud_downgrade.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0011_ruta_autorizada_en_corrida")
+
+    inspector = sa.inspect(sa.create_engine(url))
+    columnas = {columna["name"] for columna in inspector.get_columns("estudio")}
+    assert "completo" not in columnas
+    assert "campos_no_extraidos" not in columnas
 
 
 def test_migracion_estudio_agrega_fk_nullable_en_las_tres_mediciones(tmp_path) -> None:

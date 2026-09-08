@@ -39,7 +39,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
-from typing import Protocol
+from typing import Protocol, cast
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento, ErrorParseo
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
@@ -139,6 +139,11 @@ class _DocumentoResuelto:
     documento: DocumentoParseado
     claves: ClavesPaciente
     clave_documento: str
+    # Marca de completitud (ver `reconciliacion/base.py::ReconciliadorDocumento.reconciliar`
+    # y `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`): `id_campo` que el PDF trae
+    # y el modelo no citó. Default `()` -- ningún llamador de test que
+    # construya `_DocumentoResuelto` a mano sin conocer esta marca se rompe.
+    campos_no_extraidos: tuple[str, ...] = ()
 
 
 def _observar_sin_romper(accion: Callable[[], None]) -> None:
@@ -390,11 +395,20 @@ class EjecutorPipeline:
                 observar=self._observar_duracion,
             )
             reconciliador = self._obtener_reconciliador(tipo)
-            _ejecutar_con_reintentos(
-                lambda: reconciliador.reconciliar(documento, texto),
-                etapa=Etapa.RECONCILIACION.value,
-                dormir=self._dormir,
-                observar=self._observar_duracion,
+            # `reconciliar` devuelve los `id_campo` que el PDF trae y el
+            # modelo no citó (marca de completitud, ver
+            # `reconciliacion/base.py::ReconciliadorDocumento.reconciliar` y
+            # `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`) -- nunca lanza por
+            # esos casos, así que llegar acá no significa "documento
+            # completo", significa "documento sin problema de integridad".
+            campos_no_extraidos = cast(
+                "tuple[str, ...]",
+                _ejecutar_con_reintentos(
+                    lambda: reconciliador.reconciliar(documento, texto),
+                    etapa=Etapa.RECONCILIACION.value,
+                    dormir=self._dormir,
+                    observar=self._observar_duracion,
+                ),
             )
             # Detección de PII sobre texto libre (design.md, "corre también sobre texto
         # libre"): se ejecuta acá para que la etapa exista explícitamente en el
@@ -422,6 +436,7 @@ class EjecutorPipeline:
                 documento=documento,
                 claves=claves,
                 clave_documento=clave_documento,
+                campos_no_extraidos=campos_no_extraidos,
             )
         except ErrorParseo as error:
             error.tipo_documento = tipo
@@ -560,6 +575,7 @@ class EjecutorPipeline:
                 pepper=self._pepper,
                 clave_documento=resuelto.clave_documento,
                 motor_pii=self._motor,
+                campos_no_extraidos=resuelto.campos_no_extraidos,
             ),
             corrida_id=corrida_id,
         )

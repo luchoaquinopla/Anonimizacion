@@ -66,14 +66,41 @@ def test_rechaza_destino_sin_hallazgo_en_inventario() -> None:
     assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
 
 
-def test_inventario_ecg_rechaza_medida_omitida_por_el_parseador() -> None:
-    fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
+def test_verificar_cobertura_devuelve_campo_no_extraido_sin_lanzar() -> None:
+    """Caso benigno: un hallazgo del PDF sin destino en el modelo se
+    devuelve (no se lanza) como `CAMPO_NO_EXTRAIDO` -- dirección opuesta a
+    `test_rechaza_destino_sin_hallazgo_en_inventario`."""
+    hallazgo = HallazgoCobertura("ecg.vent_rate", 1)
+
+    campos_no_extraidos = verificar_cobertura((hallazgo,), ())
+
+    assert campos_no_extraidos == ("ecg.vent_rate",)
+
+
+def test_verificar_cobertura_prioriza_integridad_sobre_hallazgo_benigno() -> None:
+    """Regla conservadora: si el mismo cruce tiene un hallazgo benigno para
+    una clave Y un problema de integridad para otra, la integridad manda --
+    el documento entero va a cuarentena y el hallazgo benigno nunca se
+    devuelve."""
+    hallazgo_benigno = HallazgoCobertura("ecg.vent_rate", 1)
+    referencia_sin_respaldo = ReferenciaCampo("ecg.pr_interval", 1, "ecg.pr_interval")
+
     with pytest.raises(ErrorParseo) as error:
-        ReconciliadorEcgMortara().reconciliar(
-            _documento((fuente,)), TextoExtraido(("Vent. rate 68 BPM\nPR interval 160",))
-        )
+        verificar_cobertura((hallazgo_benigno,), (referencia_sin_respaldo,))
+
     assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
-    assert error.value.campo == "ecg.pr_interval"
+
+
+def test_inventario_ecg_publica_con_marca_cuando_el_parseador_omite_una_medida() -> None:
+    """Caso benigno (`CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`): el PDF trae
+    `PR interval`, el modelo sólo citó `Vent. rate`. Antes de separar
+    direcciones, una medida presente en el PDF pero no citada por el
+    parser mandaba el documento entero a cuarentena."""
+    fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
+    campos_no_extraidos = ReconciliadorEcgMortara().reconciliar(
+        _documento((fuente,)), TextoExtraido(("Vent. rate 68 BPM\nPR interval 160",))
+    )
+    assert campos_no_extraidos == ("ecg.pr_interval",)
 
 
 def test_inventario_ecg_rechaza_etiqueta_repetida_en_una_pagina() -> None:

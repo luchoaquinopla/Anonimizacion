@@ -136,7 +136,7 @@ class ReconciliadorEcgMortara:
                     hallazgos.append(HallazgoCobertura(id_campo, pagina, clase=clase))
         return tuple(hallazgos)
 
-    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
+    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> tuple[str, ...]:
         contenido = documento.contenido
         if not isinstance(contenido, ContenidoEcg):
             raise TypeError("contenido ECG inválido")
@@ -165,4 +165,4 @@ class ReconciliadorEcgMortara:
             {clave: valor for clave, valor in valores.items() if valor is not None},
             validador_asociacion=_asociacion_ecg,
         )
-        reconciliar_cobertura(documento, self.inventariar(texto))
+        return reconciliar_cobertura(documento, self.inventariar(texto))

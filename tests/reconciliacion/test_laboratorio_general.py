@@ -146,7 +146,11 @@ def test_inventario_laboratorio_enumera_filas_por_seccion_y_ordinal() -> None:
     ]
 
 
-def test_laboratorio_rechaza_fila_inventariada_omitida_por_el_parseo() -> None:
+def test_laboratorio_publica_con_marca_cuando_el_parseo_omite_una_fila() -> None:
+    """PDF trae MÁS filas que el modelo: caso benigno (`CAMPO_NO_EXTRAIDO`,
+    ver `dominio/errores.py`) -- lo publicado es correcto, sólo incompleto.
+    Antes de separar direcciones, esto era `COBERTURA_INCOMPLETA` y mandaba
+    el documento entero a cuarentena por una fila de más en el PDF."""
     filas = (ResultadoLaboratorio("HEMATOLOGIA", "Hemoglobina", "14,2", "g/dL", "12 - 16"),)
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),)
     texto = TextoExtraido((
@@ -154,11 +158,9 @@ def test_laboratorio_rechaza_fila_inventariada_omitida_por_el_parseo() -> None:
         "HEMOSTASIA\nTP | 11 | s | 10 - 13",
     ))
 
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    campos_no_extraidos = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
-    assert error.value.campo == "laboratorio.resultado"
+    assert campos_no_extraidos == ("laboratorio.resultado",)
 
 
 def test_laboratorio_rechaza_unidad_asociada_incorrectamente() -> None:
@@ -289,14 +291,16 @@ def test_laboratorio_reconstruye_nombre_partido_antes_de_asociar_fila() -> None:
 
 
 def test_laboratorio_inventaria_resultado_cualitativo_omitido() -> None:
+    """Caso benigno (ver `test_laboratorio_publica_con_marca_cuando_el_parseo_omite_una_fila`):
+    el resultado cualitativo se inventaría desde el PDF, y el modelo (sin
+    filas ni fuentes) publica con la marca de completitud, no en cuarentena."""
     texto = TextoExtraido(("HEMATOLOGIA\nSARS-CoV-2  NEGATIVO",))
     documento = _documento((), ())
 
     assert ReconciliadorLaboratorioGeneral().inventariar(texto)[0].id_campo == "laboratorio.resultado"
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+    campos_no_extraidos = ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
+    assert campos_no_extraidos == ("laboratorio.resultado",)
 
 
 def test_laboratorio_valida_resultado_cualitativo_con_destino() -> None:
@@ -331,14 +335,15 @@ def test_laboratorio_canonicaliza_alias_ionograma_y_conserva_asociacion_ordinal(
 
 
 def test_laboratorio_inventaria_fila_cualitativa_pipe_fuera_de_allowlist() -> None:
+    """Caso benigno, mismo criterio que
+    `test_laboratorio_publica_con_marca_cuando_el_parseo_omite_una_fila`."""
     texto = TextoExtraido(("HEMATOLOGIA\nSARS-CoV-2 | INDETERMINADO",))
     documento = _documento((), ())
 
     assert ReconciliadorLaboratorioGeneral().inventariar(texto)[0].id_campo == "laboratorio.resultado"
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+    campos_no_extraidos = ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
+    assert campos_no_extraidos == ("laboratorio.resultado",)
 
 
 def test_laboratorio_no_reconstruye_nombre_partido_en_formato_pipe() -> None:
@@ -356,14 +361,15 @@ def test_laboratorio_no_reconstruye_nombre_partido_en_formato_pipe() -> None:
 
 
 def test_laboratorio_inventaria_cualitativo_abierto_en_formato_real_omitido() -> None:
+    """Caso benigno, mismo criterio que
+    `test_laboratorio_publica_con_marca_cuando_el_parseo_omite_una_fila`."""
     texto = TextoExtraido(("HEMATOLOGIA\nSARS-CoV-2  INDETERMINADO",))
     documento = _documento((), ())
 
     assert ReconciliadorLaboratorioGeneral().inventariar(texto)[0].id_campo == "laboratorio.resultado"
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+    campos_no_extraidos = ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
+    assert campos_no_extraidos == ("laboratorio.resultado",)
 
 
 def test_laboratorio_no_inventaria_encabezado_de_dos_columnas() -> None:

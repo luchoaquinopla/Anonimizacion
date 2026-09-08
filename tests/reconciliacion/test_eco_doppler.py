@@ -95,7 +95,11 @@ def test_inventaria_headers_medidas_secciones_y_firma_en_paginas_reales() -> Non
     ]
 
 
-def test_rechaza_medida_omitida_del_modelo_aunque_el_valor_emitido_exista() -> None:
+def test_publica_con_marca_cuando_el_modelo_omite_una_medida_presente_en_el_pdf() -> None:
+    """Caso benigno (`CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`): el PDF trae
+    AO y AI, el modelo sólo citó AO. Lo publicado (AO) es correcto, sólo
+    incompleto -- antes de separar direcciones esto mandaba el documento
+    entero a cuarentena por una medida de más en el PDF."""
     fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),)
     documento = DocumentoParseado(
         TipoDocumento.ECOCARDIOGRAMA,
@@ -107,15 +111,15 @@ def test_rechaza_medida_omitida_del_modelo_aunque_el_valor_emitido_exista() -> N
     )
     texto = TextoExtraido(("MEDIDAS\nAO 28 mm\nAI 32 mm",))
 
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    campos_no_extraidos = ReconciliadorEcoDoppler().reconciliar(documento, texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
-    assert error.value.campo == "eco.medida"
-    assert error.value.pagina == 1
+    assert campos_no_extraidos == ("eco.medida",)
 
 
-def test_rechaza_seccion_omitida_en_otra_pagina() -> None:
+def test_publica_con_marca_cuando_el_modelo_omite_una_seccion_de_otra_pagina() -> None:
+    """Caso benigno, mismo criterio que
+    `test_publica_con_marca_cuando_el_modelo_omite_una_medida_presente_en_el_pdf`:
+    el PDF trae una segunda sección (PERICARDIO) que el modelo no citó."""
     fuentes = (ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0),)
     documento = DocumentoParseado(
         TipoDocumento.ECOCARDIOGRAMA,
@@ -127,12 +131,9 @@ def test_rechaza_seccion_omitida_en_otra_pagina() -> None:
     )
     texto = TextoExtraido(("CONCLUSIONES\nPrimera conclusion.", "PERICARDIO\nSin derrame."))
 
-    with pytest.raises(ErrorParseo) as error:
-        ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    campos_no_extraidos = ReconciliadorEcoDoppler().reconciliar(documento, texto)
 
-    assert error.value.codigo is CodigoErrorDocumento.COBERTURA_INCOMPLETA
-    assert error.value.campo == "eco.seccion"
-    assert error.value.pagina == 2
+    assert campos_no_extraidos == ("eco.seccion",)
 
 
 def test_rechaza_referencia_de_eco_en_pagina_distinta_a_su_inventario() -> None:
@@ -275,14 +276,18 @@ def test_aprueba_medida_eco_asociada_aunque_el_valor_aparezca_fuera_de_la_tabla(
     )
 
 
-def test_rechaza_medida_eco_con_dos_asociaciones_estructuradas() -> None:
+def test_publica_con_marca_cuando_hay_dos_medidas_estructuradas_y_el_modelo_cita_una() -> None:
+    """Caso benigno, mismo criterio que
+    `test_publica_con_marca_cuando_el_modelo_omite_una_medida_presente_en_el_pdf`:
+    el PDF repite "AO 28 mm" dos veces, el modelo sólo cita una instancia."""
     documento = _documento((ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),))
 
-    with pytest.raises(ErrorParseo):
-        ReconciliadorEcoDoppler().reconciliar(
-            documento,
-            TextoExtraido(("MEDIDAS\nAO 28 mm\nAO 28 mm",)),
-        )
+    campos_no_extraidos = ReconciliadorEcoDoppler().reconciliar(
+        documento,
+        TextoExtraido(("MEDIDAS\nAO 28 mm\nAO 28 mm",)),
+    )
+
+    assert campos_no_extraidos == ("eco.medida",)
 
 
 def test_valida_contenido_de_seccion_que_solo_continua_en_la_pagina_siguiente() -> None:

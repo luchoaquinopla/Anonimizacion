@@ -148,6 +148,23 @@ class Estudio(Base):
     #: una mentira"): las filas escritas por Alembic/`create_all` sin este
     #: default no llevan timestamp, las escritas por el pipeline desde acá sí.
     creado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_ahora_utc, nullable=True)
+    #: Marca de completitud (requisito "que un campo nuevo no rompa el
+    #: parseo, sino que sea un aviso" -- ver `dominio/errores.py::CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`
+    #: y `dominio/modelos.py::RegistroAnonimizado.campos_no_extraidos`).
+    #: Nullable, sin backfill (mismo criterio que `ruta_autorizada` en `corrida`,
+    #: migración `0011`): las filas escritas antes de este cambio no tienen
+    #: forma de saber si estaban completas, y `NULL` es la verdad ("no se
+    #: sabe"), no `True` inventado. Las filas nuevas del pipeline SIEMPRE la
+    #: completan (`RegistroAnonimizado.completo`, derivada de
+    #: `campos_no_extraidos`, nunca un segundo estado independiente).
+    completo: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #: `id_campo` (vocabulario cerrado, `dominio/referencias.py`) que el PDF
+    #: traía y el parser no citó -- NUNCA texto libre ni contenido del
+    #: documento. Puede repetir un `id_campo` (una ocurrencia por instancia
+    #: faltante, p.ej. varias filas de `laboratorio.resultado`). `NULL` para
+    #: las filas preexistentes, mismo criterio que `completo` arriba; las
+    #: filas nuevas siempre traen una lista (`[]` si `completo` es `True`).
+    campos_no_extraidos: Mapped[list[str] | None] = mapped_column(_JsonPortable, nullable=True)
 
 
 class MedicionEcg(Base):

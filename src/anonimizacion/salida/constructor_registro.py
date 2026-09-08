@@ -48,6 +48,15 @@ destino del pipeline). Responsabilidades de `construir_registro`:
 Tampoco decide el pivote ancho de `MedidaEco` a columnas fijas de
 `medicion_eco` -- eso es una decisión de la capa SQL, no del ensamblado de
 dominio (ver `destinos/postgres.py`).
+
+6. Propagar `campos_no_extraidos` (marca de completitud, requisito "que un
+   campo nuevo no rompa el parseo"): tupla de `id_campo` que
+   `pipeline/ejecutor.py::_resolver_documento` ya recibió como retorno de
+   `ReconciliadorDocumento.reconciliar` (ver `reconciliacion/base.py`).
+   `construir_registro` NO la calcula -- sólo la adjunta tal cual, mismo
+   patrón que `clave_documento`. `RegistroAnonimizado.completo` se deriva de
+   ella (`not campos_no_extraidos`), nunca es un segundo estado que este
+   ensamblador tenga que mantener sincronizado.
 """
 
 from __future__ import annotations
@@ -210,6 +219,7 @@ def construir_registro(
     pepper: bytes,
     clave_documento: str,
     motor_pii: DetectorEntidades | None = None,
+    campos_no_extraidos: tuple[str, ...] = (),
 ) -> RegistroAnonimizado:
     """Ensambla el `RegistroAnonimizado` final: cero PII, `contenido` tipado por `TipoDocumento`."""
     if claves.id_paciente is None:
@@ -248,4 +258,5 @@ def construir_registro(
         contenido=contenido,
         adicionales=_adicionales_sin_personal(adicionales),
         clave_documento=clave_documento,
+        campos_no_extraidos=campos_no_extraidos,
     )

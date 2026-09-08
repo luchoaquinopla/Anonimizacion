@@ -133,7 +133,7 @@ def _construir_ejecutor(
                 metadata_por_episodio=metadata_por_episodio,
             )
     if construir_registro is None:
-        construir_registro = lambda documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None: RegistroAnonimizado(  # noqa: E731
+        construir_registro = lambda documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None, campos_no_extraidos=(): RegistroAnonimizado(  # noqa: E731
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
             tipo_documento=documento.tipo_documento,
@@ -142,6 +142,7 @@ def _construir_ejecutor(
             contenido=object(),
             adicionales={},
             clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
         )
     if obtener_parseador is None:
         class _ParseadorFake:
@@ -152,7 +153,7 @@ def _construir_ejecutor(
     if obtener_reconciliador is None:
         class _ReconciliadorFake:
             def reconciliar(self, documento, texto):
-                return None
+                return ()
 
         obtener_reconciliador = lambda tipo: _ReconciliadorFake()  # noqa: E731
     if clasificar_pii is None:
@@ -607,7 +608,14 @@ def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> N
         )
 
     def construir_registro(
-        documento: DocumentoParseado, claves: ClavesPaciente, *, id_episodio, pepper, clave_documento, motor_pii=None
+        documento: DocumentoParseado,
+        claves: ClavesPaciente,
+        *,
+        id_episodio,
+        pepper,
+        clave_documento,
+        motor_pii=None,
+        campos_no_extraidos=(),
     ):
         return RegistroAnonimizado(
             id_paciente=claves.id_paciente,
@@ -618,6 +626,7 @@ def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> N
             contenido=object(),
             adicionales={},
             clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
         )
 
     ejecutor = EjecutorPipeline(

@@ -28,6 +28,7 @@ from anonimizacion.salida.destinos.postgres import EscritorPostgres
 from anonimizacion.salida.modelos_orm import (
     Base,
     Cuarentena,
+    Estudio,
     MedicionEcg,
     MedicionEco,
     ResultadoLaboratorio,
@@ -111,29 +112,43 @@ def test_un_documento_con_layout_no_reconocido_en_lote_no_aborta_el_resto(tmp_pa
     assert len(filas_lab) == 4  # 2 resultados por lab x 2 labs exitosos
 
 
-def test_omisiones_sinteticas_de_cada_tipo_van_a_cuarentena_antes_de_pii_y_salida(tmp_path, motor: MotorPii) -> None:
-    """El parser falso omite un dato tras usar el parser real; el PDF conserva la evidencia."""
+def test_omisiones_sinteticas_de_cada_tipo_se_publican_con_marca_de_completitud(tmp_path, motor: MotorPii) -> None:
+    """El parser falso omite un dato tras usar el parser real; el PDF conserva la evidencia.
+
+    Caso benigno de punta a punta (`CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`,
+    separación de direcciones en `reconciliacion/inventario.py::verificar_cobertura`):
+    el PDF respalda el dato omitido, así que el documento se publica -- con
+    la marca de completitud pegada al registro (`salida/modelos_orm.py::Estudio.completo`
+    / `.campos_no_extraidos`), nunca en cuarentena. Antes de separar
+    direcciones, los tres terminaban en `FalloDocumento` con
+    `COBERTURA_INCOMPLETA` -- antes de eso, ni siquiera llegaban a
+    pseudonimización, así que este test no necesitaba resolverles identidad.
+    Publicarlos sí lo requiere: el ECG (sin DNI, `pseudonimizacion/resolutor_claves.py`)
+    necesita que un documento CON DNI de la MISMA persona (nombre+fecha_nac)
+    se procese antes en el mismo lote y deje el puente `id_alt_paciente ->
+    id_paciente` -- por eso el laboratorio va primero en la lista y comparte
+    nombre/fecha de nacimiento con el ECG."""
     artefactos = [
-        documentos.escribir_pdf(
-            tmp_path,
-            "ecg-omitido",
-            documentos.texto_ecg(
-                nombre="Ecg Sintetico",
-                id_estudio="ECG-1",
-                fecha="10-JAN-2024",
-                fecha_nac="02-FEB-1975",
-                edad_anios=48,
-            ),
-        ),
         documentos.escribir_pdf(
             tmp_path,
             "lab-omitido",
             documentos.texto_laboratorio(
-                nombre="Laboratorio Sintetico",
+                nombre="Paciente Puente Sintetico",
                 dni="20111222",
                 fecha_nac="02/02/1975",
                 numero_peticion="PET-1",
                 fecha="10/01/2024",
+            ),
+        ),
+        documentos.escribir_pdf(
+            tmp_path,
+            "ecg-omitido",
+            documentos.texto_ecg(
+                nombre="Paciente Puente Sintetico",
+                id_estudio="ECG-1",
+                fecha="10-JAN-2024",
+                fecha_nac="02-FEB-1975",
+                edad_anios=48,
             ),
         ),
         documentos.escribir_pdf(
@@ -196,14 +211,24 @@ def test_omisiones_sinteticas_de_cada_tipo_van_a_cuarentena_antes_de_pii_y_salid
         [ItemLote(id_documento=f"doc-{indice}", artefacto=artefacto) for indice, artefacto in enumerate(artefactos)]
     )
 
-    assert all(isinstance(resultado, FalloDocumento) for resultado in resultados)
-    assert {resultado.error.codigo for resultado in resultados} == {CodigoErrorDocumento.COBERTURA_INCOMPLETA}
-    assert {resultado.error.etapa for resultado in resultados} == {"reconciliacion"}
+    assert all(isinstance(resultado, ExitoDocumento) for resultado in resultados)
 
     with sa.orm.Session(engine) as sesion:
-        assert len(sesion.scalars(sa.select(Cuarentena)).all()) == 3
+        assert len(sesion.scalars(sa.select(Cuarentena)).all()) == 0
+        estudios = {estudio.tipo_documento: estudio for estudio in sesion.scalars(sa.select(Estudio)).all()}
+        # Los tres se publican: reconciliación y pseudonimización SÍ corren
+        # (a diferencia de un `FalloDocumento`, que corta el pipeline antes),
+        # así que el contenido clínico SÍ existe. `VinculoPaciente` sigue
+        # vacía porque este test usa `ResolutorClaves()` en memoria (no
+        # `ResolutorClavesPostgres`) -- el puente vive en el resolutor, nunca
+        # toca esta tabla.
         assert sesion.scalars(sa.select(VinculoPaciente)).all() == []
-        assert sesion.scalars(sa.select(ResultadoLaboratorio)).all() == []
-        assert sesion.scalars(sa.select(MedicionEcg)).all() == []
-        assert sesion.scalars(sa.select(MedicionEco)).all() == []
-        assert sesion.scalars(sa.select(TextoSeccionEco)).all() == []
+        assert len(sesion.scalars(sa.select(ResultadoLaboratorio)).all()) == 1
+        assert len(sesion.scalars(sa.select(MedicionEcg)).all()) == 1
+        assert len(sesion.scalars(sa.select(MedicionEco)).all()) == 1
+        assert len(sesion.scalars(sa.select(TextoSeccionEco)).all()) == 1
+
+    assert {estudio.completo for estudio in estudios.values()} == {False}
+    assert estudios["ecg"].campos_no_extraidos == ["ecg.vent_rate"]
+    assert estudios["laboratorio"].campos_no_extraidos == ["laboratorio.resultado"]
+    assert estudios["ecocardiograma"].campos_no_extraidos == ["eco.medida"]

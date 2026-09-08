@@ -93,7 +93,9 @@ def _construir_ejecutor(*, coordinar_episodios) -> tuple[EjecutorPipeline, _Escr
         }
         return ResultadoVinculacion(id_episodio_por_documento, metadata_por_episodio)
 
-    def construir_registro(documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None):
+    def construir_registro(
+        documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None, campos_no_extraidos=()
+    ):
         return RegistroAnonimizado(
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
@@ -103,6 +105,7 @@ def _construir_ejecutor(*, coordinar_episodios) -> tuple[EjecutorPipeline, _Escr
             contenido=object(),
             adicionales={},
             clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
         )
 
     class _ParseadorFake:
@@ -111,7 +114,7 @@ def _construir_ejecutor(*, coordinar_episodios) -> tuple[EjecutorPipeline, _Escr
 
     class _ReconciliadorFake:
         def reconciliar(self, documento, texto):
-            return None
+            return ()
 
     ejecutor = EjecutorPipeline(
         resolutor=object(),

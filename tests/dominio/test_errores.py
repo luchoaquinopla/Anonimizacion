@@ -73,6 +73,11 @@ def test_codigos_de_error_deterministico_no_se_reintentan() -> None:
         "episodio_incompleto",
         "episodio_ambiguo",
         "cobertura_ambigua",
+        # Direccion opuesta de `cobertura_incompleta` (ver
+        # `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`): nunca se lanza como
+        # `ErrorParseo`, nunca llega a cuarentena -- viaja como marca de
+        # completitud sobre un documento publicado.
+        "campo_no_extraido",
         "artefacto_sobretamano",
         "formato_no_soportado",
         # openspec `paralelismo-de-procesamiento` PR 3, revisión adversarial
@@ -108,6 +113,12 @@ def test_es_reintentable_es_la_unica_definicion_y_cubre_todo_el_catalogo() -> No
     Reintentables (el error original no era determinístico, o la evidencia
     que faltaba puede haber llegado): `CLAVE_PII_NO_RESUELTA`,
     `ERROR_TRANSITORIO_AGOTADO`, `EPISODIO_INCOMPLETO`, `PROCESO_INTERRUMPIDO`.
+
+    `CAMPO_NO_EXTRAIDO` entra acá también, en `False`, aunque nunca se lanza
+    como `ErrorParseo` ni llega a cuarentena (ver su comentario en
+    `CodigoErrorDocumento`): esta prueba enumera el catálogo COMPLETO a mano,
+    sin excepciones, para que un miembro nuevo la rompa por `KeyError` en vez
+    de quedar sin clasificar por accidente.
     """
     esperado = {
         CodigoErrorDocumento.TIPO_NO_RECONOCIDO: False,
@@ -120,6 +131,7 @@ def test_es_reintentable_es_la_unica_definicion_y_cubre_todo_el_catalogo() -> No
         CodigoErrorDocumento.VALOR_DISCREPANTE: False,
         CodigoErrorDocumento.COBERTURA_INCOMPLETA: False,
         CodigoErrorDocumento.COBERTURA_AMBIGUA: False,
+        CodigoErrorDocumento.CAMPO_NO_EXTRAIDO: False,
         CodigoErrorDocumento.EPISODIO_INCOMPLETO: True,
         CodigoErrorDocumento.EPISODIO_AMBIGUO: False,
         CodigoErrorDocumento.ARTEFACTO_SOBRETAMANO: False,

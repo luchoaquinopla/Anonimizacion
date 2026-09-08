@@ -315,7 +315,7 @@ class ReconciliadorEcoDoppler:
         cerrar_seccion()
         return tuple(hallazgos)
 
-    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> None:
+    def reconciliar(self, documento: DocumentoParseado, texto: TextoExtraido) -> tuple[str, ...]:
         contenido = documento.contenido
         if not isinstance(contenido, ContenidoEco):
             raise TypeError("contenido eco inválido")
@@ -342,4 +342,4 @@ class ReconciliadorEcoDoppler:
             ids_con_asociacion_estructurada={"eco.seccion"},
             validador_asociacion=_asociacion_eco,
         )
-        reconciliar_cobertura(documento, self.inventariar(texto))
+        return reconciliar_cobertura(documento, self.inventariar(texto))

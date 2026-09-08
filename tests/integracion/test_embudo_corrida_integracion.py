@@ -176,7 +176,9 @@ def test_el_solapamiento_se_detecta_por_el_camino_real_de_reintentos_agotados() 
             },
         )
 
-    def construir_registro(documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None):  # type: ignore[no-untyped-def]
+    def construir_registro(  # type: ignore[no-untyped-def]
+        documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None, campos_no_extraidos=()
+    ):
         return RegistroAnonimizado(
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
@@ -185,6 +187,7 @@ def test_el_solapamiento_se_detecta_por_el_camino_real_de_reintentos_agotados() 
             fecha_estudio=documento.fecha_estudio,
             contenido=ContenidoLaboratorioSalida(id_medico=None, resultados=()),
             clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
         )
 
     class _ParseadorFake:
@@ -192,8 +195,8 @@ def test_el_solapamiento_se_detecta_por_el_camino_real_de_reintentos_agotados() 
             return texto
 
     class _ReconciliadorFake:
-        def reconciliar(self, documento: object, texto: object) -> None:
-            return None
+        def reconciliar(self, documento: object, texto: object) -> tuple[str, ...]:
+            return ()
 
     ejecutor = EjecutorPipeline(
         resolutor=object(),  # type: ignore[arg-type]
@@ -270,7 +273,9 @@ def test_el_residuo_es_cero_al_terminar_una_corrida_sintetica_sin_fallos() -> No
             },
         )
 
-    def construir_registro(documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None):  # type: ignore[no-untyped-def]
+    def construir_registro(  # type: ignore[no-untyped-def]
+        documento, claves, *, id_episodio, pepper, clave_documento, motor_pii=None, campos_no_extraidos=()
+    ):
         return RegistroAnonimizado(
             id_paciente=claves.id_paciente,
             id_episodio=id_episodio,
@@ -279,6 +284,7 @@ def test_el_residuo_es_cero_al_terminar_una_corrida_sintetica_sin_fallos() -> No
             fecha_estudio=documento.fecha_estudio,
             contenido=ContenidoLaboratorioSalida(id_medico=None, resultados=()),
             clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
         )
 
     class _ParseadorFake:
@@ -286,8 +292,8 @@ def test_el_residuo_es_cero_al_terminar_una_corrida_sintetica_sin_fallos() -> No
             return texto
 
     class _ReconciliadorFake:
-        def reconciliar(self, documento: object, texto: object) -> None:
-            return None
+        def reconciliar(self, documento: object, texto: object) -> tuple[str, ...]:
+            return ()
 
     ejecutor = EjecutorPipeline(
         resolutor=object(),  # type: ignore[arg-type]
