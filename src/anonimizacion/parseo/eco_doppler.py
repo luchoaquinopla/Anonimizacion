@@ -33,11 +33,27 @@ informante no trae la etiqueta "Firma:" -- se detecta con una heurística de
 `_PATRON_MATRICULA`/`_PATRON_NOMBRE_FIRMA`). Todo esto calibrado contra una
 sola muestra real de cada tipo de documento -- ver comentarios puntuales en
 cada función para el detalle de qué podría no generalizar.
+
+Fix (tarea "invertir la dirección del corpus sintético", ver
+`tests/fixtures/plantilla_documento.py`): `es_boilerplate_eco` comparaba el
+prefijo `"informe no valido"` (sin tilde) contra la línea normalizada sólo
+con `casefold()`, que NO le quita los acentos -- contra el PDF real, la
+línea trae "Informe no válido..." (con tilde) y nunca matcheaba. El aviso
+quedaba como texto libre en vez de pie de página, y si la sección vecina
+continúa justo debajo (p. ej. "FLUJO PULMONAR" cruzando a la página
+siguiente) ese aviso se cuela en `SeccionTextoEco.texto` -- la
+reconciliación (`reconciliacion/eco_doppler.py::_seccion_anclada`) rechaza
+esa sección con `evidencia_ausente` porque ya no puede reconstruir el mismo
+span cruzando la página. `es_boilerplate_eco` ahora le saca los acentos a la
+línea antes de comparar (mismo criterio que ya usa
+`parseo/contrato_laboratorio.py`), sin tocar `_PREFIJOS_BOILERPLATE` (siguen
+siendo prefijos sin tilde).
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -189,9 +205,19 @@ class _CuerpoEco:
     pagina_firma: int | None
 
 
+def _sin_acentos(texto: str) -> str:
+    descompuesto = unicodedata.normalize("NFD", texto)
+    return "".join(caracter for caracter in descompuesto if not unicodedata.combining(caracter))
+
+
 def es_boilerplate_eco(linea: str) -> bool:
-    """Reconoce cabecera/pie repetidos sin aceptar texto clínico libre."""
-    normalizada = " ".join(linea.strip().casefold().split())
+    """Reconoce cabecera/pie repetidos sin aceptar texto clínico libre.
+
+    Le saca los acentos a `linea` antes de comparar -- ver fix en el
+    docstring del módulo: el aviso real trae tilde ("válido") pero
+    `_PREFIJOS_BOILERPLATE` no, y `casefold()` sólo normaliza mayúsculas.
+    """
+    normalizada = " ".join(_sin_acentos(linea.strip()).casefold().split())
     return normalizada.startswith(_PREFIJOS_BOILERPLATE)
 
 
