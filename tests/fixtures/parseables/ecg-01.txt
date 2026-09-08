@@ -1,0 +1,90 @@
+# fixture parseable -- generado con `anonimizacion esqueleto --modo parseable`
+# tipo_detectado: ecg
+# ADVERTENCIA: todos los valores son SINTETICOS -- ninguno es un dato real de paciente.
+
+## pagina 1 (orden de dibujado)
+D
+AD
+ADO
+eLE
+xOM
+rEK
+I6
+I6
+I4
+I8
+I6
+I3
+I6
+POJOCEFI UCASUV~, 
+ID:921620
+12-DEC-2016  01:31:37
+NOSA. ESIJEVEFIBA SE JOXOYAJIFO-FUCUJE   YOFUJAN EVEMOP
+*** LAK / HIZA EMECACUC ***
+61wa/a
+98wa/vI
+15Zo
+6.9.1
+12SL 648
+IXI: 6
+Ordered by:   - BEV UZACUB SIF
+Sucotusuruw
+BPM
+49
+Vent. rate
+ms
+351
+PR interval
+ms
+611
+QRS duration
+ms
+QT/QTc
+708/225
+88
+64
+29
+P-R-T axes
+12-DEC-1946 (70 yr)
+Fuve
+Fevapek
+Oteg:
+Hur:1
+Technician: 
+Test ind:
+Ipo:
+Qaya 6 et 6
+  UNU:       AYO:  HUPUP:85KIM4351~ ONALO: 85KIM229460788
+
+## pagina 1 (orden geometrico)
+                                           6
+                                                                                       et
+                                           6
+                                                                                                                                                                              GawuLUZAGE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 85KIM229460788YOFUJAN                                                                                                                                                                                                                                                              ONALO:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      HUPUP:85KIM4351~JOXOYAJIFO-FUCUJE
+SE                             I8              I6              I3                                       AYO:                                                                                                           Sucotusuruw
+                                                                                                                                                                         UNU:ESIJEVEFIBA
+NOSA.
+                             SIF
+                                                          UZACUB
+                             BEV
+
+          -07:56:11                             I6              I6              I4
+                             hi:
+                                                                    Susureg19-APR-2019
+
+    OMUqaqisu88
+
+   56890380 64
+         29                          708/225
+                                          6
+                                                                                                                                                                         IXI:ID:921620
+                                               eLE                     xOM                     rEK
+                                                                                                                               648
+      rano    wonuyizu                  yazotehu     quye                                                                                                                                                   12SL       Uhuh.IGAQUMI/FUrO-O-I
+                                                                                                                                                                                                                    6.9.1
+  ***
+                                 bib:                                                                                                                                    15Zo                                                                                  Technician:Afat      HAYEWOHUje)UCASUV~, (70                Fevapek                                                                                                                                                                                                                                                                                  98wa/vI   HIZA
+
+ /
+  LAK              D              AD                     ADO              I6POJOCEFI***12-DEC-1946Fuve  Oteg:Hur:1              Ipo:                                                                                                                                                                                                  61wa/a

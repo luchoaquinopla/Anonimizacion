@@ -107,7 +107,7 @@ _PATRON_FIRMA = re.compile(r"Firma:\s*(?P<nombre>.+?)\s*-\s*MP\s*(?P<matricula>\
 # lado. El nombre del médico informante aparece en una línea propia (todo
 # en mayúsculas, sin etiqueta) y, en una línea posterior no necesariamente
 # adyacente, aparece "Matrícula <letra> <número>" (p. ej. "Matrícula W
-# 6707", con una letra de prefijo en vez de "MP"). Heurística: se recuerda
+# 9999", con una letra de prefijo en vez de "MP"). Heurística: se recuerda
 # la última línea "nombre-like" vista (todo mayúsculas, 2+ palabras, solo
 # letras/espacios/puntos) y, al encontrar la línea de matrícula, se arma la
 # firma con ese candidato. Si nunca hubo un candidato antes de la línea de

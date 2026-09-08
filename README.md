@@ -30,17 +30,30 @@ No agregar PDFs reales ni PII al repositorio. Para pruebas sin Redis se puede us
 
 ### Fixtures de calibración a partir de PDFs reales
 
-Hoy no hay ningún fixture derivado de un documento real en `tests/`: la calibración de los parsers de ECG, laboratorio y eco vive sólo en prosa dentro de sus docstrings, así que un refactor puede descalibrarlos en silencio. `anonimizacion esqueleto` convierte un PDF real -- que quien lo tenga en su máquina nunca debe copiar al repositorio -- en un fixture de texto sin PII:
+La calibración de los parsers de ECG, laboratorio y eco vive en buena parte en prosa dentro de sus docstrings, así que un refactor puede descalibrarlos en silencio. `anonimizacion esqueleto` convierte un PDF real -- que quien lo tenga en su máquina nunca debe copiar al repositorio -- en un fixture de texto versionable, en dos modos posibles con propósitos DISTINTOS y complementarios (`--modo`, default `enmascarado`):
 
 ```powershell
+# Modo enmascarado (default): valida DETECCIÓN DE TIPO y ESTABILIDAD DE LAYOUT.
 anonimizacion esqueleto D:\ruta\a\un\ecg-real.pdf           --salida tests/fixtures/esqueletos/ecg-01.txt
 anonimizacion esqueleto D:\ruta\a\un\laboratorio-real.pdf    --salida tests/fixtures/esqueletos/laboratorio-01.txt
 anonimizacion esqueleto D:\ruta\a\un\ecocardiograma-real.pdf --salida tests/fixtures/esqueletos/eco-01.txt
+
+# Modo parseable: valida PARSEO de punta a punta (--modo parseable).
+anonimizacion esqueleto D:\ruta\a\un\ecg-real.pdf           --modo parseable --salida tests/fixtures/parseables/ecg-01.txt
+anonimizacion esqueleto D:\ruta\a\un\laboratorio-real.pdf    --modo parseable --salida tests/fixtures/parseables/laboratorio-01.txt
+anonimizacion esqueleto D:\ruta\a\un\ecocardiograma-real.pdf --modo parseable --salida tests/fixtures/parseables/eco-01.txt
 ```
 
-El comando imprime en la terminal el tipo de documento detectado y el puntaje de la firma (cuántos marcadores de `deteccion/firmas/` matchearon), para ver con cuánta evidencia se reconoció cada muestra. El texto se enmascara por **allowlist estructural, no por detección de PII** (ver `src/anonimizacion/esqueleto.py`): todo se tapa por forma (letras → `X`, dígitos → `0`) salvo las etiquetas, marcadores de firma y unidades que el propio código ya conoce -- la propiedad "nunca sale un nombre real" vale por construcción, no por la calidad de un detector. Los archivos `.txt` resultantes sí son versionables y sí deben commitearse en `tests/fixtures/esqueletos/`.
+Los dos modos comparten el 100% del resto del comando (extraer el PDF, resolver `--salida`, reportar errores sin ruta cruda) y la MISMA allowlist estructural -- por eso es una opción del subcomando existente y no un subcomando nuevo: lo único que cambia es la función de sustitución de lo que no es estructura.
 
-**El PDF original nunca debe copiarse al repositorio** -- sólo el `.txt` que produce este comando.
+**Diferencia entre los dos tipos de fixture -- ninguno lleva datos reales, cada uno prueba algo distinto:**
+
+- **`tests/fixtures/esqueletos/` (modo enmascarado, default).** Todo token de contenido se tapa por FORMA: cada corrida de letras se vuelve una `X` por letra, cada corrida de dígitos un `0` por dígito, salvo las etiquetas, marcadores de firma y unidades que el propio código ya conoce (`ALLOWLIST_ESTRUCTURAL`, ver `src/anonimizacion/esqueleto.py`) -- la propiedad "nunca sale un valor real" vale por CONSTRUCCIÓN, no por la calidad de un detector. Sirve para probar **detección de tipo y estabilidad de layout** (`tests/deteccion/test_centinela_esqueletos.py`): al tapar los valores, NO puede afirmar que los parsers extraigan bien los datos.
+- **`tests/fixtures/parseables/` (`--modo parseable`).** Mismo layout real y la misma allowlist, pero cada token de contenido se reemplaza por un sustituto SINTÉTICO plausible de la misma forma: otro número de la misma cantidad de dígitos, otra "palabra" de la misma longitud (pronunciable, preservando mayús/minús carácter a carácter), y fechas/horas VÁLIDAS y clínicamente coherentes entre sí (fecha de nacimiento anterior a la fecha de estudio, edad consistente con ambas). La sustitución es determinística (mismo valor de entrada → mismo sustituto siempre, en todo el documento) -- necesario porque el parser de laboratorio exige que el Nº de Petición no cambie entre páginas. Sirve para probar **parseo de punta a punta** (`tests/parseo/test_regresion_fixtures_parseables.py`): cuántos resultados/medidas/secciones se extraen, qué campos de header quedan poblados, valores puntuales con su unidad -- todo medido contra la corrida real y hardcodeado en el test (nunca leído del propio fixture, para que un parser roto no pueda "grabar" su propio resultado roto como el nuevo esperado).
+
+El comando imprime en la terminal el tipo de documento detectado (y, sólo en modo enmascarado, el puntaje de la firma: cuántos marcadores de `deteccion/firmas/` matchearon). Los archivos `.txt` resultantes de AMBOS modos son versionables y deben commitearse.
+
+**El PDF original nunca debe copiarse al repositorio** -- sólo el `.txt` que produce este comando, en cualquiera de los dos modos.
 
 ## Instalación en una computadora del instituto (sin experiencia técnica)
 

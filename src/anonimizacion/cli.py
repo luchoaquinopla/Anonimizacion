@@ -46,7 +46,7 @@ from types import ModuleType
 from anonimizacion.configuracion import ConfiguracionOperador, ErrorConfiguracion, cargar_configuracion
 from anonimizacion.diagnostico import Hallazgo, diagnosticar
 from anonimizacion.dominio.errores import ErrorParseo
-from anonimizacion.esqueleto import generar_esqueleto
+from anonimizacion.esqueleto import Esqueleto, FixtureParseable, generar_esqueleto, generar_fixture_parseable
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
 
 _RAIZ_REPO = Path(__file__).resolve().parents[2]
@@ -122,6 +122,22 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_esqueleto.add_argument("pdf", type=Path, help="ruta a un PDF real -- nunca se copia ni se versiona")
     p_esqueleto.add_argument(
         "--salida", type=Path, default=None, help="archivo donde escribir el esqueleto (default: stdout)"
+    )
+    # Opción, no subcomando: ambos modos comparten el 100% del resto del
+    # pipeline (extraer el PDF, resolver --salida, reportar errores sin ruta
+    # cruda) -- lo único que cambia es la función de sustitución dentro de
+    # `esqueleto.py` (`enmascarar_por_forma` vs. `sustituir_por_valores_plausibles`,
+    # misma allowlist estructural para ambas). Un subcomando nuevo duplicaría
+    # el parsing de `pdf`/`--salida` para cero beneficio real.
+    p_esqueleto.add_argument(
+        "--modo",
+        choices=("enmascarado", "parseable"),
+        default="enmascarado",
+        help=(
+            "'enmascarado' (default): letras/dígitos tapados por forma -- sólo prueba detección de tipo y "
+            "layout. 'parseable': valores sintéticos plausibles (fechas válidas y coherentes, "
+            "nombres/números con la misma forma) que un parser puede leer de punta a punta."
+        ),
     )
 
     p_servir = subparsers.add_parser("servir", help="Levanta el panel de operación.")
@@ -201,19 +217,23 @@ def _comando_esqueleto(args: argparse.Namespace) -> int:
         print(f"No se pudo extraer texto del PDF: {error.codigo.value}", file=sys.stderr)
         return 1
 
-    esqueleto = generar_esqueleto(texto)
-    contenido = esqueleto.formatear()
+    resultado: Esqueleto | FixtureParseable
+    resultado = generar_fixture_parseable(texto) if args.modo == "parseable" else generar_esqueleto(texto)
+    contenido = resultado.formatear()
     if args.salida is not None:
         args.salida.write_text(contenido, encoding="utf-8")
         print(f"Esqueleto escrito en '{args.salida}'.", file=sys.stderr)
     else:
         print(contenido)
 
-    print(
-        f"Tipo detectado: {esqueleto.tipo_detectado.value} "
-        f"({esqueleto.puntaje}/{esqueleto.total_marcadores} marcadores de firma).",
-        file=sys.stderr,
-    )
+    if isinstance(resultado, Esqueleto):
+        print(
+            f"Tipo detectado: {resultado.tipo_detectado.value} "
+            f"({resultado.puntaje}/{resultado.total_marcadores} marcadores de firma).",
+            file=sys.stderr,
+        )
+    else:
+        print(f"Tipo detectado: {resultado.tipo_detectado.value}.", file=sys.stderr)
     return 0
 
 

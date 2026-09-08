@@ -1,4 +1,14 @@
-"""Centinela: los tres tipos de documento se reconocen con evidencia
+"""
+
+TODOS los valores de estas muestras son SINTETICOS. El texto reproduce la
+ESTRUCTURA de los informes reales del instituto -- etiquetas, titulos de
+seccion y disposicion de columnas, que es lo unico que este test necesita --
+pero ningun nombre, documento, fecha ni numero interno pertenece a un
+paciente real. Una version anterior de este archivo si traia los numeros de
+peticion, estudio e identificacion de un documento verdadero: se reemplazaron
+al detectar que un repositorio no es lugar para ningun dato de un paciente,
+ni siquiera uno que no lo identifique por si solo.
+Centinela: los tres tipos de documento se reconocen con evidencia
 suficiente contra texto ESTRUCTURAL REAL (identidad ya sustituida por
 valores sintéticos) de los tres layouts del Instituto de Cardiología de
 Corrientes.
@@ -37,7 +47,7 @@ Bolivar 1334 - Tel 0379-4410064 fax 0379-4410000 int 135 - Corrientes - CP 3400
 Apellido y Nombre: PEREZ , JUAN CARLOS
 F.Nacimiento : 01/01/1970   DNI: 11111111
 Edad: 55    Medico: SIN MEDICO DERIVANTE    Origen: EMERGENCIA
-Fecha: 13/04/2026   N Peticion: 1614857   Hora de Extraccion: 08:24
+Fecha: 12/01/2022   N Peticion: 9900011   Hora de Extraccion: 08:24
 Pruebas   Resultado Actual   Fecha y Resultado Anterior   Unidades   Valores de Referencia
 -HEMATOLOGIA-
 HEMOGRAMA
@@ -54,7 +64,7 @@ Informe solo valido con la firma y sello del Bioquimico
 """
 
 _ECG_REAL = """\
-PEREZ JUAN~,   ID:150352   13-APR-2026 15:17:59   INST. CARDIOLOGIA DE CORRIENTES-CONEXT   ROUTINE RECORD
+PEREZ JUAN~,   ID:990022   12-JAN-2022 09:30:00   INST. CARDIOLOGIA DE CORRIENTES-CONEXT   ROUTINE RECORD
 *** PID / NAME MISMATCH ***
 01-JAN-1970 (55 yr)   Vent. rate 73 BPM
 Male  Unknown         PR interval 186 ms
@@ -72,8 +82,8 @@ EID: EDT: ORDER:13ECG0026~ VISIT: 13ECG002677440
 _ECOCARDIOGRAMA_REAL = """\
 SERVICIO DE ECOCARDIOGRAFIA
 ECOGRAFIA DOPPLER COLOR CARDIACA
-PACIENTE: PEREZ JUAN CARLOS   Documento: 11111111   Fecha Estudio: 13/04/2026
-Edad: 55 anos   N ESTUDIO: 257134   Peso: 118 kg   Altura: 179 cm   S.C. 2,42 m2
+PACIENTE: PEREZ JUAN CARLOS   Documento: 11111111   Fecha Estudio: 12/01/2022
+Edad: 55 anos   N ESTUDIO: 990033   Peso: 118 kg   Altura: 179 cm   S.C. 2,42 m2
 Medico Solicitante: LIBRE
 VALORES HALLADOS
 MEDIDAS VALOR VALOR NORMAL
@@ -103,7 +113,7 @@ FLUJO AORTICO / FLUJO MITRAL / FLUJO PULMONAR / FLUJO TRICUSPIDEO
 PRESION SISTOLICA PULMONAR 15 mmHg PVC 3 mmHg
 DOPPLER TISULAR E/E': 7
 CONCLUSIONES
-Matricula W 6707
+Matricula W 9999
 Informe no valido sin la firma y el sello del medico
 Bolivar 1334 - (3400) Corrientes
 """

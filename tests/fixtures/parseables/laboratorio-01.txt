@@ -1,0 +1,379 @@
+# fixture parseable -- generado con `anonimizacion esqueleto --modo parseable`
+# tipo_detectado: laboratorio
+# ADVERTENCIA: todos los valores son SINTETICOS -- ninguno es un dato real de paciente.
+
+## pagina 1 (orden de dibujado)
+KUFUTEMECI
+Apellido y Nombre:
+Médico:
+Edad:
+Origen:
+Fecha:
+Nº Petición:
+Hora de Extracción:
+Adofihiqu
+ Peceji
+Odemurom
+Xudok e  Adofihiqu
+ Pumugigu
+Womifal se Egicaqowux
+Unanaqadecin se Dagajidi Exorageb, Kezeruyeyemorev e se Fida Qulexusubon
+Ihiqese 4243 - Oje 7066-6099448 oki 7066-3468280 jir 116 - Joxoyajifo - WI 5451
+POJOCEFI , UCASUV GUMUM
+BEV UZACUB UGINOJIZI
+70
+7683186
+Iyicami
+12/01/2022
+04:03
+12/01/1952
+F.Nacimiento :
+76077665
+DNI:
+6
+se
+4
+-HEMATOLOGIA-
+HEMATOLOGIA
+Eyowidufiwawifewawo
+mm/hora
+9 - 32
+3
+BEJUZAQAB
+Efevuwimuru
+13
+%
+34 - 51
+Xazituga Riciv
+98*3/wa4
+8.39 - 6.17
+8.49
+Obidoyapuhi
+51.6
+g/dl
+85.6 - 58.6
+Tabuvah Wozejevuciq Iloyo
+lI
+95 - 611
+54
+Obidoyapuhi Wozejevuciq Gezuk
+uy
+88.9 - 61.9
+41.6
+Icac. se Efa Wozejevuciq Gezuk
+g/dl
+41.9 - 88.9
+80.3
+EPI-GE
+lI
+88.14 - 68.14
+95.97
+EPI-CA
+%
+66.14 - 58.14
+85.98
+Ojocaxeba
+460129
+/pE
+162731 - 302446
+Tabuvah Icumodemomi Iloyo
+lI
+6 - 51
+6
+Xazituga Okabake
+7800
+/wa4
+5050 - 83319
+DUGIJUW IQAJIZAYUKAC
+Womifal Kajefexux:
+Zucajidacef
+%
+15 - 12
+53
+Biniqotaqiz
+%
+9 - 3
+4
+Oyoyeqera
+%
+9 - 6
+6
+Ukilodedad
+%
+32 - 13
+97
+
+## pagina 2 (orden de dibujado)
+Nº Petición:
+7683186
+Apellido y Nombre: POJOCEFI , UCASUV GUMUM
+Iyicami
+Odemurom
+Womifal se Egicaqowux
+Adofihiqu
+ Peceji
+Xudok e Adofihiqu
+ Pumugigu
+6
+se
+4
+Anekemumi
+%
+6 - 66
+6
+Erajeti
+%
+9 - 98
+9
+Kusejisawovo ujilosela
+%
+9.14 - 9.15
+9.97
+Womifal Obiduxeqa:
+Zucajidacef
+/wa4
+2736 - 4628
+3596
+Biniqotaqiz
+/wa4
+98 - 768
+749
+Oyoyeqera
+/wa4
+98 - 611
+95
+Ukilodedad
+/wa4
+810 - 4447
+3068
+Anekemumi
+/wa4
+98 - 1962
+831
+Erajeti
+/wa4
+9 - 842
+9
+Kusejisawovo ujilosela
+/wa4
+9.14 - 9.95
+9.08
+-HEMOSTASIA-
+HEMOSTASIA
+Aluhay se Zoxomupadok
+11
+Uqukax: Xawuwuruhidozo
+%
+32 - 118
+CAW
+6.50
+CAW: Uhab yex zisajerabat jiyu
+ ye wimiqobuc ye eduvuhiluga aga
+ diharubapirifuz ezolil.
+Aluhay se Guvaqoyaronavo AVAK
+92
+seg
+77 - 41
+Uqukax xawuwuruhidozo I547 aVAK
+O
+9.57
+O: Okuxobipan jiyu ye wimiqobuc
+ ye eduvuhiluga aga waxetosi la
+ ibeluxowamo.
+-QUÍMICA CLÍNICA-
+QUÍMICA CLÍNICA
+Azanirez
+650
+mg/dl
+32 - 611
+Edasek
+9.48
+a/a
+9.58 - 9.45
+Ihogiwojig molibo
+9.78
+mg/dl
+9.32 - 6.32
+Omubilij Orilowucud Dunejuda (JUY-OKA
+ 9808)
+474
+oS/aja/6.49di
+
+## pagina 3 (orden de dibujado)
+Nº Petición:
+7683186
+Apellido y Nombre: POJOCEFI , UCASUV GUMUM
+Iyicami
+Odemurom
+Womifal se Egicaqowux
+Adofihiqu
+ Peceji
+Xudok e Adofihiqu
+ Pumugigu
+Favuzoy jiyu urobus aga bo dalog e umuso ini Ozujinafuj
+se
+4
+12/01/2022
+4
+Favuzoy esulo
+“Rovi adofihiqu fovapu bo aribibelip orilowucud ye ekaqixus aga odifapixazo yetifemuzer. La nunikew yex zisajerabat ye ekaqixus
+ aga enohud se lowa utisegaw ozumuvim (Ye xixaviz DOV <26,6 Ba/di w >15 Ba/di e ye ekaqixus acegovo se 26 quni DOV< qiwicexuv
+ 6), ikunigoxiqa, ituhuxanij w finedija se hiwox peceji se qafati xicab omofa. As gomobul egicaqowux od omujanituhep ye exegeleyad
+ c acegovo se 26 quni aga QUs < 10 oS/aja/6,49r6 e ye xixaviz aga QUs < 13 oS/aja/6,49 m2”.Cecejaxi se muyewimozucoxo se
+ bo Suc 8486/5533 bezek awavefoca tubipusiva raxaqojonev, usegepiren, iqoholu e qocajasaxuq e ri Oyazutor Dogimila se Sexaweyu
+ Uqebehel se Uyosivatavaf Awavodo (DIPAC, Enavoxoset se Egini)”.
+IONOGRAMA POBIGA
+Etiwu
+132
+meq/lt
+116 - 623
+Iwuqitu
+4.6
+meq/lt
+4.6 - 6.9
+Etih. Uqavi Iba R. Delewux R.H. 543
+QATUCAYU UYOMIQUHORUQUSAZ:
+
+## pagina 1 (orden geometrico)
+                  Unanaqadecin se Dagajidi Exorageb, Kezeruyeyemorev e se Fida Qulexusubon
+                     Ihiqese 4243 - Oje 7066-6099448 oki 7066-3468280 jir 116 - Joxoyajifo - WI 5451
+
+
+ Apellido y Nombre: POJOCEFI , UCASUV GUMUM                          Fecha:  12/01/2022
+ F.Nacimiento :  12/01/1952                                              Nº Petición: 7683186
+ Edad: 70                DNI:  76077665                               Hora de Extracción:  04:03
+ Médico: BEV UZACUB UGINOJIZI                                           Origen: KUFUTEMECI
+
+        Iyicami               Adofihiqu   Xudok e Adofihiqu     Odemurom              Womifal se Egicaqowux
+                                   Peceji           Pumugigu
+
+                                   -HEMATOLOGIA-
+
+HEMATOLOGIA
+Eyowidufiwawifewawo                   3                          mm/hora                  9 - 32
+
+BEJUZAQAB
+
+Efevuwimuru                         13                  %                    34 - 51
+
+
+Xazituga Riciv                         8.49                        98*3/wa4                    8.39 - 6.17
+
+Obidoyapuhi                           51.6                                       g/dl                      85.6 - 58.6
+
+Tabuvah Wozejevuciq Iloyo            54                                       lI                    95 - 611
+
+Obidoyapuhi Wozejevuciq Gezuk         41.6                            uy                       88.9 - 61.9
+
+Icac. se Efa Wozejevuciq Gezuk        80.3                                      g/dl                       41.9 - 88.9
+
+EPI-GE                             95.97                                     lI                       88.14 - 68.14
+
+EPI-CA                             85.98                 %                       66.14 - 58.14
+
+Ojocaxeba                        460129                                  /pE                   162731 - 302446
+
+Tabuvah Icumodemomi Iloyo             6                                       lI                    6 - 51
+
+Xazituga Okabake                    7800                         /wa4                 5050 - 83319
+
+                            DUGIJUW IQAJIZAYUKAC
+
+Womifal Kajefexux:
+Zucajidacef                          53                  %                    15 - 12
+
+Biniqotaqiz                          4                  %                    9 - 3
+
+Oyoyeqera                            6                  %                    9 - 6
+
+Ukilodedad                           97                  %                    32 - 13
+
+
+                                                                                           6  se  4
+## pagina 2 (orden geometrico)
+Nº Petición:  7683186
+Apellido y Nombre: POJOCEFI , UCASUV GUMUM
+
+        Iyicami               Adofihiqu   Xudok e Adofihiqu     Odemurom              Womifal se Egicaqowux
+                                   Peceji           Pumugigu
+
+Anekemumi                           6                  %                    6 - 66
+
+Erajeti                            9                  %                    9 - 98
+
+Kusejisawovo ujilosela                 9.97                  %                       9.14 - 9.15
+
+Womifal Obiduxeqa:
+Zucajidacef                         3596                        /wa4                   2736 - 4628
+
+Biniqotaqiz                         749                        /wa4                   98 - 768
+
+Oyoyeqera                           95                        /wa4                   98 - 611
+
+Ukilodedad                          3068                        /wa4                   810 - 4447
+
+Anekemumi                          831                        /wa4                   98 - 1962
+
+Erajeti                            9                         /wa4                   9 - 842
+
+Kusejisawovo ujilosela                 9.08                        /wa4                      9.14 - 9.95
+
+                                       -HEMOSTASIA-
+HEMOSTASIA
+Aluhay se Zoxomupadok                11                  %                      32 - 118
+Uqukax: Xawuwuruhidozo
+
+CAW                                    6.50
+                                                                                                         CAW: Uhab yex zisajerabat jiyu
+                                                                                             ye wimiqobuc ye eduvuhiluga aga
+                                                                                                           diharubapirifuz ezolil.
+
+
+Aluhay se Guvaqoyaronavo AVAK         92                            seg                      77 - 41
+Uqukax xawuwuruhidozo I547 aVAK
+
+O                                      9.57
+                                                                                                      O: Okuxobipan jiyu ye wimiqobuc
+                                                                                             ye eduvuhiluga aga waxetosi la
+                                                                                                               ibeluxowamo.
+
+                                    -QUÍMICA CLÍNICA-
+QUÍMICA CLÍNICA
+Azanirez                             650                              mg/dl                    32 - 611
+
+Edasek                                  9.48                                           a/a                        9.58 - 9.45
+
+Ihogiwojig molibo                         9.78                              mg/dl                       9.32 - 6.32
+
+Omubilij Orilowucud Dunejuda (JUY-OKA    474                         oS/aja/6.49di
+ 9808)
+
+                                                                                           6  se  4
+## pagina 3 (orden geometrico)
+Nº Petición:  7683186
+Apellido y Nombre: POJOCEFI , UCASUV GUMUM
+
+        Iyicami               Adofihiqu   Xudok e Adofihiqu     Odemurom              Womifal se Egicaqowux
+                                   Peceji           Pumugigu
+
+
+   “Rovi adofihiqu fovapu bo aribibelip orilowucud ye ekaqixus aga odifapixazo yetifemuzer. La nunikew yex zisajerabat ye ekaqixus
+   aga enohud se lowa utisegaw ozumuvim (Ye xixaviz DOV <26,6 Ba/di w >15 Ba/di e ye ekaqixus acegovo se 26 quni DOV< qiwicexuv
+    6), ikunigoxiqa, ituhuxanij w finedija se hiwox peceji se qafati xicab omofa. As gomobul egicaqowux od omujanituhep ye exegeleyad
+   c acegovo se 26 quni aga QUs < 10 oS/aja/6,49r6 e ye xixaviz aga QUs < 13 oS/aja/6,49 m2”.Cecejaxi se muyewimozucoxo se
+    bo Suc 8486/5533 bezek awavefoca tubipusiva raxaqojonev, usegepiren, iqoholu e qocajasaxuq e ri Oyazutor Dogimila se Sexaweyu
+    Uqebehel se Uyosivatavaf Awavodo (DIPAC, Enavoxoset se Egini)”.
+IONOGRAMA POBIGA
+Etiwu                               132                                meq/lt                    116 - 623
+
+Iwuqitu                                    4.6                                meq/lt                        4.6 - 6.9
+
+
+
+        QATUCAYU UYOMIQUHORUQUSAZ:    Etih. Uqavi Iba R. Delewux R.H. 543
+
+
+
+
+
+12/01/2022                  Favuzoy jiyu urobus aga bo dalog e umuso ini Ozujinafuj    Favuzoy esulo    4  se  4

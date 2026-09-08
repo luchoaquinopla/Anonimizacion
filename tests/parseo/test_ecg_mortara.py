@@ -132,7 +132,7 @@ def test_pr_interval_no_se_confunde_con_apr_del_mes_de_la_fecha() -> None:
     """Fix post-PR9 #6 (regex de medidas ECG, ver
     `sdd/pdf-pii-anonymization/apply-progress`): `PR(?:\\s*interval)?` sin
     `\\b` matchea la subcadena "PR" dentro de "APR" (mes en inglés de una
-    fecha, p. ej. "13-APR-2026"), que aparece ANTES que la etiqueta real
+    fecha, p. ej. "12-JAN-2022"), que aparece ANTES que la etiqueta real
     "PR interval" en el texto -- `re.search` se queda con ese falso match y
     corrompe `pr_interval` con el resto de la línea de fecha. Reproducido
     con una fecha inventada que cae en abril.
@@ -140,7 +140,7 @@ def test_pr_interval_no_se_confunde_con_apr_del_mes_de_la_fecha() -> None:
     header_con_abril = (
         "MORTARA ELI 380\n"
         "Prueba Sintetica~,                    ID:900321                  "
-        "13-APR-2026  15:17:59        HOSPITAL FICTICIO   ROUTINE RECORD\n"
+        "12-JAN-2022  09:30:00        HOSPITAL FICTICIO   ROUTINE RECORD\n"
         "12-DEC-1975 (49 yr)      Female      Unknown\n"
     )
     texto = TextoExtraido(paginas=(header_con_abril + _MEDIDAS_REAL + _PIE_REAL,))

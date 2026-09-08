@@ -38,7 +38,7 @@ medidas contra 3 documentos reales:
 
 1. `_CAMPOS_MEDIDAS["pr_interval"]` original no tenía `\b` (límite de
    palabra) antes de `"PR"` -- matchea la subcadena "PR" DENTRO de "APR"
-   (mes en inglés de la fecha del estudio, p. ej. "13-APR-2026"), que
+   (mes en inglés de la fecha del estudio, p. ej. "12-JAN-2022"), que
    aparece ANTES que la etiqueta real "PR interval" en el texto. Como
    `re.search` devuelve el primer match, el valor quedaba corrompido con el
    resto de la línea de fecha. Se agregó `\b` a TODOS los marcadores cortos

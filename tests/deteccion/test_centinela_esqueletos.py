@@ -56,7 +56,6 @@ degradaría la evidencia de ECG en silencio.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -65,48 +64,17 @@ from anonimizacion.deteccion.detector_tipo import detectar_tipo
 from anonimizacion.deteccion.firmas import FIRMAS
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from tests.fixtures.lectura_fixture_texto import leer_texto_extraido_de_fixture
 
 _DIRECTORIO_ESQUELETOS = Path(__file__).parent.parent / "fixtures" / "esqueletos"
 
-_ENCABEZADO_PAGINA = re.compile(r"^## pagina \d+ \((orden de dibujado|orden geometrico)\)$")
-
 
 def _leer_esqueleto(nombre_archivo: str) -> TextoExtraido:
-    """Reconstruye un `TextoExtraido` a partir de un esqueleto versionado.
-
-    El fixture serializa ambas representaciones de `TextoExtraido`
-    (`formatear()` en `esqueleto.py`) bajo encabezados `## pagina N (orden
-    de dibujado)` / `## pagina N (orden geometrico)`. Esta función es la
-    operación inversa: reagrupa las líneas de cada bloque en páginas.
-    """
-    texto = (_DIRECTORIO_ESQUELETOS / nombre_archivo).read_text(encoding="utf-8")
-    paginas_dibujado: list[str] = []
-    paginas_geometrico: list[str] = []
-    modo: str | None = None
-    buffer: list[str] = []
-
-    def _cerrar_pagina_actual() -> None:
-        if modo == "orden de dibujado":
-            paginas_dibujado.append("\n".join(buffer))
-        elif modo == "orden geometrico":
-            paginas_geometrico.append("\n".join(buffer))
-
-    for linea in texto.splitlines():
-        coincidencia = _ENCABEZADO_PAGINA.match(linea)
-        if coincidencia:
-            _cerrar_pagina_actual()
-            modo = coincidencia.group(1)
-            buffer = []
-            continue
-        if linea.startswith("#") and modo is None:
-            continue  # comentarios de cabecera del fixture, antes de la primera pagina
-        if modo is not None:
-            buffer.append(linea)
-    _cerrar_pagina_actual()
-
-    assert paginas_dibujado, f"'{nombre_archivo}' no trae ninguna pagina en orden de dibujado"
-    assert paginas_geometrico, f"'{nombre_archivo}' no trae ninguna pagina en orden geometrico"
-    return TextoExtraido(paginas=tuple(paginas_dibujado), paginas_ordenadas=tuple(paginas_geometrico))
+    """Delegación fina al lector compartido (ver
+    `tests/fixtures/lectura_fixture_texto.py`) -- se conserva esta función
+    local para no tocar el resto de este archivo, que ya la invoca con sólo
+    el nombre de archivo (relativo a `_DIRECTORIO_ESQUELETOS`)."""
+    return leer_texto_extraido_de_fixture(_DIRECTORIO_ESQUELETOS / nombre_archivo)
 
 
 def _puntaje_de_firma(tipo: TipoDocumento, texto_normalizado: str) -> int:

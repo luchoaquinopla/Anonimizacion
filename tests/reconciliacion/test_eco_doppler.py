@@ -385,13 +385,13 @@ def test_aprueba_firma_real_en_lineas_separadas() -> None:
         documento_base.version_esquema,
         documento_base.identidad,
         documento_base.fecha_estudio,
-        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 6707")),
+        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 9999")),
         fuentes=(fuente,),
     )
 
     ReconciliadorEcoDoppler().reconciliar(
         documento,
-        TextoExtraido(("MEDICO SINTETICO\nMatrícula W 6707",)),
+        TextoExtraido(("MEDICO SINTETICO\nMatrícula W 9999",)),
     )
 
 
@@ -403,13 +403,13 @@ def test_aprueba_firma_real_con_linea_intermedia_antes_de_la_matricula() -> None
         documento_base.version_esquema,
         documento_base.identidad,
         documento_base.fecha_estudio,
-        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 6707")),
+        ContenidoEco((), (), FirmaMedico("Medico Sintetico", "W 9999")),
         fuentes=(fuente,),
     )
 
     ReconciliadorEcoDoppler().reconciliar(
         documento,
-        TextoExtraido(("MEDICO SINTETICO\nEspecialista en cardiologia\nMatrícula W 6707",)),
+        TextoExtraido(("MEDICO SINTETICO\nEspecialista en cardiologia\nMatrícula W 9999",)),
     )
 
 

@@ -388,7 +388,7 @@ def test_firma_heuristica_sin_etiqueta_firma_detecta_nombre_y_matricula() -> Non
         + "\n"
         + "MEDICO DE PRUEBA APELLIDO\n"
         + "\n"
-        + "Matricula W 6707\n"
+        + "Matricula W 9999\n"
         + "\n"
         + "DIAGNOSTICO POR IMAGENES\n"
     )
@@ -398,7 +398,7 @@ def test_firma_heuristica_sin_etiqueta_firma_detecta_nombre_y_matricula() -> Non
 
     assert resultado.contenido.firma is not None
     assert resultado.contenido.firma.nombre == "MEDICO DE PRUEBA APELLIDO"
-    assert resultado.contenido.firma.matricula == "W 6707"
+    assert resultado.contenido.firma.matricula == "W 9999"
     # La línea de nombre y la línea "Matricula ..." no deben quedar mezcladas
     # con el texto de CONCLUSIONES.
     conclusiones = next(
@@ -419,7 +419,7 @@ def test_firma_heuristica_sin_candidato_de_nombre_queda_en_none() -> None:
         + "CONCLUSIONES\n"
         + "Estudio normal.\n"
         + "\n"
-        + "Matricula W 6707\n"
+        + "Matricula W 9999\n"
     )
     texto = TextoExtraido(paginas=(pagina,))
 

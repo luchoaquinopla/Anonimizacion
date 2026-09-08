@@ -1,0 +1,299 @@
+# fixture parseable -- generado con `anonimizacion esqueleto --modo parseable`
+# tipo_detectado: ecocardiograma
+# ADVERTENCIA: todos los valores son SINTETICOS -- ninguno es un dato real de paciente.
+
+## pagina 1 (orden de dibujado)
+Fecha Estudio: 12/01/2022
+Edad:
+38
+Becalo Qisujijunov:
+EPISA
+76077665
+Documento:
+quni
+207
+479
+Peso:
+Altura:
+ix
+ba
+di
+6,35
+S.C.
+562645
+POJOCEFI UCASUV GUMUM
+Nº ESTUDIO:
+PACIENTE:
+ECOGRAFIA DOPPLER COLOR CARDIACA
+SERVICIO DE ECOCARDIOGRAFIA
+SERVICIO DE ECOCARDIOGRAFIA
+81
+84
+56
+59
+66
+57
+57
+NORMAL
+NORMAL
+NORMAL
+WO
+HO
+RUDE
+IHIC
+VA
+GUJESA
+H.IXOJUMOVO
+EJ
+AFACUB
+HA
+MEDIDAS
+AMUJI
+AMUJI NORMAL
+MEDIDAS
+AMUJI
+AMUJI NORMAL
+mm
+mm
+mm
+mm
+mm
+mm
+< 34 mm
+< 66 mm
+< 15 mm
+< 56 mm
+VARIABLE
+> 97%
+%
+< 66 mm
+WOMIFAL EWARECEG
+MOTILIDAD SEGMENTARIA:
+YELOGEPINA SAGAXUZIB
+Normal.-
+os
+os
+os
+%
+70
+34
+48
+EKOZODILA ADUKENUBAVUNU :
+51
+ALA:
+BAB:
+SI:
+MAT:
+YEGOHES KAKERAMI:
+USIDASAGA ZETAFEZUL
+AKOR
+IPISAFASAVA AQIZELOCEQE:
+os/di
+416
+AQEHIN SE LOWA:
+os
+751
+LOWA:
+AURICULAS
+Rahoyo e Vogakewej Normal
+IZQUIERDA:
+(Amuji NORMAL <61 os/di)
+os/di
+AQEHIN SE TABUVAH SE OFUYUTER IZQUIERDA:
+88
+Rahoyo e Vogakewej Normal
+DERECHA:
+VALVULAS CARDIACAS
+AORTICA
+As ropequqoz ocixukorop ini qahavek safagixe odanelu
+MITRAL
+Vakuxim mitral oluwizuduzekirey normal.
+PULMONAR
+Vakuxim pulmonar normal.-
+TRICUSPIDEA
+Vakuxim oyipubesaf se wuyagah normal.-
+PERICARDIO
+Normal.-
+EVALUACION DE FLUJOS POR DOPPLER
+FLUJO AORTICO
+As unituya iyoxa se rinanawifawol safagixe se wifot akor.-
+FLUJO MITRAL
+As unituya iyoxa se rinanawifawol safagixe se wifot akor.-
+FLUJO PULMONAR
+Uja.:
+/
+Ihiqese 4243 - (5451) Joxoyajifo Oje.: 7066-3468280 Jir 101 Oki 7066-8405662
+Q-iyax: ojo_qupejilab@wujuxiluj.iko.ga - Iwuvi Ofo: xah.wujuxiluj.iko.ga
+6 6
+Favuzoy la urobus bev bo dalog e ri umuso ini becalo
+
+## pagina 2 (orden de dibujado)
+Fecha Estudio: 12/01/2022
+Edad:
+38
+Becalo Qisujijunov:
+EPISA
+76077665
+Documento:
+quni
+207
+479
+Peso:
+Altura:
+ix
+ba
+di
+6,35
+S.C.
+562645
+POJOCEFI UCASUV GUMUM
+Nº ESTUDIO:
+PACIENTE:
+ECOGRAFIA DOPPLER COLOR CARDIACA
+SERVICIO DE ECOCARDIOGRAFIA
+SERVICIO DE ECOCARDIOGRAFIA
+Gidoputuw ayozoxa okehihojuj. bev ohakegukimacoc.-
+FLUJO TRICUSPIDEO
+As unituya iyoxa se rinanawifawol safagixe akor.-
+JAHAQEZ QUXUVUDIN PULMONAR
+UTO
+51
+4
+mmHg
+mmHg
+5
+DOPPLER TISULAR Q/Q':
+CONCLUSIONES
+IYOJOXUV SE FAZOMERE INI AGISAFUSAH SAGAXUZIB SIXUYUFIHO.
+IKENAXA YIYIFUJIBI INI AGISAFUSAH SAGAXUZIB OQOJOSEHEK, YE LOZUPA.
+IPISAFASAVA XUQIGOYAQAX INI AGISAFUSAH SAGAXUZIB.
+RINANAWIFAWOL IVOXUGU AKOR.
+RINANAWIFAWOL MITRAL AKOR.
+UQI UNOGOW JOGINOSIH
+AXAXIRODIHO IBA OZISEVIC
+Matrícula N   2736
+Uja.:
+/
+Ihiqese 4243 - (5451) Joxoyajifo Oje.: 7066-3468280 Jir 101 Oki 7066-8405662
+Q-iyax: ojo_qupejilab@wujuxiluj.iko.ga - Iwuvi Ofo: xah.wujuxiluj.iko.ga
+6 6
+Favuzoy la urobus bev bo dalog e ri umuso ini becalo
+
+## pagina 1 (orden geometrico)
+                 MIKAQEZIDOLAWAGU OFUG FAPAKIDUZEZIRUMOZUJAKIXAJIGOYI
+
+                    ECOGRAFIA DOPPLER COLOR CARDIACA
+
+
+                                                                                                   Fecha Estudio: 12/01/2022 PACIENTE: POJOCEFI UCASUV GUMUM                  Documento:   76077665
+
+ Edad:  38  quni                                Nº ESTUDIO: 562645       Peso: 207 ba    Altura: 479 ix   S.C.  6,35 di
+ Becalo Qisujijunov: EPISA
+
+                                        WOMIFAL EWARECEG
+
+         MEDIDAS    AMUJI       AMUJI NORMAL            MEDIDAS    AMUJI     AMUJI NORMAL
+
+           WO           81 mm        < 34 mm                GUJESA        57 mm      < 66 mm
+
+                HO            84 mm        < 15 mm                  H.IXOJUMOVO    57 mm      < 66 mm
+
+             RUDE         56 mm        < 56 mm                EJ         NORMAL
+
+             IHIC         59 mm       VARIABLE              AFACUB     NORMAL
+            VA           66 %         > 97%                 HA         NORMAL
+
+ YELOGEPINA SAGAXUZIB
+      MOTILIDAD SEGMENTARIA:
+
+                 Normal.-
+      EKOZODILA ADUKENUBAVUNU :    ALA: 70 os       BAB:  34 os        SI:  48 os     MAT:  51 %
+
+      YEGOHES KAKERAMI: USIDASAGA ZETAFEZUL
+
+      IPISAFASAVA AQIZELOCEQE: AKOR
+
+      LOWA:  751 os        AQEHIN SE LOWA:  416 os/di
+
+ AURICULAS
+
+        IZQUIERDA:   Rahoyo e Vogakewej Normal
+
+         AQEHIN SE TABUVAH SE OFUYUTER IZQUIERDA:         88  os/di        (Amuji NORMAL <61 os/di)
+
+       DERECHA:    Rahoyo e Vogakewej Normal
+
+ VALVULAS CARDIACAS
+
+   AORTICA
+       As ropequqoz ocixukorop ini qahavek safagixe odanelu
+
+   MITRAL
+         Vakuxim mitral oluwizuduzekirey normal.
+
+  PULMONAR
+       Vakuxim pulmonar normal.-
+
+   TRICUSPIDEA
+        Vakuxim oyipubesaf se wuyagah normal.-
+
+ PERICARDIO
+        Normal.-
+
+                                EVALUACION DE FLUJOS POR DOPPLER
+
+   FLUJO AORTICO
+
+       As unituya iyoxa se rinanawifawol safagixe se wifot akor.-
+
+   FLUJO MITRAL
+       As unituya iyoxa se rinanawifawol safagixe se wifot akor.-
+
+    FLUJO PULMONAR
+
+                                       Favuzoy la urobus bev bo dalog e ri umuso ini becalo
+Uja.:   6 / 6                            Ihiqese 4243 - (5451) Joxoyajifo Oje.: 7066-3468280 Jir 101 Oki 7066-8405662
+
+                                             Q-iyax: ojo_qupejilab@wujuxiluj.iko.ga - Iwuvi Ofo: xah.wujuxiluj.iko.ga
+## pagina 2 (orden geometrico)
+                 MIKAQEZIDOLAWAGU OFUG FAPAKIDUZEZIRUMOZUJAKIXAJIGOYI
+
+                    ECOGRAFIA DOPPLER COLOR CARDIACA
+
+
+                                                                                                   Fecha Estudio: 12/01/2022 PACIENTE: POJOCEFI UCASUV GUMUM                  Documento:   76077665
+
+ Edad:  38  quni                                Nº ESTUDIO: 562645       Peso: 207 ba    Altura: 479 ix   S.C.  6,35 di
+ Becalo Qisujijunov: EPISA
+
+           Gidoputuw ayozoxa okehihojuj. bev ohakegukimacoc.-
+
+     FLUJO TRICUSPIDEO
+        As unituya iyoxa se rinanawifawol safagixe akor.-
+        JAHAQEZ QUXUVUDIN PULMONAR       51 mmHg           UTO    4 mmHg
+   DOPPLER TISULAR Q/Q': 5
+
+                                        CONCLUSIONES
+
+       IYOJOXUV SE FAZOMERE INI AGISAFUSAH SAGAXUZIB SIXUYUFIHO.
+       IKENAXA YIYIFUJIBI INI AGISAFUSAH SAGAXUZIB OQOJOSEHEK, YE LOZUPA.
+       IPISAFASAVA XUQIGOYAQAX INI AGISAFUSAH SAGAXUZIB.
+        RINANAWIFAWOL IVOXUGU AKOR.
+        RINANAWIFAWOL MITRAL AKOR.
+
+
+
+
+
+                                                                        UQI UNOGOW JOGINOSIH
+                                                                                                                  Matrícula N 2736
+                                                                          AXAXIRODIHO IBA OZISEVIC
+
+
+
+
+
+                                       Favuzoy la urobus bev bo dalog e ri umuso ini becalo
+Uja.:   6 / 6                            Ihiqese 4243 - (5451) Joxoyajifo Oje.: 7066-3468280 Jir 101 Oki 7066-8405662
+
+                                             Q-iyax: ojo_qupejilab@wujuxiluj.iko.ga - Iwuvi Ofo: xah.wujuxiluj.iko.ga

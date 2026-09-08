@@ -336,6 +336,34 @@ def test_esqueleto_con_pdf_ilegible_informa_error_sin_ruta_cruda(tmp_path, capsy
     assert "pdf_ilegible" in salida_stderr
 
 
+def test_esqueleto_modo_parseable_genera_valores_sinteticos_en_vez_de_enmascarar(tmp_path, capsys) -> None:
+    """Tarea "fixture parseable de esqueletos reales": `--modo parseable` usa
+    la misma allowlist estructural pero sustituye contenido por valores
+    SINTÉTICOS plausibles en vez de tapado por forma (`X`/`0`) -- a
+    diferencia del modo default, no reporta puntaje de firma (ver
+    `FixtureParseable`, que no lo modela)."""
+    from tests.fixtures.pdf_sintetico import crear_pdf_con_texto
+
+    pdf = crear_pdf_con_texto(
+        tmp_path / "muestra.pdf",
+        paginas=["HEMATOLOGIA\nApellido y Nombre: Fernandez Marta\nDNI: 28999111\n"],
+    )
+    salida = tmp_path / "fixture.txt"
+
+    codigo = cli.main(["esqueleto", str(pdf), "--modo", "parseable", "--salida", str(salida)])
+
+    assert codigo == 0
+    contenido = salida.read_text(encoding="utf-8")
+    assert "Fernandez Marta" not in contenido
+    assert "28999111" not in contenido
+    assert "X" * 9 not in contenido  # no es el modo enmascarado
+    assert "HEMATOLOGIA" in contenido
+    assert "Apellido y Nombre:" in contenido
+    assert "SINTETICOS" in contenido
+    salida_stderr = capsys.readouterr().err
+    assert salida_stderr.strip().endswith("Tipo detectado: laboratorio.")
+
+
 def test_pyproject_registra_el_punto_de_entrada_unico() -> None:
     raiz = Path(__file__).resolve().parents[1]
     datos = tomllib.loads((raiz / "pyproject.toml").read_text(encoding="utf-8"))
