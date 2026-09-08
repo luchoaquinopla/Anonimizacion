@@ -28,9 +28,25 @@ def test_reconoce_dni_de_siete_digitos() -> None:
     assert any(r.entity_type == ENTIDAD_DNI_AR for r in resultados)
 
 
-def test_rechaza_numero_fuera_de_rango_de_dni() -> None:
-    # 6 dígitos: fuera del rango típico de DNI argentino (7-8 dígitos)
-    resultados = _reconocedor().analyze("Código interno 123456", entities=[ENTIDAD_DNI_AR])
+def test_reconoce_dni_de_seis_digitos_sin_puntos() -> None:
+    # DNI viejo real: personas de edad avanzada (mayoría en cardiología)
+    # pueden tener DNI de 6 cifras, sin cero a la izquierda (ver
+    # `dni_ar.py`, docstring de `_DNI_MINIMO`).
+    resultados = _reconocedor().analyze("DNI 987654", entities=[ENTIDAD_DNI_AR])
+    assert any(r.entity_type == ENTIDAD_DNI_AR for r in resultados)
+
+
+def test_reconoce_dni_de_seis_digitos_con_puntos() -> None:
+    # Mismo DNI viejo, agrupado con puntos de a tres desde la derecha
+    # ("987.654"), igual que se agrupan los de 7-8 dígitos.
+    resultados = _reconocedor().analyze("DNI 987.654", entities=[ENTIDAD_DNI_AR])
+    assert any(r.entity_type == ENTIDAD_DNI_AR for r in resultados)
+
+
+def test_rechaza_numero_de_cinco_digitos() -> None:
+    # 5 dígitos: por debajo del piso real de DNI (6 dígitos, ver
+    # `_DNI_MINIMO`) -- sigue fuera de rango tras la Tarea 3.
+    resultados = _reconocedor().analyze("Código interno 12345", entities=[ENTIDAD_DNI_AR])
     assert resultados == []
 
 

@@ -48,8 +48,9 @@ ENTIDAD_ID_INTERNO = "ID_INTERNO"
 # Puntaje mínimo para considerar una detección de "alta" confianza. Por
 # debajo se marca `baja_confianza=True` (nunca se descarta, ver docstring
 # del módulo). 0.6 deja fuera al DNI sin separador de miles (score 0.5,
-# ambiguo con cualquier otro número de 7-8 dígitos) pero mantiene dentro al
-# DNI con puntos (0.85) y a las entidades NER de spaCy (PERSON/LOCATION 0.85).
+# ambiguo con cualquier otro número de 6-8 dígitos; ver `reconocedores/
+# dni_ar.py` sobre el piso de 6 dígitos) pero mantiene dentro al DNI con
+# puntos (0.85) y a las entidades NER de spaCy (PERSON/LOCATION 0.85).
 UMBRAL_BAJA_CONFIANZA = 0.6
 
 
