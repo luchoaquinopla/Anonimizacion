@@ -287,6 +287,55 @@ def test_procesar_delega_de_punta_a_punta_al_script_real_con_procesos_reales(
     assert len(estudios) == 6, "particion exhaustiva: los dos pacientes se publican, cada uno en su proceso"
 
 
+def test_esqueleto_genera_fixture_sin_pii_y_reporta_tipo_detectado(tmp_path, capsys) -> None:
+    """Tarea "herramienta de esqueleto de formato": el subcomando extrae por
+    el mismo camino que producción (`extraccion/texto_pymupdf.py`), enmascara
+    y reporta el tipo detectado + puntaje de la firma, sin requerir ninguna
+    configuración de base de datos (a diferencia de `procesar`/`servir`)."""
+    from tests.fixtures.pdf_sintetico import crear_pdf_con_texto
+
+    pdf = crear_pdf_con_texto(
+        tmp_path / "muestra.pdf",
+        paginas=["HEMATOLOGIA\nApellido y Nombre: Fernandez Marta\nDNI: 28999111\n"],
+    )
+    salida = tmp_path / "esqueleto.txt"
+
+    codigo = cli.main(["esqueleto", str(pdf), "--salida", str(salida)])
+
+    assert codigo == 0
+    contenido = salida.read_text(encoding="utf-8")
+    assert "Fernandez Marta" not in contenido
+    assert "28999111" not in contenido
+    assert "HEMATOLOGIA" in contenido
+    assert "Apellido y Nombre:" in contenido
+    salida_stderr = capsys.readouterr().err
+    assert "laboratorio" in salida_stderr
+
+
+def test_esqueleto_sin_salida_imprime_a_stdout(tmp_path, capsys) -> None:
+    from tests.fixtures.pdf_sintetico import crear_pdf_con_texto
+
+    pdf = crear_pdf_con_texto(tmp_path / "muestra.pdf", paginas=["HEMATOLOGIA\nDNI: 28999111\n"])
+
+    codigo = cli.main(["esqueleto", str(pdf)])
+
+    assert codigo == 0
+    salida_stdout = capsys.readouterr().out
+    assert "28999111" not in salida_stdout
+    assert "HEMATOLOGIA" in salida_stdout
+
+
+def test_esqueleto_con_pdf_ilegible_informa_error_sin_ruta_cruda(tmp_path, capsys) -> None:
+    pdf_corrupto = tmp_path / "corrupto.pdf"
+    pdf_corrupto.write_bytes(b"esto no es un pdf valido")
+
+    codigo = cli.main(["esqueleto", str(pdf_corrupto)])
+
+    assert codigo == 1
+    salida_stderr = capsys.readouterr().err
+    assert "pdf_ilegible" in salida_stderr
+
+
 def test_pyproject_registra_el_punto_de_entrada_unico() -> None:
     raiz = Path(__file__).resolve().parents[1]
     datos = tomllib.loads((raiz / "pyproject.toml").read_text(encoding="utf-8"))

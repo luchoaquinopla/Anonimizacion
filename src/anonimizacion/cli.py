@@ -45,6 +45,9 @@ from types import ModuleType
 
 from anonimizacion.configuracion import ConfiguracionOperador, ErrorConfiguracion, cargar_configuracion
 from anonimizacion.diagnostico import Hallazgo, diagnosticar
+from anonimizacion.dominio.errores import ErrorParseo
+from anonimizacion.esqueleto import generar_esqueleto
+from anonimizacion.extraccion.texto_pymupdf import extraer_texto
 
 _RAIZ_REPO = Path(__file__).resolve().parents[2]
 
@@ -112,6 +115,15 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_procesar.add_argument("--entrada", type=Path, default=None, help="carpeta con los PDFs a procesar")
     p_procesar.add_argument("--procesos", type=int, default=None, help="grado de concurrencia")
 
+    p_esqueleto = subparsers.add_parser(
+        "esqueleto",
+        help="Genera un fixture de texto sin PII a partir de un PDF real (allowlist estructural, ver esqueleto.py).",
+    )
+    p_esqueleto.add_argument("pdf", type=Path, help="ruta a un PDF real -- nunca se copia ni se versiona")
+    p_esqueleto.add_argument(
+        "--salida", type=Path, default=None, help="archivo donde escribir el esqueleto (default: stdout)"
+    )
+
     p_servir = subparsers.add_parser("servir", help="Levanta el panel de operación.")
     _agregar_argumentos_comunes(p_servir)
     p_servir.add_argument("--puerto", type=int, default=None)
@@ -176,6 +188,35 @@ def _comando_procesar(args: argparse.Namespace) -> int:
         sys.argv = argv_original
 
 
+def _comando_esqueleto(args: argparse.Namespace) -> int:
+    """No requiere `--config`/`--db-url` ni `diagnosticar`: es una herramienta
+    de lectura local, sin tocar la base de datos ni la cola -- el operador la
+    corre directo sobre sus PDFs reales, que nunca se copian al repositorio.
+    """
+    try:
+        texto = extraer_texto(args.pdf)
+    except ErrorParseo as error:
+        # Nunca la ruta cruda del PDF acá (mismo principio que
+        # `dominio/errores.py`: sin mensajes crudos ni rutas de archivo).
+        print(f"No se pudo extraer texto del PDF: {error.codigo.value}", file=sys.stderr)
+        return 1
+
+    esqueleto = generar_esqueleto(texto)
+    contenido = esqueleto.formatear()
+    if args.salida is not None:
+        args.salida.write_text(contenido, encoding="utf-8")
+        print(f"Esqueleto escrito en '{args.salida}'.", file=sys.stderr)
+    else:
+        print(contenido)
+
+    print(
+        f"Tipo detectado: {esqueleto.tipo_detectado.value} "
+        f"({esqueleto.puntaje}/{esqueleto.total_marcadores} marcadores de firma).",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _comando_servir(args: argparse.Namespace) -> int:
     config = _cargar_config_o_none(args.config)
     if config is None:
@@ -222,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
         return _comando_diagnosticar(args)
     if args.comando == "procesar":
         return _comando_procesar(args)
+    if args.comando == "esqueleto":
+        return _comando_esqueleto(args)
     if args.comando == "servir":
         return _comando_servir(args)
 

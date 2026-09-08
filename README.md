@@ -28,6 +28,20 @@ pytest -q
 
 No agregar PDFs reales ni PII al repositorio. Para pruebas sin Redis se puede usar `CELERY_TASK_ALWAYS_EAGER=1`.
 
+### Fixtures de calibración a partir de PDFs reales
+
+Hoy no hay ningún fixture derivado de un documento real en `tests/`: la calibración de los parsers de ECG, laboratorio y eco vive sólo en prosa dentro de sus docstrings, así que un refactor puede descalibrarlos en silencio. `anonimizacion esqueleto` convierte un PDF real -- que quien lo tenga en su máquina nunca debe copiar al repositorio -- en un fixture de texto sin PII:
+
+```powershell
+anonimizacion esqueleto D:\ruta\a\un\ecg-real.pdf           --salida tests/fixtures/esqueletos/ecg-01.txt
+anonimizacion esqueleto D:\ruta\a\un\laboratorio-real.pdf    --salida tests/fixtures/esqueletos/laboratorio-01.txt
+anonimizacion esqueleto D:\ruta\a\un\ecocardiograma-real.pdf --salida tests/fixtures/esqueletos/eco-01.txt
+```
+
+El comando imprime en la terminal el tipo de documento detectado y el puntaje de la firma (cuántos marcadores de `deteccion/firmas/` matchearon), para ver con cuánta evidencia se reconoció cada muestra. El texto se enmascara por **allowlist estructural, no por detección de PII** (ver `src/anonimizacion/esqueleto.py`): todo se tapa por forma (letras → `X`, dígitos → `0`) salvo las etiquetas, marcadores de firma y unidades que el propio código ya conoce -- la propiedad "nunca sale un nombre real" vale por construcción, no por la calidad de un detector. Los archivos `.txt` resultantes sí son versionables y sí deben commitearse en `tests/fixtures/esqueletos/`.
+
+**El PDF original nunca debe copiarse al repositorio** -- sólo el `.txt` que produce este comando.
+
 ## Despliegue institucional
 
 La guía de instalación, variables protegidas, permisos, backups, retención y rollback está en [`deploy/operacion-institucional.md`](deploy/operacion-institucional.md). El archivo [`deploy/variables-entorno.example`](deploy/variables-entorno.example) es sólo un catálogo y no contiene secretos.
