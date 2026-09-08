@@ -279,6 +279,131 @@ def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch)
     assert llamadas == [modulo._DB_URL_DEFAULT]
 
 
+def test_construir_aplicacion_sin_secreto_no_exige_autenticacion(tmp_path) -> None:
+    """Feature `acceso-al-panel`: `secreto=None` (default) preserva el
+    comportamiento previo -- éste es el modo que usa el resto de los tests
+    de este archivo que no pasan `secreto`, y no debe empezar a exigir
+    autenticación por accidente."""
+    modulo = _cargar_script()
+    engine = sa.create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=sa.pool.StaticPool
+    )
+    Base.metadata.create_all(engine)
+
+    aplicacion, _servicio = modulo.construir_aplicacion(engine, tmp_path, db_url="sqlite://", procesos=1)
+
+    estado: list[str] = []
+    aplicacion(
+        {"REQUEST_METHOD": "GET", "PATH_INFO": "/corridas/inexistente", "wsgi.input": None, "CONTENT_LENGTH": "0"},
+        lambda codigo, headers: estado.append(codigo),
+    )
+    # sin Authorization y sin embargo NO 401: la ruta responde según su
+    # propia lógica (acá 200, porque el servicio fake/real no valida
+    # existencia en este wiring) -- lo que importa es que nunca es 401.
+    assert estado[0] != "401 Unauthorized"
+
+
+def test_construir_aplicacion_con_secreto_exige_autenticacion_en_toda_ruta(tmp_path) -> None:
+    """Feature `acceso-al-panel`: pasar `secreto` envuelve la aplicación
+    ENTERA con `autenticacion_panel.exigir_autenticacion` -- se prueba
+    contra el WSGI real devuelto por `construir_aplicacion`, no contra un
+    doble del enrutador (para no validar un cableado que producción no usa)."""
+    modulo = _cargar_script()
+    engine = sa.create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=sa.pool.StaticPool
+    )
+    Base.metadata.create_all(engine)
+
+    aplicacion, _servicio = modulo.construir_aplicacion(
+        engine, tmp_path, db_url="sqlite://", procesos=1, secreto=b"secreto-de-test"
+    )
+
+    estado: list[str] = []
+    encabezados: list[tuple[str, str]] = []
+    cuerpo = aplicacion(
+        {"REQUEST_METHOD": "GET", "PATH_INFO": "/panel/x", "wsgi.input": None, "CONTENT_LENGTH": "0"},
+        lambda codigo, headers: (estado.append(codigo), encabezados.extend(headers)),
+    )
+
+    assert estado[0] == "401 Unauthorized"
+    assert dict(encabezados)["WWW-Authenticate"].startswith("Basic")
+    assert b"secreto-de-test" not in b"".join(cuerpo)
+
+
+def test_main_falla_temprano_si_escuchar_red_sin_secreto_configurado(monkeypatch) -> None:
+    """Decisión "qué pasa si el secreto no está configurado" (feature
+    `acceso-al-panel`): `--escuchar-red` expone el panel a toda la red del
+    instituto -- arrancar así SIN autenticación configurada es exactamente
+    el agujero que esta feature cierra, así que `main()` tiene que fallar
+    ANTES de conectar a Postgres, igual que ya hace con el pepper."""
+    from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
+
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--escuchar-red"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
+    )
+
+    llamadas: list[str] = []
+    monkeypatch.setattr(
+        modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
+    )
+
+    codigo = modulo.main()
+
+    assert codigo == 1
+    assert llamadas == [], "no debe conectar a Postgres si --escuchar-red no tiene secreto configurado"
+
+
+def test_main_falla_temprano_no_filtra_el_secreto_ni_rutas_del_sistema(monkeypatch, capsys) -> None:
+    from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
+
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--escuchar-red"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
+    )
+    monkeypatch.setattr(modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite://"))
+
+    modulo.main()
+
+    salida_error = capsys.readouterr().err
+    assert "ANONIMIZACION_PANEL_SECRETO" in salida_error  # el NOMBRE de la variable no es secreto
+    assert "Traceback" not in salida_error
+
+
+def test_main_sin_escuchar_red_y_sin_secreto_arranca_igual(monkeypatch) -> None:
+    """Bar preexistente conservado (feature `acceso-al-panel`): sólo en
+    `127.0.0.1` sigue tolerado sin autenticación, para no romper el uso
+    local/de desarrollo que ya existía antes de este cambio."""
+    from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
+
+    modulo = _cargar_script()
+    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
+    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
+    monkeypatch.setattr(
+        modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
+    )
+    monkeypatch.setattr(
+        modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite:///:memory:"), raising=False
+    )
+
+    class _ServidorFalso:
+        def serve_forever(self) -> None:
+            raise KeyboardInterrupt()
+
+        def server_close(self) -> None:
+            pass
+
+    monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
+
+    codigo = modulo.main()
+
+    assert codigo == 0
+
+
 def test_construir_aplicacion_recupera_corridas_abandonadas_al_arrancar(tmp_path, capsys) -> None:
     """Decisión "qué pasa si el servidor se cae con una corrida en curso"
     (feature `despachador-desde-el-panel`): al construir la aplicación --

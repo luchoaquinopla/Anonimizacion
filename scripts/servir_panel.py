@@ -56,13 +56,21 @@ propio presupuesto de memoria por corrida (~875 MB por proceso de `MotorPii`).
 Seguridad (feature `despachador-desde-el-panel`): antes de este cambio, un
 panel sin autenticación en `127.0.0.1` sólo exponía LECTURA de datos
 operativos. Ahora `POST /corridas`/`POST /corridas/{id}/reintentar` pueden
-lanzar trabajo pesado (horas de CPU, procesos hijos con el pepper heredado).
-Sigue sin autenticación (fuera de alcance de este cambio, ver el mensaje de
-la tarea) -- pero el default sigue siendo `127.0.0.1` y `--escuchar-red`
-sigue siendo un pedido explícito; con este cambio, olvidarse de pedirlo a
-propósito ya no sólo evita exponer LECTURAS, evita que cualquiera en la red
-del instituto pueda lanzar una corrida de horas sobre CUALQUIER ruta bajo
-`--raiz` sin ningún control de quién la pidió.
+lanzar trabajo pesado (horas de CPU, procesos hijos con el pepper heredado)
+-- pero el default sigue siendo `127.0.0.1` y `--escuchar-red` sigue siendo
+un pedido explícito.
+
+Autenticación (feature `acceso-al-panel`, ver el docstring de
+`web/autenticacion_panel.py` para la decisión completa): HTTP Basic Auth
+contra un secreto compartido (`ANONIMIZACION_PANEL_SECRETO` /
+`ANONIMIZACION_PANEL_SECRETO_ARCHIVO`), protegiendo TODO el panel -- no sólo
+`POST /corridas`. Sin ese secreto configurado, `--escuchar-red` NO arranca
+(falla temprano en `main()`, antes de conectar a Postgres): exponer el panel
+a toda la red del instituto sin autenticación es exactamente el agujero que
+esto cierra. Sólo en `127.0.0.1` se tolera arrancar sin secreto configurado,
+para no romper el uso local/de desarrollo que ya existía. TLS sigue fuera de
+alcance (ver `web/autenticacion_panel.py` para el riesgo que eso deja
+abierto y bajo qué condiciones es aceptable).
 """
 
 from __future__ import annotations
@@ -87,7 +95,9 @@ from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.trabajadores import despacho_paralelo
+from anonimizacion.web.autenticacion_panel import exigir_autenticacion
 from anonimizacion.web.rutas_corridas import AplicacionWsgi, crear_aplicacion_corridas
+from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado, obtener_secreto_panel
 from anonimizacion.web.servicio_corridas import ServicioCorridasReal
 
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
@@ -123,6 +133,7 @@ def construir_aplicacion(
     *,
     db_url: str,
     procesos: int,
+    secreto: bytes | None = None,
     tope_bytes: int | None = None,
     margen_inactividad: timedelta = MARGEN_INACTIVIDAD_DEFAULT,
     ahora: datetime | None = None,
@@ -144,6 +155,14 @@ def construir_aplicacion(
     proceso hijo arma su PROPIO `Engine` -- una conexión de socket no
     sobrevive un pickle a través del límite de proceso) con ese grado de
     concurrencia (feature `despachador-desde-el-panel`).
+
+    `secreto` (feature `acceso-al-panel`): si no es `None`, la aplicación
+    WSGI devuelta se envuelve ENTERA con `autenticacion_panel.exigir_autenticacion`
+    -- toda ruta, incluidas las que sólo leen, exige HTTP Basic Auth contra
+    ese secreto. `None` (default) preserva el wiring previo sin autenticar,
+    tal como lo siguen usando los tests que no pasan `secreto` -- `main()`
+    es quien decide, según el modo de arranque, si hay `secreto` para pasar
+    acá (ver `_resolver_secreto_para_arranque`).
 
     Recuperación de arranque (decisión "qué pasa si el servidor se cae con
     una corrida en curso"): ANTES de devolver la aplicación, cierra como
@@ -173,6 +192,8 @@ def construir_aplicacion(
         lanzador=lanzador, motor=engine, db_url=db_url, procesos=procesos, tope_bytes=tope_bytes
     )
     aplicacion = crear_aplicacion_corridas([raiz_autorizada], servicio, motor_lectura=engine)
+    if secreto is not None:
+        aplicacion = exigir_autenticacion(aplicacion, secreto)
     return aplicacion, servicio
 
 
@@ -216,6 +237,32 @@ def _resolver_host(*, escuchar_red: bool) -> str:
     return _HOST_TODAS_LAS_INTERFACES if escuchar_red else _HOST_LOCAL
 
 
+def _resolver_secreto_para_arranque(*, escuchar_red: bool) -> bytes | None:
+    """Decisión "qué pasa si el secreto no está configurado" (feature
+    `acceso-al-panel`, ver `web/autenticacion_panel.py` para el resto de la
+    decisión de autenticación):
+
+    - Sin `--escuchar-red` (sólo `127.0.0.1`): se tolera arrancar sin
+      autenticación -- mismo bar que ya existía para este modo, para no
+      romper el uso local/de desarrollo.
+    - Con `--escuchar-red`: NO. Exponer el panel a toda la red del instituto
+      sin autenticación configurada es EXACTAMENTE el agujero que esta
+      feature cierra (`POST /corridas` puede lanzar horas de CPU sobre
+      cualquier ruta bajo `--raiz`) -- se relanza `ErrorSecretoPanelNoConfigurado`
+      para que `main()` falle ANTES de conectar a Postgres, mismo criterio
+      que ya usa con el pepper.
+
+    Separada de `main()` para poder fijar la decisión con un test unitario
+    sin levantar ningún servidor real (mismo patrón que `_resolver_host`).
+    """
+    try:
+        return obtener_secreto_panel()
+    except ErrorSecretoPanelNoConfigurado:
+        if escuchar_red:
+            raise
+        return None
+
+
 def main() -> int:
     args = _parsear_args()
 
@@ -235,13 +282,33 @@ def main() -> int:
         print(f"No se puede arrancar el panel: {error}", file=sys.stderr)
         return 1
 
+    # Decisión "acceso al panel" (feature `acceso-al-panel`): mismo criterio
+    # de fallo temprano que el pepper, ver `_resolver_secreto_para_arranque`.
+    # El mensaje de `ErrorSecretoPanelNoConfigurado` sólo nombra las
+    # variables de entorno esperadas -- nunca un valor leído -- así que
+    # imprimirlo tal cual no filtra el secreto.
+    print(
+        "Secreto del panel: verificando ANONIMIZACION_PANEL_SECRETO/ANONIMIZACION_PANEL_SECRETO_ARCHIVO...",
+        file=sys.stderr,
+    )
+    try:
+        secreto = _resolver_secreto_para_arranque(escuchar_red=args.escuchar_red)
+    except ErrorSecretoPanelNoConfigurado as error:
+        print(
+            f"No se puede escuchar en toda la red del instituto sin autenticación configurada: {error}",
+            file=sys.stderr,
+        )
+        return 1
+
     print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
     # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
     # arma el pool con `pool_pre_ping`/`pool_recycle` contra RDS -- este panel
     # es un proceso de larga vida, exactamente el perfil que una conexión
     # muerta del pool afecta (ver docstring de esa función).
     engine = construir_engine_postgres(args.db_url)
-    aplicacion, servicio = construir_aplicacion(engine, args.raiz, db_url=args.db_url, procesos=args.procesos)
+    aplicacion, servicio = construir_aplicacion(
+        engine, args.raiz, db_url=args.db_url, procesos=args.procesos, secreto=secreto
+    )
 
     host = _resolver_host(escuchar_red=args.escuchar_red)
     servidor = make_server(host, args.puerto, aplicacion, server_class=_ServidorConHilos)
