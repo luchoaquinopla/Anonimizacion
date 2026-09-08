@@ -1,0 +1,37 @@
+# Ejemplo de configuración del operador (`anonimizacion.toml`).
+#
+# Copiar este archivo como `anonimizacion.toml` junto a donde se va a correr
+# el comando `anonimizacion` (ver README.md y deploy/operacion-institucional.md),
+# y ajustar los valores. Si no existe ningún archivo, `anonimizacion` usa los
+# mismos valores de producción que traía antes en `--db-url`/`--puerto`/etc.
+#
+# ESTE ARCHIVO NO LLEVA SECRETOS. El pepper del pipeline y el secreto del
+# panel siguen viniendo SIEMPRE de una variable de entorno o de un archivo
+# aparte con permisos restringidos -- ver deploy/variables-entorno.example.
+# Si se pone una clave que parece un secreto acá (por ejemplo "pepper" o
+# "secreto"), `anonimizacion diagnosticar`/`procesar`/`servir` rechaza el
+# archivo entero con un error explícito, en vez de aceptarlo.
+
+# URL de conexión a la base de datos PostgreSQL.
+db_url = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+
+# Carpeta con los PDFs a procesar (usada por "anonimizacion procesar").
+# Comentar o borrar esta línea si sólo se va a usar "anonimizacion servir".
+# entrada = "D:/pdfs-instituto"
+
+# Raíz autorizada para lanzar corridas nuevas desde el panel
+# ("anonimizacion servir"). El panel nunca acepta una ruta fuera de esta raíz.
+raiz = "."
+
+# Puerto donde escucha el panel de operación.
+puerto = 8000
+
+# Cantidad de procesos que procesan en paralelo. Si no se indica, se calcula
+# un valor conservador según el hardware de esta máquina.
+# procesos = 4
+
+# Si es "true", expone el panel a toda la red del instituto (no sólo a esta
+# máquina). Requiere tener configurado el secreto del panel -- ver
+# deploy/variables-entorno.example. El valor por defecto ("false") sólo
+# expone el panel en esta máquina, sin necesidad de secreto.
+escuchar_red = false

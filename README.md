@@ -6,6 +6,19 @@ Pipeline interno para extraer, verificar, pseudonimizar y preparar datos estruct
 
 El núcleo de extracción, reconciliación, corridas durables y contratos de operación está implementado y probado. **No está listo aún para uso institucional masivo**: falta la integración durable completa, el despliegue institucional aprobado, el corpus sintético/carga y la auditoría final de PII.
 
+## Uso (operador)
+
+Un único comando instalado, `anonimizacion`, reemplaza a los dos scripts sueltos que existían antes:
+
+```powershell
+python -m pip install -e .          # una vez, lo hace IT
+anonimizacion diagnosticar          # ¿está todo listo para operar?
+anonimizacion procesar --entrada D:\pdfs-instituto
+anonimizacion servir
+```
+
+`anonimizacion diagnosticar` verifica el pepper, el secreto del panel (si hace falta), que Postgres esté encendido y con las migraciones al día, y que la carpeta a procesar exista y se pueda leer -- y dice en castellano llano qué falta y cómo resolverlo, no un traceback. Los valores no secretos (URL de base, carpeta, puerto) se configuran una sola vez en un archivo `anonimizacion.toml` (ver [`deploy/anonimizacion.toml.example`](deploy/anonimizacion.toml.example)) en vez de banderas sueltas. El pepper y el secreto del panel siguen viniendo siempre de variable de entorno o de un archivo aparte -- nunca de ese archivo de configuración.
+
 ## Desarrollo
 
 ```powershell
