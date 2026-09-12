@@ -111,6 +111,14 @@ nombre del médico, y la decisión sobre señal cruda de ECG (ver riesgo técnic
 - Todo test que use un PDF de muestra debe usar fixtures sintéticas, nunca los PDFs reales
   que se compartan en la conversación de diseño.
 
+## Documentación del proyecto final
+
+Este repo es parte del proyecto final. Todo lo que se documenta en Obsidian se rige por la
+nota `02 - Documentación/Guía de documentación del proyecto.md` del vault: decisiones,
+experimentos e hitos, no el paso a paso. Al cerrar cada sesión de trabajo, proponer las
+entradas correspondientes y cargarlas solo con aprobación de un integrante. Nunca copiar
+datos de pacientes al vault.
+
 ## Estado del proyecto (SDD)
 
 Persistencia: `hybrid` (OpenSpec + Engram). Ver `openspec/` para specs formales y
