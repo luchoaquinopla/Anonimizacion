@@ -174,7 +174,11 @@ def _muestrear(trazo: Trazo, cantidad: int) -> np.ndarray | None:
         return None
 
     tiempos_s = (ys - ys[0]) / MM_POR_S
-    mv = (xs - xs[0]) / MM_POR_MV
+    # línea base = centro de la banda de amplitud (promedio de X), NO el
+    # primer punto: a diferencia de un pulso de calibración (que sí arranca
+    # en su "pie"), una derivación puede empezar en cualquier fase de la
+    # onda -- el primer punto no es un cero confiable.
+    mv = (xs - xs.mean()) / MM_POR_MV
 
     duracion_objetivo = (cantidad - 1) / FRECUENCIA_HZ
     if tiempos_s[-1] < duracion_objetivo * (1 - TOLERANCIA_CALIBRACION):
