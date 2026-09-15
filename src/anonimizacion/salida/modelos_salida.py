@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..dominio.senal_ecg import SenalEcg
+
 
 @dataclass(frozen=True)
 class FilaResultadoLaboratorio:
@@ -39,7 +41,12 @@ class ContenidoLaboratorioSalida:
 
 @dataclass(frozen=True)
 class ContenidoEcgSalida:
-    """Payload de salida de un ECG: médico pseudonimizado + medidas (esquema fijo)."""
+    """Payload de salida de un ECG: médico pseudonimizado + medidas (esquema fijo).
+
+    `senal` (openspec `senal-ecg-y-dataset-vinculado`): se propaga tal cual
+    desde `ContenidoEcg.senal` -- ni PII ni pivote, sólo geometría medida
+    del PDF. `None` cuando el layout no validó.
+    """
 
     id_medico: str | None
     vent_rate: str | None
@@ -47,6 +54,7 @@ class ContenidoEcgSalida:
     qrs_duration: str | None
     qt_qtc: str | None
     ejes: str | None
+    senal: SenalEcg | None = None
 
 
 @dataclass(frozen=True)
