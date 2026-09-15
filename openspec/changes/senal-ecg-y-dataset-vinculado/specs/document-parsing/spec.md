@@ -9,7 +9,7 @@ fecha/hora, institución, edad, sexo, técnico, médico derivante) y las medidas
 advertencias propias del equipo (ej. "PID / NAME MISMATCH") sin abortar el parsing.
 El registro de ECG MUST incluir un campo de señal opcional, poblado por
 `extraccion-senal-ecg`; cuando la señal no valida geométricamente, el registro MUST
-publicarse con `senal` en `campos_no_extraidos` en lugar de fallar el parsing.
+publicarse con `ecg.senal` en `campos_no_extraidos` en lugar de fallar el parsing.
 (Previously: no existía ningún campo de señal en el modelo de ECG parseado.)
 
 #### Scenario: ECG con advertencia de equipo
@@ -27,4 +27,4 @@ publicarse con `senal` en `campos_no_extraidos` en lugar de fallar el parsing.
 - GIVEN un PDF de ECG cuyo layout de trazos no valida geométricamente
 - WHEN se ejecuta el parser de ECG
 - THEN el registro tipado se produce igual, sin campo de señal poblado
-- AND `senal` queda listado en `campos_no_extraidos`
+- AND `ecg.senal` queda listado en `campos_no_extraidos`
