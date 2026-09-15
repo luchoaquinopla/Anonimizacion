@@ -95,3 +95,19 @@ def test_capturar_trazos_ignora_dibujos_no_negros_o_con_relleno() -> None:
     relleno.commit()
 
     assert capturar_trazos(pagina) == ()
+
+
+def test_capturar_trazos_ignora_negro_de_ancho_distinto_al_medido() -> None:
+    """Spec `extraccion-senal-ecg`: "MUST validar que los trazos sean
+    negros con ancho aproximado 0,43" -- un trazo negro sin relleno pero
+    con otro ancho (p. ej. un subrayado o una línea de firma) no es un
+    trazo de ECG."""
+    documento = pymupdf.open()
+    pagina = documento.new_page(width=612, height=792)
+
+    ancho_distinto = pagina.new_shape()
+    ancho_distinto.draw_line((0, 0), (100, 0))
+    ancho_distinto.finish(color=(0, 0, 0), fill=None, width=1.0)
+    ancho_distinto.commit()
+
+    assert capturar_trazos(pagina) == ()

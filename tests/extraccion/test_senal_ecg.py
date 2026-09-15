@@ -155,6 +155,17 @@ def test_construir_senal_falla_si_los_pulsos_apuntan_en_direcciones_distintas() 
     assert construir_senal(tuple(trazos)) is None
 
 
+def test_construir_senal_falla_si_dos_pulsos_compiten_por_la_misma_banda() -> None:
+    """Dos pulsos a la misma distancia de una banda (acá: literalmente en
+    la misma posición) -- `_emparejar_por_proximidad` no puede resolver una
+    asignación 1 a 1, y otra banda se queda sin pulso. Violación de layout:
+    `None`, nunca una asignación arbitraria."""
+    trazos = list(_corpus_valido())
+    trazos[14] = _pulso(280.0, _X_FILA[0])  # pulso de la fila 1 duplicado sobre la fila 0
+
+    assert construir_senal(tuple(trazos)) is None
+
+
 def test_construir_senal_ignora_el_orden_de_los_puntos_del_pulso() -> None:
     """El pulso decide pie/meseta por posición temporal (Y), no por el
     orden en que `get_drawings()` entrega los puntos."""

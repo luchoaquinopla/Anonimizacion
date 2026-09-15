@@ -64,12 +64,31 @@ paciente fue impreso, logueado ni guardado.
 
 ### Desviaciones del diseño
 
-Ninguna decisión de negocio deviada. Un matiz respecto del texto tentativo
-de `design.md` (algoritmo, paso 1): el propio diseño lo marcaba como
-"pregunta abierta" a fijar por el test de la tarea 1.1, y el resultado
-medido (sin aplicar `derotation_matrix`) reemplaza esa redacción tentativa —
-no es una desviación, es la resolución explícita de la ambigüedad que el
-diseño delegaba a esta tarea.
+Ninguna decisión de negocio deviada, pero **sí hay dos desviaciones reales**
+del texto de `design.md` (algoritmo), descubiertas por medición contra el
+ECG real y corregidas en esta misma entrega:
+
+1. **Paso 1 (captura)**: `design.md` marcaba explícitamente como "pregunta
+   abierta" si `get_drawings()` devuelve coordenadas rotadas o sin rotar.
+   El test de la tarea 1.1 la fijó por medición: sin rotar, y aplicar
+   `derotation_matrix` (como sugería el texto tentativo del algoritmo)
+   estropea el eje de tiempo. Esto no es una desviación -- es la
+   resolución de una ambigüedad que el propio diseño delegaba a esta tarea.
+2. **Paso 2 (calibración)**: `design.md` describe "el pulso de cada fila"
+   y una conversión fija `mV = desplazamiento/10`, sin distinguir signo ni
+   asociar explícitamente cada pulso a una banda de amplitud. La primera
+   implementación (`135bee6`) interpretó esto como 4 pulsos por COLUMNA y
+   una escala de signo fijo -- **desviación real, no contemplada por el
+   texto del diseño ni cubierta por sus tests originales**, que producía
+   la señal con la amplitud invertida (ver sección de corrección más
+   abajo). La medición contra el ECG real corrigió esto a: 4 pulsos, uno
+   por BANDA DE AMPLITUD (3 filas de la grilla + la banda propia de la
+   tira), cada uno determinando signo y línea base de su propia banda. Se
+   recomienda actualizar `design.md` en un cambio posterior para que el
+   texto del algoritmo refleje esta geometría medida en vez de la
+   redacción original ("el pulso de cada fila" queda ahora correcto, pero
+   la fórmula de conversión y la ausencia de mención a la banda de la tira
+   no reflejan lo implementado).
 
 ### Estado de la suite completa (post-corrección, con Postgres levantado)
 

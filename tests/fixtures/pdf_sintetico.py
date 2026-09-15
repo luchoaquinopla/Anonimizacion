@@ -32,15 +32,6 @@ from pathlib import Path
 
 import pymupdf
 
-from anonimizacion.extraccion.senal_ecg import (
-    FRECUENCIA_HZ as _FRECUENCIA_ECG,
-    MM_POR_S as _MM_POR_S_ECG,
-    MUESTRAS_DERIVACION as _MUESTRAS_DERIVACION_ECG,
-    MUESTRAS_TIRA as _MUESTRAS_TIRA_ECG,
-    OFFSETS_COLUMNA as _OFFSETS_COLUMNA_ECG,
-    ORDEN_DERIVACIONES as _ORDEN_DERIVACIONES_ECG,
-)
-
 from .plantilla_documento import (
     FragmentoPagina,
     generar_identidad_sintetica,
@@ -349,6 +340,19 @@ def generar_corpus_clinico(
 # sin rotar). Este generador dibuja esa misma geometría con `pymupdf`
 # (nunca reportlab), con un oráculo conocido, para el test de integración
 # extremo a extremo (`test_pdf_sintetico_ecg.py`).
+
+# Hechos MEDIDOS contra el ECG real -- deliberadamente NO importados de
+# `extraccion/senal_ecg.py`: si el fixture reutilizara las constantes del
+# extractor, un cambio erróneo en el extractor (p. ej. otra frecuencia o
+# otro orden de derivaciones) arrastraría al oráculo con él y el test
+# nunca lo detectaría -- el oráculo tiene que poder desviarse del código
+# bajo prueba para que una regresión ahí se vea acá.
+_FRECUENCIA_ECG = 500
+_MUESTRAS_DERIVACION_ECG = 1238
+_MUESTRAS_TIRA_ECG = 5000
+_MM_POR_S_ECG = 25.0
+_OFFSETS_COLUMNA_ECG = (0, 1250, 2500, 3750)  # 0/2,5/5/7,5 s a 500 Hz
+_ORDEN_DERIVACIONES_ECG = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 
 _X_FILA_ECG_MM = (60.0, 100.0, 140.0)
 _X_TIRA_ECG_MM = 200.0  # banda propia, medido: NO coincide con ninguna fila de la grilla
