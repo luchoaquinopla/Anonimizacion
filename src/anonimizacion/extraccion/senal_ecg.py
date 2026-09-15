@@ -46,6 +46,7 @@ TOLERANCIA_CALIBRACION = 0.02  # ±2%, altura del pulso vs MM_POR_MV
 TOLERANCIA_DURACION = 0.02  # ±2%, cobertura temporal del trazo vs la ventana esperada -- se
 # separa de TOLERANCIA_CALIBRACION porque mide otra cosa (duración, no altura de pulso) y no
 # hay ninguna razón para que ambas tolerancias deban moverse juntas si una se recalibra.
+AMPLITUD_MAXIMA_UV = 32767  # tope representable en int16 (µV); ver `_muestrear`, rechazo todo-o-nada
 ORDEN_DERIVACIONES = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 INDICE_TIRA_RITMO = ORDEN_DERIVACIONES.index("V1")
 _INDICE_REFERENCIA_TIRA = 3  # dentro de `referencias_x`: 0..2 = filas de la grilla, 3 = tira
@@ -271,4 +272,16 @@ def _muestrear(trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float) -
 
     grilla_s = np.linspace(0, duracion_objetivo, cantidad)
     mv_interpolado = np.interp(grilla_s, tiempos_s, mv)
-    return np.round(mv_interpolado * 1000).astype(np.int16)
+    # CRÍTICO (revisión adversarial): `.astype(np.int16)` sobre un valor fuera
+    # de rango envuelve en silencio (p. ej. 32768 -> -32768) en vez de
+    # lanzar -- corrompería la señal sin ningún aviso. Se valida ANTES de
+    # convertir y se rechaza (nunca se recorta: recortar también corrompe en
+    # silencio, sólo que de forma distinta) -- mismo criterio "todo o nada"
+    # que el resto de este módulo. `np.round` redondea mitad al par
+    # (banker's rounding): error ≤ 0,5 µV frente al valor exacto, sin sesgo
+    # sistemático hacia arriba/abajo -- aceptable frente a la resolución de
+    # 1 µV de la calibración.
+    muestras_uv = np.round(mv_interpolado * 1000)
+    if np.any(np.abs(muestras_uv) > AMPLITUD_MAXIMA_UV):
+        return None
+    return muestras_uv.astype(np.int16)

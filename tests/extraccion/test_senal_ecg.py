@@ -16,12 +16,14 @@ import math
 import numpy as np
 
 from anonimizacion.extraccion.senal_ecg import (
+    AMPLITUD_MAXIMA_UV,
     FRECUENCIA_HZ,
     MM_POR_S,
     MUESTRAS_DERIVACION,
     MUESTRAS_TIRA,
     OFFSETS_COLUMNA,
     ORDEN_DERIVACIONES,
+    _muestrear,
     construir_senal,
 )
 
@@ -227,3 +229,39 @@ def test_construir_senal_falla_ante_trazo_de_longitud_no_reconocida() -> None:
     trazos[-1] = tuple((0.0, float(i)) for i in range(300))  # ni pulso, ni derivación, ni tira
 
     assert construir_senal(tuple(trazos)) is None
+
+
+# --- rechazo de amplitud fuera de rango int16 (CRÍTICO, revisión adversarial) --
+#
+# Aisladas en `_muestrear` (no vía `construir_senal`): una excursión de
+# ~32,8 mV corresponde a ~328 mm de desplazamiento en X, que rompe el
+# agrupamiento por banda de amplitud de `_asignar_derivaciones` (el outlier
+# ya no cae en el cluster de su fila) -- confundiría "rechazado por rango"
+# con "rechazado por geometría de grilla", dos causas distintas. El oráculo
+# es el valor conocido a mano (mV objetivo), no la misma fórmula que
+# `_muestrear` usa para convertir -- se fija el resultado exacto esperado.
+
+
+def test_muestrear_rechaza_excursion_que_desborda_int16_en_silencio() -> None:
+    """Antes del fix: `.astype(np.int16)` envolvía 32768 uV -> -32768 uV sin
+    avisar. Ahora debe rechazar (`None`), nunca recortar ni envolver."""
+    amplitud_mv_fuera_de_rango = (AMPLITUD_MAXIMA_UV + 1) / 1000  # 32,768 mV -> 32768 uV
+    trazo = _trazo_desde_mv(
+        [amplitud_mv_fuera_de_rango] * MUESTRAS_DERIVACION, y0_mm=0.0, x_referencia_mm=0.0
+    )
+
+    assert _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=0.0, escala_mm=_ESCALA_MM_REAL) is None
+
+
+def test_muestrear_conserva_excursion_exacta_en_el_borde_representable() -> None:
+    """32,767 mV (= 32767 uV, el máximo que entra en int16) se conserva
+    exacto -- el rechazo empieza estrictamente después del borde, no antes."""
+    amplitud_mv_en_el_borde = AMPLITUD_MAXIMA_UV / 1000  # 32,767 mV -> 32767 uV
+    trazo = _trazo_desde_mv(
+        [amplitud_mv_en_el_borde] * MUESTRAS_DERIVACION, y0_mm=0.0, x_referencia_mm=0.0
+    )
+
+    muestras = _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=0.0, escala_mm=_ESCALA_MM_REAL)
+
+    assert muestras is not None
+    assert np.all(muestras == AMPLITUD_MAXIMA_UV)

@@ -39,13 +39,13 @@ ancho aproximado 0,43, y MUST NOT calibrar contra ningún otro elemento gráfico
 ### Requirement: Validación geométrica del layout con degradación explícita
 El sistema MUST validar que el layout medido (columnas, offsets, conteo de puntos, color y
 ancho de trazo) coincida con el layout esperado antes de aceptar la señal como válida.
-Cuando la validación falla, el sistema MUST publicar el estudio con `senal` incluido en
+Cuando la validación falla, el sistema MUST publicar el estudio con `ecg.senal` incluido en
 `campos_no_extraidos` y MUST NOT enviarlo a cuarentena por ese motivo.
 
 #### Scenario: Layout que no valida
 - GIVEN un PDF de ECG cuyos trazos no coinciden con el layout geométrico esperado
 - WHEN se ejecuta la extracción de señal
-- THEN el estudio se publica con `senal` en `campos_no_extraidos`
+- THEN el estudio se publica con `ecg.senal` en `campos_no_extraidos`
 - AND el estudio NO pasa a cuarentena por esta causa
 
 ### Requirement: Aislamiento de texto respecto de la señal

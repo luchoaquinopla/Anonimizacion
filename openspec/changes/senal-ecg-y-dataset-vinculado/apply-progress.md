@@ -151,6 +151,102 @@ entrega en PRs más chicos o aceptar `size:exception` para PR1.
 
 ### Restante
 
-Fase 2, 3 y 4 (PR 2, 3, 4) — no empezadas. `uv.lock` sigue sin versionar
+Fase 3 y 4 (PR 3, 4) — no empezadas. `uv.lock` sigue sin versionar
 (corresponde a la tarea 3.6, no a esta entrega) salvo por el cambio de
 `pyproject.toml` que agrega `ruff` a `dev`.
+
+## Entrega 2 (PR 2, rama `feat/senal-ecg-2-persistencia`, base `feat/senal-ecg-1-extraccion`)
+
+Estado: **completa** — 7/7 tareas de la Fase 2 (2.0–2.6).
+
+### TDD Cycle Evidence
+
+| Tarea | RED | GREEN | REFACTOR | Commit |
+|---|---|---|---|---|
+| 2.0 | — (corrección de spec, no código) | `specs/extraccion-senal-ecg/spec.md`, `specs/document-parsing/spec.md`: `senal` → `ecg.senal` | — | `4fc9128` |
+| 2.1 | `tests/salida/test_codec_senal.py` (bytes conocidos vía `zlib`/`np.packbits` crudo, no la misma fórmula del codec — oráculo independiente) | `src/anonimizacion/salida/codec_senal.py` | — (siete tests, cobertura ya enfocada) | `a7b74e7` |
+| 2.2 | `tests/salida/test_migraciones.py` (tabla, PK/FK, downgrade, `STORAGE EXTERNAL` y `ON DELETE CASCADE` contra Postgres real) | `migrations/versions/0013_senal_ecg.py`, `SenalEcgOrm` en `modelos_orm.py` | — | `0d84503` |
+| 2.3/2.4 | `tests/parseo/test_ecg_mortara.py` (señal válida/inválida), `tests/reconciliacion/test_ecg_mortara.py` (`ecg.senal` en `campos_no_extraidos`) | `parseo/ecg_mortara.py` (`ContenidoEcg.senal`, invoca `construir_senal`), `salida/modelos_salida.py` (`ContenidoEcgSalida.senal`), `salida/constructor_registro.py`, `reconciliacion/ecg_mortara.py` | — | `c7625f7` |
+| 2.5 | `tests/pipeline/test_ejecutor.py` (wiring del capturador), `tests/salida/destinos/test_postgres.py` (escritura, idempotencia, atomicidad contra Postgres real) | `dominio/referencias.py` (`ecg.senal` en whitelist), `pipeline/ejecutor.py` (`capturador_para` closure), `salida/destinos/postgres.py` (`_escribir_ecg` agrega `SenalEcgOrm`) | — | `a46e29f` |
+| 2.6 | — | — | Revisado: `detectar_tipo` corre exactamente 2 veces por documento en el camino de producción (una en el closure `capturador_para`, otra en `_resolver_documento`) — igual al presupuesto de la decisión #1 del diseño; los fakes de `extraer` inyectados en tests existentes no pasan por ese closure, así que su contrato no cambió | `a46e29f` |
+
+### Desviación de ubicación (no de diseño): `ContenidoEcg.senal`
+
+`tasks.md` (tarea 2.3) decía "extender `dominio/modelos.py` (`ContenidoEcg.senal`)", pero `ContenidoEcg` nunca vivió en `dominio/modelos.py` — vive en `parseo/ecg_mortara.py` desde la Fase 4 original (`sdd/pdf-pii-anonymization`). El campo se agregó en su ubicación real. `design.md` y las specs ya hablan de "el registro tipado" sin fijar el módulo exacto, así que no hay contradicción de diseño, sólo un texto de tarea que no reflejaba dónde vive el código.
+
+### Hallazgo: `ecg.senal` no viene del inventario de texto
+
+`reconciliacion/ecg_mortara.py::inventariar` sólo reconoce header/medidas (regex sobre texto). La señal es geometría, no texto — nunca puede aparecer en ese inventario. Se agrega `ecg.senal` a `campos_no_extraidos` en `reconciliar()` DESPUÉS de `reconciliar_cobertura`, comparando directamente `contenido.senal is None`, sin pasar por `verificar_cobertura`. Esto significa que un ECG SIN trazos capturados en absoluto (p. ej. `TextoExtraido.trazos == ()`, caso de cualquier test que construya `TextoExtraido` a mano sin capturador) también queda marcado con `ecg.senal` en `campos_no_extraidos` — comportamiento correcto por el requisito ("degradación explícita"), pero rompió dos tests preexistentes de Fase 2/3 anteriores que no esperaban ese campo (`tests/reconciliacion/test_inventario.py`, `tests/integracion/test_lote_aislamiento.py`); se actualizaron para reflejar el nuevo campo esperado, no para ocultarlo.
+
+### Atomicidad estudio+señal, verificada contra Postgres real
+
+`tests/salida/destinos/test_postgres.py` agrega un test que fuerza un `RuntimeError` no relacionado con `IntegrityError` durante `codificar_muestras` (monkeypatch) contra Postgres real: confirma que NINGÚN `estudio` ni `senal_ecg` queda persistido de ese intento (misma `sesion.begin()` que ya envolvía `estudio` + `medicion_ecg` desde el fix post-PR9 — la señal se sumó al mismo bloque, no requirió una transacción nueva). SQLite no podría probar esto: no impone FKs por defecto.
+
+### Verificación contra ECG real (sólo lectura, sin PII)
+
+Corrido contra `D:\ejemplos_pdf\document (34).pdf` de punta a punta (extraer → parsear → reconciliar → construir_registro → escribir contra Postgres real, luego limpiar la fila): 17 trazos capturados, `contenido.senal` no `None`, forma `(12, 5000)`, 12 filas enmascaradas, `campos_no_extraidos == ()` (documento completo), 1 fila persistida en `senal_ecg` y removida al final de la verificación. Ningún dato de encabezado impreso ni logueado. Script ejecutado desde el scratchpad de la sesión, nunca versionado.
+
+### Tamaño del cambio
+
+`git diff --shortstat feat/senal-ecg-1-extraccion...HEAD`: **21 files changed, 740 insertions(+), 19 deletions(-)** — por encima de los ~300 estimados en `proposal.md` para esta entrega (~2,5×), en línea con el patrón ya observado en PR1 (~3,5×): la cobertura de tests (Postgres real para atomicidad/FK/STORAGE EXTERNAL, escenarios de reconciliación, wiring del ejecutor) es el excedente real, no relleno. Se mantuvo `delivery_strategy: ask-on-risk` sin pedir nueva decisión de split porque cada tarea individual quedó bajo los ~400 líneas y el forecast de `tasks.md` ya anticipaba "Medium" para el cambio completo, no "High" por entrega.
+
+### Correcciones de revisión adversarial (post-entrega, misma rama)
+
+Commits `4ef566f`, `ef7ef30`.
+
+1. **CRITICAL — wraparound silencioso a int16**: `extraccion/senal_ecg.py::_muestrear`
+   hacía `.astype(np.int16)` sin acotar amplitud -- fuera de ±32.767 mV,
+   numpy envuelve en silencio (32768 µV → -32768 µV) en vez de fallar. El
+   docstring de `codec_senal.py` afirmaba que "ningún valor llega fuera de
+   rango sin haber sido rechazado antes", lo cual era falso: la validación
+   de `SenalEcg.__post_init__` sólo chequea `dtype`/forma, nunca detecta un
+   valor que ya fue corrompido por el wraparound ANTES de convertir a
+   `int16`. Fix: `_muestrear` ahora RECHAZA (`None`) si cualquier muestra
+   redondeada excede `AMPLITUD_MAXIMA_UV` (32767), nunca recorta -- recortar
+   también corrompe en silencio, sólo que de otra forma. Documentado
+   también que `np.round` redondea mitad al par (banker's rounding): error
+   ≤ 0,5 µV frente al valor exacto, sin sesgo sistemático. Tests con
+   oráculo a mano en `tests/extraccion/test_senal_ecg.py` (aislados en
+   `_muestrear` directamente, no vía `construir_senal`: una excursión de
+   ~32,8 mV corresponde a ~328 mm de desplazamiento en X, que rompe el
+   agrupamiento por banda de amplitud de `_asignar_derivaciones` y
+   confundiría "rechazado por rango" con "rechazado por geometría de
+   grilla"): 32,768 mV → `None`; 32,767 mV (borde exacto) → se conserva
+   `32767` exacto. Docstring de `codec_senal.py` corregido para reflejar
+   que la garantía real vive en `extraccion/senal_ecg.py`, no en el codec.
+
+2. **WARNING — versión de formato binario**: se agregó `version_formato`
+   (entero, `NOT NULL DEFAULT 1`) a la migración `0013` (editada in-place,
+   no mergeada aún -- no se creó `0014`) y a `SenalEcgOrm`. Distinta de
+   `SenalEcg.version_extractor` (versión del ALGORITMO de reconstrucción,
+   `extraccion/senal_ecg.py`): `version_formato` es la versión del ESQUEMA
+   BINARIO de `salida/codec_senal.py` (layout de bytes), documentada en el
+   docstring de ambos módulos y de la migración. `decodificar_muestras`/
+   `decodificar_mascara` ahora reciben `version_formato` (default
+   `VERSION_FORMATO_ACTUAL = 1`) y lanzan `ValueError` explícito ante una
+   versión desconocida -- nunca decodifican a ciegas. `alembic heads`
+   verificado de nuevo: una sola cabeza (`0013_senal_ecg`); upgrade `head`
+   desde base vacía y `STORAGE EXTERNAL`/`ON DELETE CASCADE` re-verificados
+   contra Postgres real (`tests/salida/test_migraciones.py`, sin cambios de
+   comportamiento, sólo la columna nueva en las aserciones de esquema).
+
+3. **WARNING — idempotencia sólo contra SQLite**: se agregó
+   `test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_contra_postgres_real`
+   (`@pytest.mark.postgres`) en `tests/salida/destinos/test_postgres.py`,
+   misma aserción que la variante SQLite pero contra el motor real, donde
+   la restricción única de `estudio.clave_documento` realmente arbitra la
+   carrera SELECT/INSERT.
+
+4. **SUGGESTION**: documentado en el docstring de `_muestrear` que
+   `np.round` usa redondeo mitad-al-par, aceptable por el motivo ya citado
+   en el punto 1.
+
+Suite tras las correcciones: `uv run pytest -q` → **974 passed, 1 skipped**
+(mismo skip ambiental de symlink en Windows). `uv run pytest -q -m postgres`
+→ **17 passed**. `uv run --extra dev ruff check .` → limpio.
+`git diff --shortstat origin/feat/senal-ecg-y-dataset-vinculado...HEAD`:
+**24 files changed, 941 insertions(+), 21 deletions(-)**.
+
+### Restante
+
+Fase 3 y 4 (PR 3, 4) — no empezadas. `uv.lock` sigue sin versionar (tarea 3.6).

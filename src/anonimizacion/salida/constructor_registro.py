@@ -166,6 +166,7 @@ def _contenido_ecg_salida(documento: DocumentoParseado, id_medico: str | None) -
         qrs_duration=contenido.qrs_duration,
         qt_qtc=contenido.qt_qtc,
         ejes=contenido.ejes,
+        senal=contenido.senal,
     )
 
 

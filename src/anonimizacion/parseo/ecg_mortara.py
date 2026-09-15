@@ -77,7 +77,9 @@ from pydantic import SecretStr
 from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.modelos import DocumentoParseado, IdentidadCruda
 from anonimizacion.dominio.precision_hora import PrecisionHora
+from anonimizacion.dominio.senal_ecg import SenalEcg
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.extraccion.senal_ecg import construir_senal
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
 from anonimizacion.reconciliacion.base import ReferenciaCampo
 from anonimizacion.reconciliacion.normalizacion import normalizar_hora_iso
@@ -131,13 +133,23 @@ _CAMPOS_HEADER_EXCLUIDOS_DE_ADICIONALES = ("nombre", "fecha", "id_estudio", "fec
 
 @dataclass(frozen=True)
 class ContenidoEcg:
-    """Payload tipado de las medidas de un ECG."""
+    """Payload tipado de las medidas de un ECG.
+
+    `senal` (openspec `senal-ecg-y-dataset-vinculado`): opcional, `None`
+    cuando el layout de trazos no valida geométricamente (`construir_senal`
+    devuelve `None`) o cuando el documento no trae trazos capturados (no es
+    ECG, o el registro de captura no está inyectado -- ver
+    `extraccion/registro_trazos.py`). Default `None` para no romper
+    construcciones existentes que todavía no conocen este campo (mismo
+    patrón que `hora_estudio`/`precision_hora` en `DocumentoParseado`).
+    """
 
     vent_rate: str | None
     pr_interval: str | None
     qrs_duration: str | None
     qt_qtc: str | None
     ejes: str | None
+    senal: SenalEcg | None = None
 
 
 def _buscar_campos(texto: str, patrones: dict[str, str]) -> dict[str, str]:
@@ -338,6 +350,12 @@ class ParseadorEcgMortara:
             qrs_duration=_colapsar_espacios(medidas["qrs_duration"]) if "qrs_duration" in medidas else None,
             qt_qtc=_colapsar_espacios(medidas["qt_qtc"]) if "qt_qtc" in medidas else None,
             ejes=_colapsar_espacios(medidas["ejes"]) if "ejes" in medidas else None,
+            # `senal` (openspec `senal-ecg-y-dataset-vinculado`): `texto.trazos`
+            # está vacío para cualquier documento sin capturador inyectado
+            # (`extraccion/registro_trazos.py`) -- `construir_senal(())` ya
+            # devuelve `None` sin ningún caso especial acá (`_clasificar`
+            # exige 4 pulsos + 12 derivaciones + 1 tira, `()` nunca los tiene).
+            senal=construir_senal(texto.trazos),
         )
         fuentes = (
             ReferenciaCampo("ecg.nombre", 1, "ecg.nombre"),

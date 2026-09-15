@@ -229,6 +229,10 @@ def test_omisiones_sinteticas_de_cada_tipo_se_publican_con_marca_de_completitud(
         assert len(sesion.scalars(sa.select(TextoSeccionEco)).all()) == 1
 
     assert {estudio.completo for estudio in estudios.values()} == {False}
-    assert estudios["ecg"].campos_no_extraidos == ["ecg.vent_rate"]
+    # `ecg.senal` (openspec `senal-ecg-y-dataset-vinculado`): este ECG
+    # sintético no trae trazos capturados (el fixture del PDF de este test
+    # no dibuja trazado vectorial) -- `senal=None` se agrega a la marca de
+    # completitud junto con la medida omitida a propósito por el fake.
+    assert estudios["ecg"].campos_no_extraidos == ["ecg.vent_rate", "ecg.senal"]
     assert estudios["laboratorio"].campos_no_extraidos == ["laboratorio.resultado"]
     assert estudios["ecocardiograma"].campos_no_extraidos == ["eco.medida"]

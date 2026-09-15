@@ -100,7 +100,11 @@ def test_inventario_ecg_publica_con_marca_cuando_el_parseador_omite_una_medida()
     campos_no_extraidos = ReconciliadorEcgMortara().reconciliar(
         _documento((fuente,)), TextoExtraido(("Vent. rate 68 BPM\nPR interval 160",))
     )
-    assert campos_no_extraidos == ("ecg.pr_interval",)
+    # `ecg.senal` (openspec `senal-ecg-y-dataset-vinculado`): este documento
+    # no trae trazos capturados (`TextoExtraido.trazos` vacío), así que
+    # `senal=None` -- se agrega a la marca de completitud, igual que
+    # `ecg.pr_interval`, nunca a cuarentena.
+    assert campos_no_extraidos == ("ecg.pr_interval", "ecg.senal")
 
 
 def test_inventario_ecg_rechaza_etiqueta_repetida_en_una_pagina() -> None:
