@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Time, UniqueConstraint
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -186,6 +186,30 @@ class MedicionEcg(Base):
     qt_qtc: Mapped[str | None] = mapped_column(String, nullable=True)
     ejes: Mapped[str | None] = mapped_column(String, nullable=True)
     adicionales: Mapped[dict | None] = mapped_column(_JsonPortable, nullable=True)
+
+
+class SenalEcgOrm(Base):
+    """Señal de ECG calibrada, codificada (`salida/codec_senal.py`); ver `dominio/senal_ecg.py::SenalEcg`.
+
+    `SenalEcgOrm` (no `SenalEcg`, ya tomado por el dominio -- mismo motivo
+    que `CorridaOrm`/`DocumentoCorridaOrm`). PK = FK contra `estudio`, 1:1
+    estricto: la señal nunca existe sin su estudio (migración `0013`,
+    `ON DELETE CASCADE`). `muestras_uv`/`mascara` ya llegan comprimidas
+    (zlib) desde `codec_senal.py` -- por eso `LargeBinary`, no una columna
+    tipada de array; `SET STORAGE EXTERNAL` (sólo Postgres, sólo en la
+    migración -- no hay forma de expresarlo en el tipo de columna de
+    SQLAlchemy) evita que TOAST intente comprimir de nuevo.
+    """
+
+    __tablename__ = "senal_ecg"
+
+    id_estudio: Mapped[int] = mapped_column(
+        Integer, ForeignKey("estudio.id_estudio", ondelete="CASCADE"), primary_key=True
+    )
+    muestras_uv: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mascara: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    frecuencia_hz: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
+    version_extractor: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class ResultadoLaboratorio(Base):
