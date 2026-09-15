@@ -253,6 +253,24 @@ def test_muestrear_rechaza_excursion_que_desborda_int16_en_silencio() -> None:
     assert _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=0.0, escala_mm=_ESCALA_MM_REAL) is None
 
 
+def test_muestrear_rechaza_valores_no_finitos_por_division_cero_sobre_cero() -> None:
+    """`escala_mm=0.0` con un trazo cuyo X ya coincide con `x_pie` (violación
+    de layout que no debería llegar acá, pero se cubre defensivamente)
+    produce `mv = (xs - x_pie) / 0.0 = 0.0 / 0.0 = nan` en TODOS los puntos.
+    Antes del guard `~np.isfinite`: `np.round(nan * 1000).astype(np.int16)`
+    convierte `nan` a `0` EN SILENCIO (verificado: no lanza, no queda fuera
+    de rango) -- pasaría el chequeo de amplitud existente y devolvería una
+    señal plana de ceros, corrupción indistinguible de "sin señal real",
+    en vez de rechazar explícitamente. `escala_mm=0.0` en `_trazo_desde_mv`
+    hace que X sea constante e igual a `x_referencia_mm=0.0` -- coincide con
+    `x_pie=0.0` pasado a `_muestrear`, dando `0/0`, no `x/0`."""
+    trazo = _trazo_desde_mv(
+        [1.0] * MUESTRAS_DERIVACION, y0_mm=0.0, x_referencia_mm=0.0, escala_mm=0.0
+    )
+
+    assert _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=0.0, escala_mm=0.0) is None
+
+
 def test_muestrear_conserva_excursion_exacta_en_el_borde_representable() -> None:
     """32,767 mV (= 32767 uV, el máximo que entra en int16) se conserva
     exacto -- el rechazo empieza estrictamente después del borde, no antes."""
