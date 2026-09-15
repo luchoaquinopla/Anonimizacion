@@ -63,6 +63,53 @@ Depende de PR 3 (audita la exportación). Rollback boundary: el verificador es u
 - [ ] 4.5 Cerrar **5.2** de `operacion-segura-y-escalable`: auditar dataset, logs, manifiestos y diagnósticos contra PII usando el verificador lineal de 4.2; verificar separación de originales/cuarentena; marcar `[x]` en `openspec/changes/operacion-segura-y-escalable/tasks.md`.
 - [ ] 4.6 Actualizar `docs/pipeline.md` (diagrama, librerías nuevas: numpy/pyarrow) y proponer las entradas de arquitectura/bitácora en Obsidian para este cambio, con aprobación de un integrante antes de cargarlas (AGENTS.md).
 
+## Entrega 2b: corrección de adicionales no persistidos (PR aparte, antes de PR3)
+
+Corrección post-entrega-2 (PR #46 ya mergeado): `_escribir_laboratorio` y `_escribir_eco`
+(`salida/destinos/postgres.py`) nunca leían `registro.adicionales`; sólo `_escribir_ecg`
+lo persistía, en `medicion_ecg.adicionales`. Se perdían en silencio edad/origen
+(laboratorio) y edad/peso/altura/superficie_corporal (eco), contradiciendo la decisión
+de comité 2026-09-07. Rama `fix/adicionales-de-laboratorio-y-eco` desde la integradora
+`feat/senal-ecg-y-dataset-vinculado` (head: migración `0013_senal_ecg`). Bloquea PR3
+(exportación), que exige leer estos campos ya persistidos.
+
+- [x] 2b.1 **Auditoría de lectores**: `rg` de `MedicionEcg.adicionales`/`MedicionEcg(` en
+  `src/` y `tests/` -- ningún panel, embudo, reporte ni script de producción lo lee (sólo
+  el escritor de `postgres.py` y los tests de `tests/salida/`). Decisión: ELIMINAR la
+  columna en vez de duplicarla, migrando su contenido a `estudio.adicionales`.
+- [x] 2b.2 **RED/GREEN**: migración `migrations/versions/0014_adicionales_en_estudio.py`
+  (`down_revision = 0013_senal_ecg`, única cabecera): agrega `estudio.adicionales` JSON
+  portable nullable, copia `medicion_ecg.adicionales` -> `estudio.adicionales` para filas
+  ya escritas (bases de prueba de la entrega 2), y elimina `medicion_ecg.adicionales`.
+  Downgrade simétrico. Probado upgrade/downgrade contra SQLite
+  (`tests/salida/test_migraciones.py`) y de punta a punta + copia de datos contra
+  Postgres real (`@pytest.mark.postgres`).
+- [x] 2b.3 **GREEN**: `salida/modelos_orm.py` agrega `Estudio.adicionales`, elimina
+  `MedicionEcg.adicionales`. `salida/destinos/postgres.py::_insertar` persiste
+  `registro.adicionales` en `estudio.adicionales` para los 3 tipos; `_escribir_eco` sigue
+  guardando sólo las medidas no pivoteadas en `medicion_eco.adicionales` (campo distinto,
+  documentado en el docstring de `MedicionEco`).
+- [x] 2b.4 **RED/GREEN**: `tests/salida/destinos/test_postgres.py` -- ida y vuelta de
+  `estudio.adicionales` para los 3 tipos con valores literales (oráculo escrito a mano);
+  test parametrizado que recorre laboratorio/ECG/eco exigiendo `estudio.adicionales`
+  poblado; test de que `_CLAVES_PERSONAL` (médico derivante/solicitante, técnico) nunca
+  llega a `estudio.adicionales`, contra Postgres real (`@pytest.mark.postgres`).
+- [x] 2b.5 **Specs**: agregado requisito `ADDED` "Persistencia de campos adicionales de
+  header" en `specs/anonymized-output/spec.md`, con escenarios de los 3 tipos y de
+  ausencia de campos personales.
+- [x] 2b.6 **Verificación**: `pytest -q` (978 passed, 1 skipped), `pytest -q -m postgres`
+  (21 passed), `ruff check .` (All checks passed).
+- [x] 2b.7 **Correcciones de revisión adversarial**: test de PII vacuo (`medico_solicitante`/
+  `tecnico` nunca aparecían en el input, eco nunca se ejercitaba) reemplazado por uno
+  parametrizado con las 3 claves de `_CLAVES_PERSONAL` y los 3 tipos, con demostración
+  manual de que falla si se rompe `_adicionales_sin_personal`; corrección de la atribución
+  causal de por qué se migró la base compartida (era `diagnostico.py::_diagnosticar_migraciones`,
+  no el fixture de `test_cli.py`); test de downgrade con los 3 tipos poblados contra
+  Postgres real efímero; tests repetidos parametrizados para no crecer el diff; comentario
+  de la migración 0014 corregido. Verificación final: `pytest -q -m "not postgres"`
+  (974 passed, 1 skipped), `pytest -q -m postgres` (23 passed, sin tocar la base
+  compartida), `ruff check .` (limpio).
+
 ## Trazabilidad tarea → requisito
 
 | Tarea | Requisito de spec |
@@ -76,3 +123,4 @@ Depende de PR 3 (audita la exportación). Rollback boundary: el verificador es u
 | 3.5 | `anonymized-output` (MODIFIED): exportación no muta la base |
 | 4.1–4.3 | `exportacion-dataset-vinculado`: cero PII en la exportación |
 | 4.4–4.5 | Fase 5 de `operacion-segura-y-escalable` (cierre pendiente) |
+| 2b.1–2b.7 | `anonymized-output` (ADDED): persistencia de adicionales de header para los 3 tipos |

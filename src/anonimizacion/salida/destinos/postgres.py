@@ -372,6 +372,12 @@ class EscritorPostgres:
             # columna nullable de filas preexistentes sin esta marca.
             completo=registro.completo,
             campos_no_extraidos=list(registro.campos_no_extraidos),
+            # `registro.adicionales` ya viene saneado de PII de médico/técnico
+            # (`constructor_registro.py::_adicionales_sin_personal`). Se
+            # persiste acá, en `estudio`, para los 3 tipos de documento --
+            # antes sólo `_escribir_ecg` lo hacía (migración 0014, hallazgo
+            # de que eco/laboratorio lo descartaban en silencio).
+            adicionales=dict(registro.adicionales) or None,
         )
         sesion.add(estudio)
         sesion.flush()  # asigna id_estudio sin cerrar la transaccion
@@ -416,7 +422,6 @@ class EscritorPostgres:
                 qrs_duration=contenido.qrs_duration,
                 qt_qtc=contenido.qt_qtc,
                 ejes=contenido.ejes,
-                adicionales=dict(registro.adicionales) or None,
             )
         )
         # `senal_ecg` (openspec `senal-ecg-y-dataset-vinculado`): MISMA
@@ -461,6 +466,9 @@ class EscritorPostgres:
                 id_medico_informante=contenido.id_medico_informante,
                 id_matricula_informante=contenido.id_matricula_informante,
                 unidades=unidades or None,
+                # `medicion_eco.adicionales`: medidas del CUERPO sin pivote
+                # (`extras`, arriba) -- distinto de `estudio.adicionales`
+                # (campos del HEADER, seteado en `_insertar`).
                 adicionales=extras or None,
                 **columnas_ancha,
             )
