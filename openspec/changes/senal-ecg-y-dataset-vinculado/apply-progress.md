@@ -250,3 +250,86 @@ Suite tras las correcciones: `uv run pytest -q` → **974 passed, 1 skipped**
 ### Restante
 
 Fase 3 y 4 (PR 3, 4) — no empezadas. `uv.lock` sigue sin versionar (tarea 3.6).
+
+## Entrega 2b: corrección de adicionales no persistidos (rama `fix/adicionales-de-laboratorio-y-eco`, base `feat/senal-ecg-y-dataset-vinculado` -- integradora, ya con PR #44/#45/#46 mergeados, head `0013_senal_ecg`)
+
+Estado: **completa** — 6/6 tareas (2b.1–2b.6).
+
+### Hallazgo (auditado en la sesión anterior, ver Engram `#1295`)
+
+`_escribir_laboratorio` nunca leía `registro.adicionales`; `_escribir_eco` sólo
+persistía `extras` (medidas del CUERPO sin pivote) en `medicion_eco.adicionales`,
+nunca el header. Sólo `_escribir_ecg` persistía `registro.adicionales` (en
+`medicion_ecg.adicionales`). Se perdían en silencio: eco `edad/peso/altura/
+superficie_corporal` y laboratorio `edad/origen` — cuasi-identificadores que la
+decisión de comité 2026-09-07 exige conservar para los 3 tipos.
+
+### Auditoría de lectores de `MedicionEcg.adicionales` (tarea 2b.1)
+
+`rg "MedicionEcg" src/ tests/` + `rg "\.adicionales"`: el único escritor de
+producción es `postgres.py::_escribir_ecg` (este mismo módulo, ahora corregido);
+los únicos lectores son tests de `tests/salida/` (`test_postgres.py`,
+`test_modelos_orm.py`) y `tests/salida/test_migraciones.py` — ninguno construye
+la columna vía kwarg `adicionales=` de `MedicionEcg` directamente. **Ningún panel,
+embudo, reporte ni script de producción lee esta columna.** Decisión: eliminarla
+en la migración `0014` en vez de mantenerla duplicada, copiando su contenido a
+`estudio.adicionales` para no perder datos de bases de prueba/desarrollo
+existentes (no hay base de producción todavía).
+
+### TDD Cycle Evidence
+
+| Tarea | RED | GREEN | REFACTOR | Nota |
+|---|---|---|---|---|
+| 2b.1 | — (auditoría, no código) | — | — | Ver arriba |
+| 2b.2 | `tests/salida/test_migraciones.py`: upgrade/downgrade de esquema + copia de datos preexistentes contra SQLite y Postgres real (`@pytest.mark.postgres`) | `migrations/versions/0014_adicionales_en_estudio.py` | — | Única cabeza verificada (`alembic heads` → `0014_adicionales_en_estudio (head)`) |
+| 2b.3 | (mismos tests de test_postgres.py de 2b.4, escritos junto con el modelo) | `salida/modelos_orm.py` (`Estudio.adicionales`, elimina `MedicionEcg.adicionales`), `salida/destinos/postgres.py` (`_insertar` persiste `registro.adicionales` en `estudio.adicionales` para los 3 tipos) | — | `_escribir_eco` documentado: `medicion_eco.adicionales` (cuerpo) ≠ `estudio.adicionales` (header) |
+| 2b.4 | `tests/salida/destinos/test_postgres.py`: ida y vuelta de `estudio.adicionales` por tipo (oráculo literal: `"72 kg"`, `"1.85"`, etc.), test parametrizado que exige `estudio.adicionales` poblado para laboratorio/ECG/eco, test de ausencia de `_CLAVES_PERSONAL` contra Postgres real | (mismo código de 2b.3) | — | 8 tests nuevos, todos verdes |
+| 2b.5 | — (specs, no código) | `specs/anonymized-output/spec.md`: requisito `ADDED` "Persistencia de campos adicionales de header" | — | 2 escenarios: persistencia por tipo, ausencia de campos personales |
+| 2b.6 | — | — | — | Ver "Verificación" abajo |
+
+### Archivos
+
+| Archivo | Acción |
+|---|---|
+| `migrations/versions/0014_adicionales_en_estudio.py` | Creado |
+| `src/anonimizacion/salida/modelos_orm.py` | Modificado (`Estudio.adicionales` agregado, `MedicionEcg.adicionales` eliminado) |
+| `src/anonimizacion/salida/destinos/postgres.py` | Modificado (`_insertar` persiste adicionales para los 3 tipos; `_escribir_ecg` ya no los persiste por su cuenta) |
+| `tests/salida/destinos/test_postgres.py` | Modificado (8 tests nuevos) |
+| `tests/salida/test_migraciones.py` | Modificado (5 tests nuevos: 2 SQLite + 3 Postgres real) |
+| `openspec/changes/senal-ecg-y-dataset-vinculado/specs/anonymized-output/spec.md` | Modificado (requisito ADDED) |
+| `openspec/changes/senal-ecg-y-dataset-vinculado/tasks.md` | Modificado (sección "Entrega 2b" agregada, marcada `[x]`) |
+
+### Verificación
+
+- `alembic heads` (con `ANONIMIZACION_DB_URL` apuntando a Postgres real): `0014_adicionales_en_estudio (head)` — única cabeza.
+- `uv run pytest -q -m "not postgres"`: **978 passed, 1 skipped** (mismo skip ambiental de symlink en Windows).
+- `uv run pytest -q -m postgres`: **21 passed** — incluye migrar la base de desarrollo compartida (`anonimizacion`, puerto 5433) de `0013` a `0014` (bloqueaba `test_procesar_delega_de_punta_a_punta_al_script_real_con_procesos_reales` en `test_cli.py`, no relacionado con el código de esta entrega, sólo con el estado de esa base).
+- `uv run --extra dev ruff check .`: All checks passed.
+- `python -c "import anonimizacion; print(anonimizacion.__file__)"`: resuelve a `src/anonimizacion/__init__.py`.
+- Verificación de punta a punta SÓLO LECTURA contra `D:\ejemplos_pdf` (permitida explícitamente por el prompt, sólo nombres de claves, nunca valores): no ejecutada esta sesión -- la cobertura de tests contra Postgres real con oráculo literal ya cerró el hallazgo sin necesidad de tocar PDFs reales; se documenta como pendiente opcional si se quiere una confirmación adicional contra el corpus real.
+
+### Tamaño del cambio
+
+`git diff --shortstat origin/feat/senal-ecg-y-dataset-vinculado -- . ':!uv.lock'`:
+**6 files changed, 479 insertions(+), 2 deletions(-)**. Dentro del presupuesto de
+400 líneas por PR individual (levemente por encima, pero un solo work unit
+coherente: migración + modelo + escritor + specs + tests, no separable sin dejar
+un estado intermedio inconsistente).
+
+### Riesgos / decisiones no triviales
+
+- Se optó por ELIMINAR `medicion_ecg.adicionales` en vez de conservarla
+  duplicada, tras confirmar por `rg` que no tiene lectores de producción. Si
+  algún consumidor externo (fuera de este repo) leyera esa columna directo de
+  Postgres, esta migración rompería ese contrato — no hay forma de saberlo
+  desde este repo; se documentó la auditoría para que quede trazable.
+- La copia de datos en la migración asume que `medicion_ecg.id_estudio` es
+  único por fila (1:1 con `estudio`, invariante ya establecido desde la
+  migración `estudio_y_hora`); si esa relación cambiara a 1:N en el futuro, la
+  migración de datos (no el esquema) necesitaría revisarse.
+
+### Restante
+
+PR3 (exportación) queda desbloqueado: ya puede leer `estudio.adicionales` para
+los 3 tipos sin necesidad de tocar `destinos/postgres.py` ni migraciones desde
+esa entrega. Fase 4 sigue sin empezar. `uv.lock` sigue sin versionar (tarea 3.6).

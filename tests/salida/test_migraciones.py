@@ -1,6 +1,7 @@
 """Pruebas de migraciones Alembic contra SQLite, incluido el estado durable de corridas."""
 from __future__ import annotations
 
+import json
 import socket
 from pathlib import Path
 
@@ -678,3 +679,137 @@ def test_senal_ecg_on_delete_cascade_contra_postgres_real(_url_postgres_scratch:
         ).scalar_one()
     assert restantes == 0, "ON DELETE CASCADE debe eliminar senal_ecg junto con su estudio"
     motor.dispose()
+
+
+# --- 0014_adicionales_en_estudio: header persistido para los 3 tipos -------
+#
+# Entrega 2b: `_escribir_laboratorio`/`_escribir_eco` descartaban en silencio
+# `registro.adicionales`. Esta migración mueve el destino único a
+# `estudio.adicionales` y elimina `medicion_ecg.adicionales`, copiando
+# cualquier dato ya escrito por la entrega 2 antes de borrar la columna.
+
+
+def test_migracion_0014_agrega_adicionales_en_estudio_y_elimina_en_medicion_ecg(tmp_path) -> None:
+    ruta_db = tmp_path / "adicionales_en_estudio.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "0013_senal_ecg")
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        conexion.execute(
+            sa.text("INSERT INTO episodio (id_episodio, id_paciente, fecha_ancla) VALUES ('ep-1', 'pac-1', '2026-01-01')")
+        )
+        conexion.execute(
+            sa.text(
+                "INSERT INTO estudio (id_episodio, tipo_documento, fecha_estudio, precision_hora) "
+                "VALUES ('ep-1', 'ecg', '2026-01-01', 'ausente')"
+            )
+        )
+        id_estudio = conexion.execute(sa.text("SELECT id_estudio FROM estudio WHERE id_episodio = 'ep-1'")).scalar_one()
+        conexion.execute(
+            sa.text(
+                "INSERT INTO medicion_ecg (id_episodio, id_estudio, adicionales) "
+                "VALUES ('ep-1', :id_estudio, '{\"institucion\": \"Hospital Viejo\"}')"
+            ),
+            {"id_estudio": id_estudio},
+        )
+
+    command.upgrade(cfg, "head")
+
+    motor = sa.create_engine(url)
+    inspector = sa.inspect(motor)
+    assert "adicionales" in {c["name"] for c in inspector.get_columns("estudio")}
+    assert "adicionales" not in {c["name"] for c in inspector.get_columns("medicion_ecg")}
+
+    with motor.connect() as conexion:
+        valor = conexion.execute(sa.text("SELECT adicionales FROM estudio WHERE id_episodio = 'ep-1'")).scalar_one()
+    assert json.loads(valor) == {"institucion": "Hospital Viejo"}, (
+        "la migracion debe copiar medicion_ecg.adicionales a estudio.adicionales antes de borrar la columna"
+    )
+
+
+def test_downgrade_de_0014_restaura_medicion_ecg_adicionales_y_elimina_en_estudio(tmp_path) -> None:
+    ruta_db = tmp_path / "adicionales_downgrade.db"
+    url = f"sqlite:///{ruta_db}"
+    cfg = _config_alembic(url)
+
+    command.upgrade(cfg, "head")
+    motor = sa.create_engine(url)
+    with motor.begin() as conexion:
+        conexion.execute(
+            sa.text("INSERT INTO episodio (id_episodio, id_paciente, fecha_ancla) VALUES ('ep-2', 'pac-2', '2026-01-01')")
+        )
+        conexion.execute(
+            sa.text(
+                "INSERT INTO estudio (id_episodio, tipo_documento, fecha_estudio, precision_hora, adicionales) "
+                "VALUES ('ep-2', 'ecg', '2026-01-01', 'ausente', '{\"sexo\": \"F\"}')"
+            )
+        )
+        id_estudio = conexion.execute(sa.text("SELECT id_estudio FROM estudio WHERE id_episodio = 'ep-2'")).scalar_one()
+        conexion.execute(
+            sa.text("INSERT INTO medicion_ecg (id_episodio, id_estudio) VALUES ('ep-2', :id_estudio)"),
+            {"id_estudio": id_estudio},
+        )
+
+    command.downgrade(cfg, "0013_senal_ecg")
+
+    motor = sa.create_engine(url)
+    inspector = sa.inspect(motor)
+    assert "adicionales" not in {c["name"] for c in inspector.get_columns("estudio")}
+    assert "adicionales" in {c["name"] for c in inspector.get_columns("medicion_ecg")}
+
+    with motor.connect() as conexion:
+        valor = conexion.execute(sa.text("SELECT adicionales FROM medicion_ecg WHERE id_episodio = 'ep-2'")).scalar_one()
+    assert json.loads(valor) == {"sexo": "F"}, "el downgrade debe copiar estudio.adicionales de vuelta a medicion_ecg"
+
+
+@pytest.mark.postgres
+def test_migracion_0014_upgrade_head_desde_base_vacia_contra_postgres_real(_url_postgres_scratch: str) -> None:
+    command.upgrade(_config_alembic(_url_postgres_scratch), "head")
+
+    motor = sa.create_engine(_url_postgres_scratch)
+    inspector = sa.inspect(motor)
+    assert "adicionales" in {c["name"] for c in inspector.get_columns("estudio")}
+    assert "adicionales" not in {c["name"] for c in inspector.get_columns("medicion_ecg")}
+    motor.dispose()
+
+
+@pytest.mark.postgres
+def test_migracion_0014_copia_adicionales_existentes_contra_postgres_real(_url_postgres_scratch: str) -> None:
+    """Bases de prueba/desarrollo que ya corrieron la entrega 2 (PR #46) pueden
+    tener filas en `medicion_ecg.adicionales` -- esta migración no debe
+    perderlas al mover el destino a `estudio.adicionales`."""
+    cfg = _config_alembic(_url_postgres_scratch)
+    command.upgrade(cfg, "0013_senal_ecg")
+    motor = sa.create_engine(_url_postgres_scratch)
+    try:
+        with motor.begin() as conexion:
+            conexion.execute(
+                sa.text("INSERT INTO episodio (id_episodio, id_paciente, fecha_ancla) VALUES ('ep-copia', 'pac-copia', '2026-01-01')")
+            )
+            id_estudio = conexion.execute(
+                sa.text(
+                    "INSERT INTO estudio (id_episodio, tipo_documento, fecha_estudio, precision_hora) "
+                    "VALUES ('ep-copia', 'ecg', '2026-01-01', 'ausente') RETURNING id_estudio"
+                )
+            ).scalar_one()
+            conexion.execute(
+                sa.text(
+                    "INSERT INTO medicion_ecg (id_episodio, id_estudio, adicionales) "
+                    "VALUES ('ep-copia', :id_estudio, '{\"institucion\": \"Hospital Viejo\"}'::jsonb)"
+                ),
+                {"id_estudio": id_estudio},
+            )
+    finally:
+        motor.dispose()
+
+    command.upgrade(cfg, "head")
+
+    motor = sa.create_engine(_url_postgres_scratch)
+    try:
+        with motor.connect() as conexion:
+            valor = conexion.execute(sa.text("SELECT adicionales FROM estudio WHERE id_episodio = 'ep-copia'")).scalar_one()
+        assert valor == {"institucion": "Hospital Viejo"}
+    finally:
+        motor.dispose()
