@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from anonimizacion.pii.verificador_lineal import contar_coincidencias_pii
 from tests.fixtures.verificador_pii import contar_coincidencias_pii_cuadratico, generar_semilla
+from tests.pii.verificador_lineal import contar_coincidencias_pii
 
 
 @pytest.mark.parametrize(
@@ -52,6 +52,31 @@ def test_mayusculas_no_distinguen():
     registros = ["Contiene MARIA en mayúsculas"]
     valores = ["maria"]
     assert contar_coincidencias_pii(registros, valores) == 1
+
+
+def test_casefold_que_cambia_el_largo_ss_por_eszett():
+    # "ß".casefold() == "ss": el patrón crece un carácter respecto del original.
+    registros = ["la calle se llama straße en el mapa"]
+    valores = ["straße", "strasse"]
+    esperado = contar_coincidencias_pii_cuadratico(registros, valores)
+    # ambos valores casefoldean a "strasse", que también matchea el texto casefoldeado.
+    assert contar_coincidencias_pii(registros, valores) == esperado == 2
+
+
+def test_casefold_que_cambia_el_largo_ligadura_fi():
+    # "ﬁ".casefold() == "fi": el patrón encoge un carácter (ligadura -> dos letras).
+    registros = ["trabaja en la ofﬁce central", "trabaja en la office central"]
+    valores = ["ofﬁce"]
+    esperado = contar_coincidencias_pii_cuadratico(registros, valores)
+    assert contar_coincidencias_pii(registros, valores) == esperado == 2
+
+
+def test_casefold_que_cambia_el_largo_i_turca_con_punto():
+    # "İ".casefold() == "i̇" (i + punto combinante U+0307): dos code points.
+    registros = ["nació en İstanbul", "nació en istanbul"]
+    valores = ["İstanbul"]
+    esperado = contar_coincidencias_pii_cuadratico(registros, valores)
+    assert contar_coincidencias_pii(registros, valores) == esperado == 1
 
 
 def test_sin_valores_ni_registros():

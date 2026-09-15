@@ -33,7 +33,11 @@ def generar_semilla(
     """
     generador = random.Random(semilla)
     alfabeto = string.ascii_letters + string.digits
-    base = ["DNI", "DNI123", "DNI1234567", "ana", "ANA", "María", "maria"]
+    # "ß"->"ss", "ﬁ"->"fi", "İ"->"i̇" (con punto combinante): casefold cambia el
+    # LARGO del string, no solo el caso -- ejercita que patrón y texto se
+    # casefolden antes de buscar subcadena, así la comparación sigue siendo
+    # consistente pese al cambio de longitud.
+    base = ["DNI", "DNI123", "DNI1234567", "ana", "ANA", "María", "maria", "straße", "ofﬁce", "İstanbul"]
     valores = list(base)
     for _ in range(cantidad_valores - len(base)):
         largo = generador.randint(2, 8)

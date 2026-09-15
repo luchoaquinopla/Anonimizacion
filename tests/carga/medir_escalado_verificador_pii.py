@@ -25,9 +25,8 @@ _RAIZ_REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_RAIZ_REPO / "src"))
 sys.path.insert(0, str(_RAIZ_REPO))
 
-from anonimizacion.pii.verificador_lineal import contar_coincidencias_pii  # noqa: E402
-
 from tests.fixtures.verificador_pii import generar_semilla  # noqa: E402
+from tests.pii.verificador_lineal import contar_coincidencias_pii  # noqa: E402
 
 
 def _medir(cantidad_documentos: int) -> float:

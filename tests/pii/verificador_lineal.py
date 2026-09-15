@@ -1,4 +1,8 @@
-"""Verificador de fuga de PII, O(texto + patrones) vía Aho-Corasick puro.
+"""Verificador de fuga de PII, Aho-Corasick puro (banco de test, no producción).
+
+Búsqueda O(texto): el `goto` se extiende a función total en la construcción
+(cada nodo copia las transiciones de su fallo), a costo de construcción
+O(Σ|patrones| × |alfabeto usado|), no O(patrones) puro.
 
 Reemplaza a la versión cuadrática que vivía en
 `tests/fixtures/corpus_piloto.py::contar_coincidencias_pii` (ahora conservada

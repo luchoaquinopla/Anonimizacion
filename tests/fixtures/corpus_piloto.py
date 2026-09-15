@@ -11,7 +11,7 @@ from time import perf_counter
 
 from anonimizacion.dominio.modelos import ClavesPaciente, RegistroAnonimizado
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria
-from anonimizacion.pii.verificador_lineal import contar_coincidencias_pii
+from tests.pii.verificador_lineal import contar_coincidencias_pii
 from anonimizacion.pipeline.ejecutor import ItemLote
 from anonimizacion.trabajadores.tareas import construir_fabrica_ejecutor
 from anonimizacion.pipeline.resultado import ExitoDocumento
