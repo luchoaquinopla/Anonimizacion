@@ -34,7 +34,6 @@ import pymupdf
 
 from anonimizacion.extraccion.senal_ecg import (
     FRECUENCIA_HZ as _FRECUENCIA_ECG,
-    MM_POR_MV as _MM_POR_MV_ECG,
     MM_POR_S as _MM_POR_S_ECG,
     MUESTRAS_DERIVACION as _MUESTRAS_DERIVACION_ECG,
     MUESTRAS_TIRA as _MUESTRAS_TIRA_ECG,
@@ -351,8 +350,9 @@ def generar_corpus_clinico(
 # (nunca reportlab), con un oráculo conocido, para el test de integración
 # extremo a extremo (`test_pdf_sintetico_ecg.py`).
 
-_X_FILA_ECG_MM = (60.0, 120.0, 180.0)
-_X_PULSO_ECG_MM = 230.0
+_X_FILA_ECG_MM = (60.0, 100.0, 140.0)
+_X_TIRA_ECG_MM = 200.0  # banda propia, medido: NO coincide con ninguna fila de la grilla
+_ESCALA_MM_POR_MV_REAL = -10.0  # medido contra el ECG real: +1 mV = -10 mm en X (nunca +10)
 
 
 def _mm_a_pt(mm: float) -> float:
@@ -365,11 +365,16 @@ def _onda_ecg_sintetica(rng: random.Random, n: int, *, amplitud_mv: float) -> li
 
 
 def _dibujar_trazo_ecg(
-    pagina: pymupdf.Page, valores_mv: list[float], *, y0_mm: float, x_centro_mm: float
+    pagina: pymupdf.Page,
+    valores_mv: list[float],
+    *,
+    y0_mm: float,
+    x_referencia_mm: float,
+    escala_mm_por_mv: float,
 ) -> None:
     puntos_pt = [
         (
-            _mm_a_pt(x_centro_mm + mv * _MM_POR_MV_ECG),
+            _mm_a_pt(x_referencia_mm + mv * escala_mm_por_mv),
             _mm_a_pt(y0_mm + indice / _FRECUENCIA_ECG * _MM_POR_S_ECG),
         )
         for indice, mv in enumerate(valores_mv)
@@ -380,9 +385,16 @@ def _dibujar_trazo_ecg(
     trazo.commit()
 
 
-def _dibujar_pulso_ecg(pagina: pymupdf.Page, *, y0_mm: float, x_centro_mm: float) -> None:
-    valores = [0.0] * 5 + [1.0] * 55  # pie en 0, salto a 1 mV -- 10mm a MM_POR_MV_ECG
-    _dibujar_trazo_ecg(pagina, valores, y0_mm=y0_mm, x_centro_mm=x_centro_mm)
+def _dibujar_pulso_ecg(
+    pagina: pymupdf.Page, *, y0_mm: float, x_referencia_mm: float, escala_mm_por_mv: float
+) -> None:
+    """Pie -> meseta -> pie (medido contra el ECG real, ver
+    `extraccion/senal_ecg.py::_pie_y_meseta`): NO un escalón que se sostiene
+    hasta el final -- el pulso real vuelve a la línea base."""
+    valores = [0.0] * 5 + [1.0] * 50 + [0.0] * 5
+    _dibujar_trazo_ecg(
+        pagina, valores, y0_mm=y0_mm, x_referencia_mm=x_referencia_mm, escala_mm_por_mv=escala_mm_por_mv
+    )
 
 
 def _dibujar_grilla_ecg(pagina: pymupdf.Page) -> None:
@@ -395,11 +407,26 @@ def _dibujar_grilla_ecg(pagina: pymupdf.Page) -> None:
         pagina.draw_line((x, 0), (x, alto_pt), color=(1, 0.7, 0.7), width=0.71)
 
 
-def crear_pdf_ecg_con_trazos_sinteticos(ruta: Path, *, semilla: int = 0) -> dict[str, list[float]]:
+def crear_pdf_ecg_con_trazos_sinteticos(
+    ruta: Path,
+    *,
+    semilla: int = 0,
+    escala_mm_por_mv: float = _ESCALA_MM_POR_MV_REAL,
+    oraculo_por_derivacion: dict[str, list[float]] | None = None,
+) -> dict[str, list[float]]:
     """PDF sintético de ECG rotado 90°: 12 derivaciones + tira V1 + 4
-    pulsos de calibración + grilla rosa. Devuelve el oráculo -- mV por
-    derivación (llaves de `ORDEN_DERIVACIONES`) y la tira de ritmo
-    (`"tira_ritmo"`) -- para comparar contra `construir_senal`."""
+    pulsos de calibración (uno por banda: 3 filas + la propia banda de la
+    tira) + grilla rosa. Devuelve el oráculo -- mV por derivación (llaves de
+    `ORDEN_DERIVACIONES`) y la tira de ritmo (`"tira_ritmo"`).
+
+    `escala_mm_por_mv` (default: medido contra el real, +1 mV = -10 mm)
+    controla la dirección del pulso -- pasar `+10.0` ejercita que
+    `construir_senal` sigue la dirección que MIDE cada pulso, nunca una
+    constante fija (ver `tests/extraccion/test_senal_ecg.py`, "invierte la
+    dirección del pulso"). `oraculo_por_derivacion` reemplaza la onda seno
+    default en derivaciones puntuales -- para armar un oráculo independiente
+    con forma conocida (pico/valle), sin reutilizar la fórmula del
+    extractor."""
     rng = random.Random(semilla)
     documento = pymupdf.open()
     pagina = documento.new_page(width=612, height=792)
@@ -412,14 +439,30 @@ def crear_pdf_ecg_con_trazos_sinteticos(ruta: Path, *, semilla: int = 0) -> dict
         y0_mm = _OFFSETS_COLUMNA_ECG[columna] / _FRECUENCIA_ECG * _MM_POR_S_ECG
         for fila in range(3):
             derivacion = _ORDEN_DERIVACIONES_ECG[columna * 3 + fila]
-            valores = _onda_ecg_sintetica(rng, _MUESTRAS_DERIVACION_ECG, amplitud_mv=0.3 + 0.05 * fila)
-            _dibujar_trazo_ecg(pagina, valores, y0_mm=y0_mm, x_centro_mm=_X_FILA_ECG_MM[fila])
+            valores = (oraculo_por_derivacion or {}).get(
+                derivacion,
+                _onda_ecg_sintetica(rng, _MUESTRAS_DERIVACION_ECG, amplitud_mv=0.3 + 0.05 * fila),
+            )
+            _dibujar_trazo_ecg(
+                pagina,
+                valores,
+                y0_mm=y0_mm,
+                x_referencia_mm=_X_FILA_ECG_MM[fila],
+                escala_mm_por_mv=escala_mm_por_mv,
+            )
             oraculo[derivacion] = valores
 
-        _dibujar_pulso_ecg(pagina, y0_mm=y0_mm, x_centro_mm=_X_PULSO_ECG_MM)
+    for x_referencia in (*_X_FILA_ECG_MM, _X_TIRA_ECG_MM):
+        _dibujar_pulso_ecg(
+            pagina, y0_mm=280.0, x_referencia_mm=x_referencia, escala_mm_por_mv=escala_mm_por_mv
+        )
 
-    valores_tira = _onda_ecg_sintetica(rng, _MUESTRAS_TIRA_ECG, amplitud_mv=0.4)
-    _dibujar_trazo_ecg(pagina, valores_tira, y0_mm=0.0, x_centro_mm=_X_FILA_ECG_MM[0])
+    valores_tira = (oraculo_por_derivacion or {}).get(
+        "tira_ritmo", _onda_ecg_sintetica(rng, _MUESTRAS_TIRA_ECG, amplitud_mv=0.4)
+    )
+    _dibujar_trazo_ecg(
+        pagina, valores_tira, y0_mm=0.0, x_referencia_mm=_X_TIRA_ECG_MM, escala_mm_por_mv=escala_mm_por_mv
+    )
     oraculo["tira_ritmo"] = valores_tira
 
     documento.save(ruta)

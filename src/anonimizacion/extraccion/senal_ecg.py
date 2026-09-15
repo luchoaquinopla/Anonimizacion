@@ -12,9 +12,20 @@ derivaciones de ~1238 puntos en una grilla de 4 columnas (ventana temporal,
 por Y de inicio: 0/2,5/5/7,5 s) x 3 filas (banda de amplitud, por X
 promedio) -- orden `ORDEN_DERIVACIONES`; 1 tira de ritmo V1 de ~5000 puntos
 (los 10 s completos, remplaza el segmento de V1 en la grilla); 4 pulsos de
-calibración de ~60 puntos que deben medir 10 mm (1 mV) sin leer el texto de
-"N mm/mV" -- si el gain real fuera otro, el pulso mide otra altura y la
-calibración falla acá, geométricamente.
+calibración de ~60 puntos, uno por banda de amplitud (las 3 filas de la
+grilla + la propia banda de la tira), medidos justo después de la última
+columna.
+
+Signo y línea base (hallazgo contra el ECG real, no un supuesto de texto):
+cada pulso es un cuadrado pie -> meseta -> pie; +1 mV se mide, en el PDF
+real, como un desplazamiento de -10 mm en X (pie a la DERECHA, meseta a la
+IZQUIERDA) -- lo contrario de "más mV = más X". Por eso el signo y la línea
+base de cada banda de amplitud se leen SIEMPRE del pulso de esa banda
+(`x_pie`, `escala_mm = x_meseta - x_pie`), nunca de una constante de signo
+ni del promedio del propio trazo de la derivación (que no es un cero
+confiable: una derivación puede tener ST elevado, por ejemplo). Si los 4
+pulsos no apuntan en la misma dirección, la calibración es inconsistente y
+la señal se descarta.
 """
 
 from __future__ import annotations
@@ -30,10 +41,14 @@ MUESTRAS_TIRA = 5000
 TOLERANCIA_MUESTRAS = 2
 OFFSETS_COLUMNA = (0, 1250, 2500, 3750)
 MM_POR_S = 25.0  # escala de tiempo del papel
-MM_POR_MV = 10.0  # escala de amplitud nominal del papel
-TOLERANCIA_CALIBRACION = 0.02  # ±2%
+MM_POR_MV = 10.0  # escala de amplitud NOMINAL esperada -- valida cada pulso, no convierte
+TOLERANCIA_CALIBRACION = 0.02  # ±2%, altura del pulso vs MM_POR_MV
+TOLERANCIA_DURACION = 0.02  # ±2%, cobertura temporal del trazo vs la ventana esperada -- se
+# separa de TOLERANCIA_CALIBRACION porque mide otra cosa (duración, no altura de pulso) y no
+# hay ninguna razón para que ambas tolerancias deban moverse juntas si una se recalibra.
 ORDEN_DERIVACIONES = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 INDICE_TIRA_RITMO = ORDEN_DERIVACIONES.index("V1")
+_INDICE_REFERENCIA_TIRA = 3  # dentro de `referencias_x`: 0..2 = filas de la grilla, 3 = tira
 
 
 def construir_senal(trazos: tuple[Trazo, ...]) -> SenalEcg | None:
@@ -43,18 +58,24 @@ def construir_senal(trazos: tuple[Trazo, ...]) -> SenalEcg | None:
         return None
     pulsos, derivaciones, tira = clasificacion
 
-    if not _calibracion_valida(pulsos):
+    asignacion_grilla, centroides_fila = _asignar_derivaciones(derivaciones)
+    if asignacion_grilla is None:
         return None
 
-    asignacion = _asignar_derivaciones(derivaciones)
-    if asignacion is None:
+    centro_x_tira = sum(x for x, _y in tira) / len(tira)
+    referencias_x = (*centroides_fila, centro_x_tira)
+
+    calibracion_por_referencia = _calibrar_pulsos(pulsos, referencias_x)
+    if calibracion_por_referencia is None:
         return None
 
     matriz = np.zeros((12, MUESTRAS_TIRA), dtype=np.int16)
     mascara = np.zeros((12, MUESTRAS_TIRA), dtype=bool)
 
-    for indice_lead, trazo in asignacion.items():
-        muestras = _muestrear(trazo, MUESTRAS_DERIVACION)
+    for indice_lead, trazo in asignacion_grilla.items():
+        fila = indice_lead % 3
+        x_pie, escala_mm = calibracion_por_referencia[fila]
+        muestras = _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=x_pie, escala_mm=escala_mm)
         if muestras is None:
             return None
         columna = indice_lead // 3
@@ -62,7 +83,8 @@ def construir_senal(trazos: tuple[Trazo, ...]) -> SenalEcg | None:
         matriz[indice_lead, inicio : inicio + MUESTRAS_DERIVACION] = muestras
         mascara[indice_lead, inicio : inicio + MUESTRAS_DERIVACION] = True
 
-    muestras_tira = _muestrear(tira, MUESTRAS_TIRA)
+    x_pie_tira, escala_tira = calibracion_por_referencia[_INDICE_REFERENCIA_TIRA]
+    muestras_tira = _muestrear(tira, MUESTRAS_TIRA, x_pie=x_pie_tira, escala_mm=escala_tira)
     if muestras_tira is None:
         return None
     matriz[INDICE_TIRA_RITMO, :] = muestras_tira
@@ -97,39 +119,39 @@ def _clasificar(
     return pulsos, derivaciones, tiras[0]
 
 
-def _calibracion_valida(pulsos: list[Trazo]) -> bool:
-    """Cada pulso debe medir `MM_POR_MV` (10 mm = 1 mV) desde su pie
-    (primer punto) -- geométrico, nunca lee "N mm/mV" del texto."""
-    for pulso in pulsos:
-        base_x = pulso[0][0]
-        altura_mm = max(abs(x - base_x) for x, _y in pulso)
-        if abs(altura_mm - MM_POR_MV) / MM_POR_MV > TOLERANCIA_CALIBRACION:
-            return False
-    return True
-
-
-def _asignar_derivaciones(derivaciones: list[Trazo]) -> dict[int, Trazo] | None:
+def _asignar_derivaciones(
+    derivaciones: list[Trazo],
+) -> tuple[dict[int, Trazo], tuple[float, float, float]] | tuple[None, None]:
     """Agrupa por columna (Y de inicio -> ventana temporal) y por fila (X
-    promedio -> banda de amplitud), design.md paso "Asignación". `None` si
-    no quedan exactamente 4x3 celdas disjuntas (violación de layout)."""
+    promedio -> banda de amplitud), design.md paso "Asignación". Devuelve
+    también el centroide de X de cada fila -- lo necesita `_calibrar_pulsos`
+    para emparejar cada pulso con su banda. `(None, None)` si no quedan
+    exactamente 4x3 celdas disjuntas (violación de layout)."""
     inicios_y = [trazo[0][1] for trazo in derivaciones]
     centros_x = [sum(x for x, _y in trazo) / len(trazo) for trazo in derivaciones]
 
     columnas = _particionar(inicios_y, 4)
     filas = _particionar(centros_x, 3)
     if columnas is None or filas is None:
-        return None
+        return None, None
 
     asignacion: dict[int, Trazo] = {}
+    suma_por_fila = [0.0, 0.0, 0.0]
+    cuenta_por_fila = [0, 0, 0]
     for indice_derivacion, trazo in enumerate(derivaciones):
-        indice_lead = columnas[indice_derivacion] * 3 + filas[indice_derivacion]
+        fila = filas[indice_derivacion]
+        indice_lead = columnas[indice_derivacion] * 3 + fila
         if indice_lead in asignacion:
-            return None  # dos derivaciones en la misma celda: filas no disjuntas
+            return None, None  # dos derivaciones en la misma celda: filas no disjuntas
         asignacion[indice_lead] = trazo
+        suma_por_fila[fila] += centros_x[indice_derivacion]
+        cuenta_por_fila[fila] += 1
 
-    if len(asignacion) != 12:
-        return None
-    return asignacion
+    if len(asignacion) != 12 or any(cuenta == 0 for cuenta in cuenta_por_fila):
+        return None, None
+
+    centroides_fila = tuple(suma / cuenta for suma, cuenta in zip(suma_por_fila, cuenta_por_fila))
+    return asignacion, centroides_fila
 
 
 def _particionar(valores: list[float], grupos: int) -> list[int] | None:
@@ -162,11 +184,74 @@ def _particionar(valores: list[float], grupos: int) -> list[int] | None:
     return resultado
 
 
-def _muestrear(trazo: Trazo, cantidad: int) -> np.ndarray | None:
+def _pie_y_meseta(pulso: Trazo) -> tuple[float, float]:
+    """`(x_pie, x_meseta)` de un pulso cuadrado pie -> meseta -> pie.
+
+    `x_pie` es el X del primer punto en orden temporal (el pulso siempre
+    arranca en reposo, medido). `x_meseta` es el X del punto de máxima
+    desviación respecto de `x_pie` -- robusto tanto si el pulso vuelve a
+    `x_pie` al final (medido contra el ECG real) como si se sostiene hasta
+    el último punto (fixture sintético más simple)."""
+    ordenados = sorted(pulso, key=lambda punto: punto[1])
+    xs = [x for x, _y in ordenados]
+    x_pie = xs[0]
+    indice_extremo = max(range(len(xs)), key=lambda i: abs(xs[i] - x_pie))
+    return x_pie, xs[indice_extremo]
+
+
+def _calibrar_pulsos(
+    pulsos: list[Trazo], referencias_x: tuple[float, ...]
+) -> dict[int, tuple[float, float]] | None:
+    """Valida los 4 pulsos y los empareja con su banda de amplitud
+    (`referencias_x`: 3 filas de la grilla + la banda de la tira).
+
+    `None` si: la altura de algún pulso no mide `MM_POR_MV` ±
+    `TOLERANCIA_CALIBRACION`; la dirección (pie -> meseta) no es la misma en
+    los 4 (calibración inconsistente entre bandas -- nunca se asume un
+    signo fijo); o el emparejamiento por proximidad con `referencias_x` no
+    resulta 1 a 1 (violación de layout)."""
+    calibraciones: list[tuple[float, float]] = []
+    direcciones_positivas: set[bool] = set()
+    for pulso in pulsos:
+        x_pie, x_meseta = _pie_y_meseta(pulso)
+        escala_mm = x_meseta - x_pie
+        if abs(abs(escala_mm) - MM_POR_MV) / MM_POR_MV > TOLERANCIA_CALIBRACION:
+            return None
+        direcciones_positivas.add(escala_mm > 0)
+        calibraciones.append((x_pie, escala_mm))
+
+    if len(direcciones_positivas) != 1:
+        return None  # pulsos con direcciones pie->meseta distintas entre sí
+
+    indices_referencia = _emparejar_por_proximidad(
+        [x_pie for x_pie, _escala in calibraciones], list(referencias_x)
+    )
+    if indices_referencia is None:
+        return None
+
+    return {
+        indice_referencia: calibraciones[indice_pulso]
+        for indice_pulso, indice_referencia in enumerate(indices_referencia)
+    }
+
+
+def _emparejar_por_proximidad(valores: list[float], referencias: list[float]) -> list[int] | None:
+    """Empareja cada valor con el índice de la referencia más cercana.
+    `None` si no resulta una asignación 1 a 1 (dos valores compitiendo por
+    la misma referencia -- violación de layout)."""
+    asignacion = [min(range(len(referencias)), key=lambda i: abs(v - referencias[i])) for v in valores]
+    if len(set(asignacion)) != len(referencias):
+        return None
+    return asignacion
+
+
+def _muestrear(trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float) -> np.ndarray | None:
     """Reconstruye `cantidad` muestras uniformes a `FRECUENCIA_HZ` en µV a
-    partir de los puntos (mm) del trazo. Siempre interpola (idempotente si
-    ya estaban equiespaciados, design.md: desvío > 1% dispara interpolar)
-    para no bifurcar el código por ese caso."""
+    partir de los puntos (mm) del trazo, calibrado con `(x_pie, escala_mm)`
+    del pulso de su banda de amplitud (nunca con una constante de signo ni
+    con el promedio del propio trazo). Siempre interpola (idempotente si ya
+    estaban equiespaciados, design.md: desvío > 1% dispara interpolar) para
+    no bifurcar el código por ese caso."""
     ordenados = sorted(trazo, key=lambda punto: punto[1])
     ys = np.array([y for _x, y in ordenados], dtype=float)
     xs = np.array([x for x, _y in ordenados], dtype=float)
@@ -174,15 +259,15 @@ def _muestrear(trazo: Trazo, cantidad: int) -> np.ndarray | None:
         return None
 
     tiempos_s = (ys - ys[0]) / MM_POR_S
-    # línea base = centro de la banda de amplitud (promedio de X), NO el
-    # primer punto: a diferencia de un pulso de calibración (que sí arranca
-    # en su "pie"), una derivación puede empezar en cualquier fase de la
-    # onda -- el primer punto no es un cero confiable.
-    mv = (xs - xs.mean()) / MM_POR_MV
+    mv = (xs - x_pie) / escala_mm
 
     duracion_objetivo = (cantidad - 1) / FRECUENCIA_HZ
-    if tiempos_s[-1] < duracion_objetivo * (1 - TOLERANCIA_CALIBRACION):
-        return None  # el trazo no cubre la ventana temporal esperada
+    cobertura = tiempos_s[-1] / duracion_objetivo
+    if abs(cobertura - 1.0) > TOLERANCIA_DURACION:
+        # rechaza tanto sub- como sobre-cobertura: un trazo notablemente más
+        # largo que la ventana esperada es tan sospechoso de violar el
+        # layout como uno más corto -- ninguna razón para tratarlos distinto
+        return None
 
     grilla_s = np.linspace(0, duracion_objetivo, cantidad)
     mv_interpolado = np.interp(grilla_s, tiempos_s, mv)
