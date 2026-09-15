@@ -44,13 +44,15 @@ explícitamente qué representación necesita.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import BinaryIO
 
 import pymupdf
 
 from ..dominio.errores import CodigoErrorDocumento, ErrorParseo
+from .trazos_pymupdf import CapturadorDePagina, Trazo
 
 _ETAPA = "extraccion"
 
@@ -88,6 +90,10 @@ class TextoExtraido:
 
     paginas: tuple[str, ...]
     paginas_ordenadas: tuple[str, ...] = ()
+    trazos: tuple[Trazo, ...] = ()
+    """Trazado vectorial negro capturado (sólo ECG, vía `capturador_para`).
+    Vacío para laboratorio/ecocardiograma y para cualquier construcción
+    directa (tests) que no pase `capturador_para`."""
 
     def __post_init__(self) -> None:
         if not self.paginas_ordenadas:
@@ -104,7 +110,11 @@ class TextoExtraido:
         return "\n".join(self.paginas_ordenadas)
 
 
-def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
+def extraer_texto_de_flujo(
+    flujo: BinaryIO,
+    *,
+    capturador_para: Callable[[TextoExtraido], CapturadorDePagina | None] | None = None,
+) -> TextoExtraido:
     """Extrae el texto nativo de un PDF ya abierto como flujo de bytes.
 
     openspec `puerto-de-ingesta` (design.md, Decisión 4): esta es la función
@@ -112,6 +122,17 @@ def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
     (`pipeline/ejecutor.py`) -- el core ya no conoce `pathlib`. PyMuPDF acepta
     el flujo directo con `stream=..., filetype="pdf"`, sin volcarlo antes a
     un archivo temporal.
+
+    `capturador_para` (openspec `senal-ecg-y-dataset-vinculado`, decisión #1
+    del diseño): si se provee, se llama con el `TextoExtraido` ya armado
+    (texto disponible para clasificar el tipo) para decidir si captura
+    geometría de esta misma apertura del documento -- una sola vez, sin
+    reabrir el PDF. Este módulo NUNCA importa `deteccion` (evita el ciclo:
+    `deteccion.detector_tipo` ya importa `TextoExtraido`); es el ejecutor
+    quien inyecta el closure que conoce `detectar_tipo` +
+    `extraccion/registro_trazos.py`. Devuelve `None` para los tipos sin
+    capturador (laboratorio, eco, no reconocido) -- ninguno de esos invoca
+    captura de trazos.
 
     Gotcha: un flujo vacío (`b""`) hace que PyMuPDF lance
     `pymupdf.EmptyFileError`, que es subclase de `FileDataError` -- ya cae en
@@ -133,16 +154,27 @@ def extraer_texto_de_flujo(flujo: BinaryIO) -> TextoExtraido:
 
         paginas = tuple(pagina.get_text() for pagina in documento)
         paginas_ordenadas = tuple(pagina.get_text(sort=True) for pagina in documento)
+
+        if not any(texto.strip() for texto in paginas):
+            # El PDF se abrió y tiene páginas, pero ninguna trae texto nativo
+            # -- típicamente un escaneo (imagen sin capa de texto). Acción
+            # distinta de `PDF_ILEGIBLE`: pasar por OCR, no pedir el archivo
+            # de nuevo.
+            raise ErrorParseo(codigo=CodigoErrorDocumento.SIN_CAPA_DE_TEXTO, etapa=_ETAPA)
+
+        texto = TextoExtraido(paginas=paginas, paginas_ordenadas=paginas_ordenadas)
+
+        if capturador_para is not None:
+            capturador = capturador_para(texto)
+            if capturador is not None:
+                trazos = tuple(
+                    trazo for pagina in documento for trazo in capturador(pagina)
+                )
+                texto = replace(texto, trazos=trazos)
     finally:
         documento.close()
 
-    if not any(texto.strip() for texto in paginas):
-        # El PDF se abrió y tiene páginas, pero ninguna trae texto nativo --
-        # típicamente un escaneo (imagen sin capa de texto). Acción distinta
-        # de `PDF_ILEGIBLE`: pasar por OCR, no pedir el archivo de nuevo.
-        raise ErrorParseo(codigo=CodigoErrorDocumento.SIN_CAPA_DE_TEXTO, etapa=_ETAPA)
-
-    return TextoExtraido(paginas=paginas, paginas_ordenadas=paginas_ordenadas)
+    return texto
 
 
 def extraer_texto(ruta: Path) -> TextoExtraido:

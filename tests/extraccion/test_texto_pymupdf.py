@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorParseo
+from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.extraccion.registro_trazos import capturador_de
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido, extraer_texto, extraer_texto_de_flujo
 from tests.fixtures.pdf_sintetico import (
     crear_pdf_bytes_con_texto,
@@ -199,3 +201,61 @@ def test_extraer_texto_reusa_extraer_texto_de_flujo(tmp_path: Path) -> None:
 
     assert con_ruta.paginas == con_flujo.paginas
     assert con_ruta.paginas_ordenadas == con_flujo.paginas_ordenadas
+
+
+# --- `capturador_para` (senal-ecg-y-dataset-vinculado, PR 1) ---------------
+#
+# Sólo el ECG tiene capturador registrado (`registro_trazos.py`) -- estos
+# tests confirman que laboratorio/eco NUNCA invocan captura de trazos, sin
+# importar `deteccion` desde este módulo (se simula la decisión del
+# ejecutor con un `capturador_para` de prueba, tal como haría el pipeline
+# real vía `detectar_tipo` + `capturador_de`).
+
+
+def test_extraer_texto_de_flujo_sin_capturador_no_agrega_trazos() -> None:
+    flujo = io.BytesIO(crear_pdf_bytes_con_texto(["HEMATOLOGIA"]))
+
+    resultado = extraer_texto_de_flujo(flujo)
+
+    assert resultado.trazos == ()
+
+
+def test_extraer_texto_de_flujo_laboratorio_no_invoca_captura_de_trazos() -> None:
+    llamadas: list[object] = []
+
+    def capturador_para(_texto: TextoExtraido) -> None:
+        llamadas.append(TipoDocumento.LABORATORIO)
+        return capturador_de(TipoDocumento.LABORATORIO)
+
+    flujo = io.BytesIO(crear_pdf_bytes_con_texto(["HEMATOLOGIA"]))
+
+    resultado = extraer_texto_de_flujo(flujo, capturador_para=capturador_para)
+
+    assert llamadas == [TipoDocumento.LABORATORIO]  # se consultó el registro...
+    assert capturador_de(TipoDocumento.LABORATORIO) is None  # ...pero no hay capturador
+    assert resultado.trazos == ()
+
+
+def test_extraer_texto_de_flujo_ecocardiograma_no_invoca_captura_de_trazos() -> None:
+    flujo = io.BytesIO(crear_pdf_bytes_con_texto(["ECOCARDIOGRAMA"]))
+
+    resultado = extraer_texto_de_flujo(
+        flujo, capturador_para=lambda _texto: capturador_de(TipoDocumento.ECOCARDIOGRAMA)
+    )
+
+    assert resultado.trazos == ()
+
+
+def test_extraer_texto_de_flujo_ecg_invoca_el_capturador_registrado() -> None:
+    llamadas: list[object] = []
+
+    def capturador_falso(pagina: object) -> tuple:
+        llamadas.append(pagina)
+        return (((1.0, 2.0), (3.0, 4.0)),)
+
+    flujo = io.BytesIO(crear_pdf_bytes_con_texto(["MORTARA"]))
+
+    resultado = extraer_texto_de_flujo(flujo, capturador_para=lambda _texto: capturador_falso)
+
+    assert len(llamadas) == 1  # una página -> una llamada al capturador
+    assert resultado.trazos == (((1.0, 2.0), (3.0, 4.0)),)
