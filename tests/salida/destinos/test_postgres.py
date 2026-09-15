@@ -316,9 +316,8 @@ def test_escribir_registro_eco_pivota_medidas_conocidas_y_guarda_extras_en_adici
 # Oráculo con valores LITERALES escritos a mano, no derivados del código.
 
 
-def test_escribir_registro_laboratorio_persiste_adicionales_de_header_en_estudio(
-    escritor: EscritorPostgres, motor
-) -> None:
+def _registro_laboratorio_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_derivante` (personal) + `origen`/`edad` (header, esperados)."""
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.LABORATORIO,
         version_esquema=1,
@@ -333,24 +332,36 @@ def test_escribir_registro_laboratorio_persiste_adicionales_de_header_en_estudio
                 ),
             ),
         ),
-        adicionales={"medico_derivante": "Dr. Roberto Diaz", "edad": "45 años", "origen": "Guardia"},
+        adicionales={"medico_derivante": "Dr. Roberto Diaz", "origen": "Guardia", "edad": "45 años"},
     )
     claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
     registro = construir_registro(
         documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
     )
-
-    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
-    escritor.escribir_registro(registro)
-
-    (estudio,) = _leer_todas(motor, Estudio)
-    assert estudio.adicionales == {"edad": "45 años", "origen": "Guardia"}
-    assert "medico_derivante" not in estudio.adicionales
+    return registro, {"origen": "Guardia", "edad": "45 años"}
 
 
-def test_escribir_registro_eco_persiste_adicionales_de_header_en_estudio(
-    escritor: EscritorPostgres, motor
-) -> None:
+def _registro_ecg_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_derivante` (personal) + `institucion`/`sexo` (header, esperados)."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
+        ),
+        adicionales={"medico_derivante": "Dr. Roberto Diaz", "institucion": "Instituto de Cardiologia", "sexo": "M"},
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+    return registro, {"institucion": "Instituto de Cardiologia", "sexo": "M"}
+
+
+def _registro_eco_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_solicitante` (personal) + edad/peso/altura/superficie_corporal (header, esperados)."""
     documento = DocumentoParseado(
         tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
         version_esquema=1,
@@ -373,49 +384,39 @@ def test_escribir_registro_eco_persiste_adicionales_de_header_en_estudio(
     registro = construir_registro(
         documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
     )
-
-    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
-    escritor.escribir_registro(registro)
-
-    (estudio,) = _leer_todas(motor, Estudio)
-    assert estudio.adicionales == {
-        "edad": "50 años",
-        "peso": "72 kg",
-        "altura": "1.70 m",
-        "superficie_corporal": "1.85",
-    }
-    assert "medico_solicitante" not in estudio.adicionales
-    # Distinto de `medicion_eco.adicionales` (medidas del CUERPO sin pivote):
-    # acá no hay medidas sin pivotar, así que queda `None`.
-    (medicion,) = _leer_todas(motor, MedicionEco)
-    assert medicion.adicionales is None
+    return registro, {"edad": "50 años", "peso": "72 kg", "altura": "1.70 m", "superficie_corporal": "1.85"}
 
 
-def test_escribir_registro_ecg_persiste_adicionales_de_header_en_estudio(
-    escritor: EscritorPostgres, motor
+@pytest.mark.parametrize(
+    "construir_registro_de_tipo",
+    [_registro_laboratorio_con_adicionales, _registro_ecg_con_adicionales, _registro_eco_con_adicionales],
+    ids=["laboratorio", "ecg", "ecocardiograma"],
+)
+def test_cada_tipo_de_documento_persiste_adicionales_de_header_sin_personal(
+    escritor: EscritorPostgres, motor, construir_registro_de_tipo
 ) -> None:
-    documento = DocumentoParseado(
-        tipo_documento=TipoDocumento.ECG,
-        version_esquema=1,
-        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
-        fecha_estudio=date(2024, 1, 10),
-        contenido=ContenidoEcg(
-            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
-        ),
-        adicionales={"medico_derivante": "Dr. Roberto Diaz", "institucion": "Instituto de Cardiologia", "sexo": "M"},
-    )
-    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    registro = construir_registro(
-        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
-    )
-
+    """Fusiona el oráculo positivo (valores de header persistidos) con la
+    higiene de PII (el campo personal del médico no llega). Guarda además
+    contra el defecto de esta entrega: si se agrega un tipo de documento
+    nuevo a `EscritorPostgres.escribir_registro` sin sumarlo acá, este test
+    para ese tipo empieza a fallar en vez de perder el campo en silencio."""
+    registro, esperado = construir_registro_de_tipo()
     escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
     escritor.escribir_registro(registro)
 
     (estudio,) = _leer_todas(motor, Estudio)
-    assert estudio.adicionales == {"institucion": "Instituto de Cardiologia", "sexo": "M"}
+    assert estudio.adicionales == esperado
     assert "medico_derivante" not in estudio.adicionales
-    assert not hasattr(MedicionEcg, "adicionales"), "medicion_ecg.adicionales fue eliminada (migracion 0014)"
+    assert "medico_solicitante" not in estudio.adicionales
+
+    # Campos distintos según el tipo, verificados en el mismo test para no
+    # repetir el escenario: `medicion_eco.adicionales` (medidas del CUERPO sin
+    # pivote) nunca se confunde con `estudio.adicionales` (header); y la
+    # columna `medicion_ecg.adicionales` fue eliminada por la migración 0014.
+    if registro.tipo_documento is TipoDocumento.ECOCARDIOGRAMA:
+        assert _leer_todas(motor, MedicionEco)[0].adicionales is None
+    if registro.tipo_documento is TipoDocumento.ECG:
+        assert not hasattr(MedicionEcg, "adicionales"), "medicion_ecg.adicionales fue eliminada (migracion 0014)"
 
 
 def test_escribir_registro_sin_adicionales_deja_estudio_adicionales_en_null(
@@ -426,84 +427,6 @@ def test_escribir_registro_sin_adicionales_deja_estudio_adicionales_en_null(
 
     (estudio,) = _leer_todas(motor, Estudio)
     assert estudio.adicionales is None
-
-
-def _registro_laboratorio_con_adicionales() -> RegistroAnonimizado:
-    documento = DocumentoParseado(
-        tipo_documento=TipoDocumento.LABORATORIO,
-        version_esquema=1,
-        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
-        fecha_estudio=date(2024, 1, 10),
-        contenido=ContenidoLaboratorio(
-            numero_peticion="P-1",
-            resultados=(
-                ResultadoLaboratorio(
-                    seccion="HEMATOLOGIA", prueba="Hemoglobina", resultado="14.5",
-                    unidades="g/dL", valores_referencia="12-16",
-                ),
-            ),
-        ),
-        adicionales={"origen": "Guardia"},
-    )
-    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    return construir_registro(
-        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
-    )
-
-
-def _registro_ecg_con_adicionales() -> RegistroAnonimizado:
-    documento = DocumentoParseado(
-        tipo_documento=TipoDocumento.ECG,
-        version_esquema=1,
-        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
-        fecha_estudio=date(2024, 1, 10),
-        contenido=ContenidoEcg(
-            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
-        ),
-        adicionales={"institucion": "Instituto de Cardiologia"},
-    )
-    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    return construir_registro(
-        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
-    )
-
-
-def _registro_eco_con_adicionales() -> RegistroAnonimizado:
-    documento = DocumentoParseado(
-        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
-        version_esquema=1,
-        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
-        fecha_estudio=date(2024, 1, 10),
-        contenido=ContenidoEco(
-            medidas=(MedidaEco(nombre="AO", valor="28", unidad="mm"),),
-            secciones_texto=(),
-            firma=FirmaMedico(nombre="Dr. Carlos Gomez", matricula="MP12345"),
-        ),
-        adicionales={"peso": "72 kg"},
-    )
-    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
-    return construir_registro(
-        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
-    )
-
-
-@pytest.mark.parametrize(
-    "construir_registro_de_tipo",
-    [_registro_laboratorio_con_adicionales, _registro_ecg_con_adicionales, _registro_eco_con_adicionales],
-    ids=["laboratorio", "ecg", "ecocardiograma"],
-)
-def test_cada_tipo_de_documento_soportado_persiste_sus_adicionales_en_estudio(
-    escritor: EscritorPostgres, motor, construir_registro_de_tipo
-) -> None:
-    """Guarda contra el defecto de esta entrega: si se agrega un tipo de
-    documento nuevo a `EscritorPostgres.escribir_registro` sin sumarlo acá
-    (y sin persistir sus adicionales en `_insertar`), este test para ese
-    tipo empieza a fallar en vez de perder el campo en silencio."""
-    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
-    escritor.escribir_registro(construir_registro_de_tipo())
-
-    (estudio,) = _leer_todas(motor, Estudio)
-    assert estudio.adicionales is not None
 
 
 def test_escribir_registro_tipo_no_reconocido_lanza_value_error(escritor: EscritorPostgres) -> None:
@@ -983,59 +906,88 @@ def test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_contra_po
 
 # --- estudio.adicionales: ida y vuelta e higiene de PII, Postgres real -----
 #
-# Migración 0014 -- confirma que la columna JSONB real (no el JSON genérico
-# de SQLite) hace la ida y vuelta idéntica, y que ningún campo de
-# `_CLAVES_PERSONAL` llega a persistirse, para los 3 tipos de documento.
+# Migración 0014 -- el test parametrizado de abajo confirma, para los 3 tipos
+# y contra la columna JSONB real (no el JSON genérico de SQLite), que el
+# campo no personal hace la ida y vuelta idéntica (oráculo positivo) Y que
+# ningún campo de `_CLAVES_PERSONAL` llega a persistirse -- ambas garantías
+# en el mismo test, sin repetir el escenario de escritura.
+
+
+_LAS_3_CLAVES_PERSONALES = {
+    "medico_derivante": "Dr. Roberto Diaz",
+    "medico_solicitante": "Dr. Ana Lopez",
+    "tecnico": "Tec. Marta Ruiz",
+}
+_CONTENIDO_POR_TIPO_PII = {
+    TipoDocumento.LABORATORIO: ContenidoLaboratorio(
+        numero_peticion="P-1",
+        resultados=(
+            ResultadoLaboratorio(
+                seccion="HEMATOLOGIA", prueba="Hemoglobina", resultado="14.5",
+                unidades="g/dL", valores_referencia="12-16",
+            ),
+        ),
+    ),
+    TipoDocumento.ECG: ContenidoEcg(
+        vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
+    ),
+    TipoDocumento.ECOCARDIOGRAMA: ContenidoEco(
+        medidas=(MedidaEco(nombre="AO", valor="28", unidad="mm"),),
+        secciones_texto=(),
+        firma=FirmaMedico(nombre="Dr. Carlos Gomez", matricula="MP12345"),
+    ),
+}
+
+
+def _registro_con_las_3_claves_personales(tipo: TipoDocumento, campo_esperado: dict) -> tuple[RegistroAnonimizado, dict]:
+    documento = DocumentoParseado(
+        tipo_documento=tipo,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=_CONTENIDO_POR_TIPO_PII[tipo],
+        adicionales={**_LAS_3_CLAVES_PERSONALES, **campo_esperado},
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=f"clave-pii-{tipo.value}"
+    )
+    return registro, campo_esperado
 
 
 @pytest.mark.postgres
-def test_estudio_adicionales_ida_y_vuelta_los_3_tipos_contra_postgres_real(
-    _engine_postgres_real: sa.Engine,
+@pytest.mark.parametrize(
+    "construir_registro_de_tipo",
+    [
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.LABORATORIO, {"origen": "Guardia"}),
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.ECG, {"institucion": "Instituto de Cardiologia"}),
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.ECOCARDIOGRAMA, {"peso": "72 kg"}),
+    ],
+    ids=["laboratorio", "ecg", "ecocardiograma"],
+)
+def test_estudio_adicionales_nunca_contiene_ningun_campo_personal_contra_postgres_real(
+    _engine_postgres_real: sa.Engine, construir_registro_de_tipo
 ) -> None:
-    escritor = EscritorPostgres(_engine_postgres_real)
-    escritor.escribir_episodio(id_episodio="ep-real-adic", id_paciente="pid-real-adic", fecha_ancla=date(2024, 1, 10))
-
-    for registro in (
-        _registro_laboratorio_con_adicionales(),
-        _registro_ecg_con_adicionales(),
-        _registro_eco_con_adicionales(),
-    ):
-        registro = replace(registro, id_episodio="ep-real-adic", clave_documento=f"clave-{registro.tipo_documento.value}")
-        escritor.escribir_registro(registro)
-
-    with sa.orm.Session(_engine_postgres_real) as sesion:
-        estudios = {e.tipo_documento: e.adicionales for e in sesion.scalars(sa.select(Estudio)).all()}
-    assert estudios[TipoDocumento.LABORATORIO.value] == {"origen": "Guardia"}
-    assert estudios[TipoDocumento.ECG.value] == {"institucion": "Instituto de Cardiologia"}
-    assert estudios[TipoDocumento.ECOCARDIOGRAMA.value] == {"peso": "72 kg"}
-
-
-@pytest.mark.postgres
-def test_estudio_adicionales_nunca_contiene_campos_personales_contra_postgres_real(
-    _engine_postgres_real: sa.Engine,
-) -> None:
-    """`_CLAVES_PERSONAL` (medico_derivante, medico_solicitante, tecnico) se
-    filtra en `constructor_registro.py::_adicionales_sin_personal` ANTES de
-    llegar a `RegistroAnonimizado.adicionales` -- este test confirma que esa
-    garantía sobrevive el viaje completo hasta Postgres real, para los 3
-    tipos."""
+    """`_CLAVES_PERSONAL` (`medico_derivante`, `medico_solicitante`, `tecnico`
+    -- `constructor_registro.py:79`) se filtra en `_adicionales_sin_personal`
+    ANTES de llegar a `RegistroAnonimizado.adicionales`. El input de este test
+    trae LAS TRES claves para los 3 tipos, con valores sintéticos, más un
+    campo no personal que SÍ debe llegar (oráculo positivo: si nada se
+    escribiera, `estudio.adicionales` sería `None` y la comparación de abajo
+    fallaría, en vez de pasar vacuamente). Se confirmó manualmente que este
+    test FALLA (para las 3 claves y los 3 tipos) si `_adicionales_sin_personal`
+    se rompe para devolver el dict intacto -- ver apply-progress.md."""
     escritor = EscritorPostgres(_engine_postgres_real)
     escritor.escribir_episodio(id_episodio="ep-real-pii", id_paciente="pid-real-pii", fecha_ancla=date(2024, 1, 10))
+    registro, esperado = construir_registro_de_tipo()
+    registro = replace(registro, id_episodio="ep-real-pii")
 
-    registro_lab = replace(
-        _registro_laboratorio(),  # adicionales={"medico_derivante": "Dr. Roberto Diaz"}
-        id_episodio="ep-real-pii",
-        clave_documento="clave-pii-laboratorio",
-    )
-    registro_ecg = _registro_ecg_con_senal(None, clave="clave-pii-ecg", id_episodio="ep-real-pii")
-    for registro in (registro_lab, registro_ecg):
-        escritor.escribir_registro(registro)
+    escritor.escribir_registro(registro)
 
     with sa.orm.Session(_engine_postgres_real) as sesion:
-        estudios = sesion.scalars(sa.select(Estudio)).all()
-    for estudio in estudios:
-        adicionales = estudio.adicionales or {}
-        assert "medico_derivante" not in adicionales
-        assert "medico_solicitante" not in adicionales
-        assert "tecnico" not in adicionales
+        (estudio,) = sesion.scalars(sa.select(Estudio)).all()
+    assert estudio.adicionales == esperado, "oraculo positivo: el campo no personal debe llegar intacto"
+    assert "medico_derivante" not in estudio.adicionales
+    assert "medico_solicitante" not in estudio.adicionales
+    assert "tecnico" not in estudio.adicionales
 

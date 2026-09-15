@@ -98,8 +98,17 @@ de comité 2026-09-07. Rama `fix/adicionales-de-laboratorio-y-eco` desde la inte
   header" en `specs/anonymized-output/spec.md`, con escenarios de los 3 tipos y de
   ausencia de campos personales.
 - [x] 2b.6 **Verificación**: `pytest -q` (978 passed, 1 skipped), `pytest -q -m postgres`
-  (21 passed, incluye migración de la base de desarrollo compartida a `head`),
-  `ruff check .` (All checks passed).
+  (21 passed), `ruff check .` (All checks passed).
+- [x] 2b.7 **Correcciones de revisión adversarial**: test de PII vacuo (`medico_solicitante`/
+  `tecnico` nunca aparecían en el input, eco nunca se ejercitaba) reemplazado por uno
+  parametrizado con las 3 claves de `_CLAVES_PERSONAL` y los 3 tipos, con demostración
+  manual de que falla si se rompe `_adicionales_sin_personal`; corrección de la atribución
+  causal de por qué se migró la base compartida (era `diagnostico.py::_diagnosticar_migraciones`,
+  no el fixture de `test_cli.py`); test de downgrade con los 3 tipos poblados contra
+  Postgres real efímero; tests repetidos parametrizados para no crecer el diff; comentario
+  de la migración 0014 corregido. Verificación final: `pytest -q -m "not postgres"`
+  (974 passed, 1 skipped), `pytest -q -m postgres` (23 passed, sin tocar la base
+  compartida), `ruff check .` (limpio).
 
 ## Trazabilidad tarea → requisito
 
@@ -114,4 +123,4 @@ de comité 2026-09-07. Rama `fix/adicionales-de-laboratorio-y-eco` desde la inte
 | 3.5 | `anonymized-output` (MODIFIED): exportación no muta la base |
 | 4.1–4.3 | `exportacion-dataset-vinculado`: cero PII en la exportación |
 | 4.4–4.5 | Fase 5 de `operacion-segura-y-escalable` (cierre pendiente) |
-| 2b.1–2b.6 | `anonymized-output` (ADDED): persistencia de adicionales de header para los 3 tipos |
+| 2b.1–2b.7 | `anonymized-output` (ADDED): persistencia de adicionales de header para los 3 tipos |

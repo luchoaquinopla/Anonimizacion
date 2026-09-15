@@ -813,3 +813,44 @@ def test_migracion_0014_copia_adicionales_existentes_contra_postgres_real(_url_p
         assert valor == {"institucion": "Hospital Viejo"}
     finally:
         motor.dispose()
+
+
+@pytest.mark.postgres
+def test_downgrade_de_0014_solo_copia_adicionales_de_ecg_de_vuelta_contra_postgres_real(
+    _url_postgres_scratch: str,
+) -> None:
+    """`estudio.adicionales` puede estar poblado por los 3 tipos, pero el
+    downgrade sólo tiene a dónde volcarlo para ECG (única fila que cuelga de
+    `medicion_ecg`) -- laboratorio y eco no deben contaminar nada."""
+    cfg = _config_alembic(_url_postgres_scratch)
+    command.upgrade(cfg, "head")
+    motor = sa.create_engine(_url_postgres_scratch)
+    try:
+        with motor.begin() as conexion:
+            conexion.execute(sa.text(
+                "INSERT INTO episodio (id_episodio, id_paciente, fecha_ancla) VALUES ('ep-mix', 'pac-mix', '2026-01-01')"
+            ))
+            conexion.execute(sa.text(
+                "INSERT INTO estudio (id_episodio, tipo_documento, fecha_estudio, precision_hora, adicionales) VALUES "
+                "('ep-mix', 'ecg', '2026-01-01', 'ausente', '{\"sexo\": \"F\"}'::jsonb), "
+                "('ep-mix', 'laboratorio', '2026-01-01', 'ausente', '{\"origen\": \"Guardia\"}'::jsonb), "
+                "('ep-mix', 'ecocardiograma', '2026-01-01', 'ausente', '{\"peso\": \"72 kg\"}'::jsonb)"
+            ))
+            id_ecg = conexion.execute(
+                sa.text("SELECT id_estudio FROM estudio WHERE id_episodio = 'ep-mix' AND tipo_documento = 'ecg'")
+            ).scalar_one()
+            conexion.execute(
+                sa.text("INSERT INTO medicion_ecg (id_episodio, id_estudio) VALUES ('ep-mix', :id)"), {"id": id_ecg}
+            )
+    finally:
+        motor.dispose()
+
+    command.downgrade(cfg, "0013_senal_ecg")
+
+    motor = sa.create_engine(_url_postgres_scratch)
+    try:
+        with motor.connect() as conexion:
+            filas = conexion.execute(sa.text("SELECT adicionales FROM medicion_ecg WHERE id_episodio = 'ep-mix'")).all()
+        assert filas == [({"sexo": "F"},)], "solo ECG vuelve a medicion_ecg -- laboratorio y eco no deben crear filas"
+    finally:
+        motor.dispose()

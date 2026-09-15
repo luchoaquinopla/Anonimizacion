@@ -51,9 +51,10 @@ def upgrade() -> None:
 
     # Copia medicion_ecg.adicionales -> estudio.adicionales para filas ya
     # escritas (bases de prueba/desarrollo de la entrega 2). `UPDATE ... FROM`
-    # es sintaxis Postgres; SQLite usa la subconsulta correlacionada
-    # equivalente -- ambas cubiertas porque los tests de este repo corren
-    # contra los dos motores (ver test_migraciones.py).
+    # es sintaxis Postgres; SQLite no la soporta, así que usa la subconsulta
+    # correlacionada equivalente -- cada rama se prueba por separado contra
+    # su propio motor en `test_migraciones.py` (no hay comparación cruzada
+    # entre dialectos, cada test corre contra uno solo).
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         op.execute(
