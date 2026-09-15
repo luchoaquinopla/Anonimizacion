@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.modelos import RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
-from anonimizacion.salida.codec_senal import codificar_mascara, codificar_muestras
+from anonimizacion.salida.codec_senal import VERSION_FORMATO_ACTUAL, codificar_mascara, codificar_muestras
 from anonimizacion.salida.modelos_orm import (
     Episodio,
     Estudio,
@@ -434,6 +434,7 @@ class EscritorPostgres:
                     mascara=codificar_mascara(contenido.senal.mascara),
                     frecuencia_hz=contenido.senal.frecuencia_hz,
                     version_extractor=contenido.senal.version_extractor,
+                    version_formato=VERSION_FORMATO_ACTUAL,
                 )
             )
 

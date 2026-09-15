@@ -8,6 +8,20 @@ compresión TOAST para `muestras_uv`/`mascara`: ya llegan comprimidas por
 bajar tamaño. No hay backfill: la tabla nace vacía, ningún estudio previo a
 este cambio puede recuperar su señal sin volver a leer el PDF original.
 
+`version_formato` (WARNING, revisión adversarial): versión del ESQUEMA
+BINARIO de `salida/codec_senal.py` (layout de bytes: int16 LE + zlib /
+packbits + zlib), no del algoritmo de extracción -- ver
+`version_extractor` más abajo y el docstring de `codec_senal.py`. `NOT
+NULL DEFAULT 1`: la tabla nace vacía en esta misma migración, así que el
+default cubre cualquier fila que se escriba desde ahora, sin ambigüedad de
+"no se sabe" como en otras columnas legadas de este repo.
+
+`version_extractor` (columna ya presente en `SenalEcg.version_extractor`,
+`dominio/senal_ecg.py`): versión del ALGORITMO que reconstruye la señal a
+partir de los trazos vectoriales (`extraccion/senal_ecg.py`) -- pregunta
+independiente de `version_formato`: cómo se calculó el valor vs. cómo se
+empaquetaron sus bytes.
+
 Revision ID: 0013_senal_ecg
 Revises: 0012_completitud_en_estudio
 Create Date: 2026-09-15
@@ -34,6 +48,7 @@ def upgrade() -> None:
         sa.Column("mascara", sa.LargeBinary(), nullable=False),
         sa.Column("frecuencia_hz", sa.Integer(), nullable=False),
         sa.Column("version_extractor", sa.Integer(), nullable=False),
+        sa.Column("version_formato", sa.Integer(), nullable=False, server_default="1"),
     )
     if op.get_bind().dialect.name == "postgresql":
         op.execute("ALTER TABLE senal_ecg ALTER COLUMN muestras_uv SET STORAGE EXTERNAL")

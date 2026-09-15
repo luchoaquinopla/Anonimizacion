@@ -241,6 +241,7 @@ def test_escribir_registro_ecg_con_senal_valida_crea_fila_en_senal_ecg(escritor:
     assert fila.id_estudio == estudio.id_estudio
     assert fila.frecuencia_hz == 500
     assert fila.version_extractor == 1
+    assert fila.version_formato == destinos_postgres.VERSION_FORMATO_ACTUAL
     assert decodificar_muestras(fila.muestras_uv)[0, 0] == 1234
     assert bool(decodificar_mascara(fila.mascara)[0, 0]) is True
 
@@ -755,4 +756,28 @@ def test_fallo_al_escribir_la_senal_revierte_tambien_el_estudio_contra_postgres_
         senales = sesion.scalars(sa.select(SenalEcgOrm)).all()
     assert estudios == [], "un fallo en la señal no debe dejar un estudio huerfano sin señal"
     assert senales == [], "un fallo en la señal no debe dejar ninguna señal huerfana"
+
+
+@pytest.mark.postgres
+def test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_contra_postgres_real(
+    _engine_postgres_real: sa.Engine,
+) -> None:
+    """WARNING (revisión adversarial): la variante SQLite de este test no
+    prueba nada sobre la restricción única real -- SQLite y Postgres pueden
+    divergir en cómo arbitran la carrera IntegrityError/SELECT (ver
+    `tests/salida/test_migraciones.py::
+    test_indices_y_restricciones_unicas_del_orm_coinciden_con_la_migracion`
+    para el mismo principio). Repetida acá contra el motor real."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-3", id_paciente="pid-real-3", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-3", id_episodio="ep-real-3")
+
+    for _ in range(3):
+        escritor.escribir_registro(registro)
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+        senales = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert len(estudios) == 1
+    assert len(senales) == 1
 

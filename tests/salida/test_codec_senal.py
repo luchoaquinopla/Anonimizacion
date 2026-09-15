@@ -16,6 +16,7 @@ import pytest
 
 from anonimizacion.dominio.senal_ecg import FORMA
 from anonimizacion.salida.codec_senal import (
+    VERSION_FORMATO_ACTUAL,
     codificar_mascara,
     codificar_muestras,
     decodificar_mascara,
@@ -91,3 +92,32 @@ def test_decodificar_muestras_rechaza_bytes_de_forma_incorrecta(forma_invalida: 
 
     with pytest.raises(ValueError):
         decodificar_muestras(zlib.compress(matriz_ajena.tobytes()))
+
+
+# --- version_formato: esquema binario, distinta de SenalEcg.version_extractor --
+
+
+def test_decodificar_muestras_acepta_la_version_de_formato_actual_por_defecto() -> None:
+    matriz = _matriz_con(1234)
+
+    assert np.array_equal(decodificar_muestras(codificar_muestras(matriz)), matriz)
+    assert np.array_equal(
+        decodificar_muestras(codificar_muestras(matriz), version_formato=VERSION_FORMATO_ACTUAL), matriz
+    )
+
+
+def test_decodificar_muestras_rechaza_version_de_formato_desconocida() -> None:
+    """Nunca decodifica a ciegas: un `version_formato` que este módulo no
+    conoce lanza explícito, aunque los bytes en sí sean válidos para el
+    formato actual."""
+    matriz = _matriz_con(1234)
+
+    with pytest.raises(ValueError, match="version_formato"):
+        decodificar_muestras(codificar_muestras(matriz), version_formato=VERSION_FORMATO_ACTUAL + 1)
+
+
+def test_decodificar_mascara_rechaza_version_de_formato_desconocida() -> None:
+    mascara = np.zeros(FORMA, dtype=bool)
+
+    with pytest.raises(ValueError, match="version_formato"):
+        decodificar_mascara(codificar_mascara(mascara), version_formato=999)

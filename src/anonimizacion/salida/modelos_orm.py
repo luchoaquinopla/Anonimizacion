@@ -210,6 +210,10 @@ class SenalEcgOrm(Base):
     mascara: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     frecuencia_hz: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     version_extractor: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Versión del ESQUEMA BINARIO de `salida/codec_senal.py`, distinta de
+    #: `version_extractor` (versión del algoritmo de reconstrucción) -- ver
+    #: el docstring de `codec_senal.py` y de la migración `0013`.
+    version_formato: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class ResultadoLaboratorio(Base):

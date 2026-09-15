@@ -569,9 +569,17 @@ def test_migracion_0013_agrega_senal_ecg_con_pk_fk_y_columnas_esperadas(tmp_path
 
     inspector = sa.inspect(sa.create_engine(url))
     columnas = {columna["name"]: columna for columna in inspector.get_columns("senal_ecg")}
-    assert set(columnas) == {"id_estudio", "muestras_uv", "mascara", "frecuencia_hz", "version_extractor"}
+    assert set(columnas) == {
+        "id_estudio",
+        "muestras_uv",
+        "mascara",
+        "frecuencia_hz",
+        "version_extractor",
+        "version_formato",
+    }
     assert columnas["muestras_uv"]["nullable"] is False
     assert columnas["mascara"]["nullable"] is False
+    assert columnas["version_formato"]["nullable"] is False
 
     pk = inspector.get_pk_constraint("senal_ecg")
     assert pk["constrained_columns"] == ["id_estudio"]
