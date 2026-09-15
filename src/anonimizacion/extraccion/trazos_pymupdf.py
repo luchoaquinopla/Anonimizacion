@@ -13,6 +13,8 @@ Nunca lee texto -- sólo geometría (design.md, decisión #2).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pymupdf
 
 _NEGRO = (0.0, 0.0, 0.0)
@@ -20,6 +22,7 @@ _PT_A_MM = 25.4 / 72
 
 Punto = tuple[float, float]
 Trazo = tuple[Punto, ...]
+CapturadorDePagina = Callable[[pymupdf.Page], tuple[Trazo, ...]]
 
 
 def capturar_trazos(pagina: pymupdf.Page) -> tuple[Trazo, ...]:
