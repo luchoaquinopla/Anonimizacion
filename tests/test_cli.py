@@ -364,6 +364,76 @@ def test_esqueleto_modo_parseable_genera_valores_sinteticos_en_vez_de_enmascarar
     assert salida_stderr.strip().endswith("Tipo detectado: laboratorio.")
 
 
+def test_exportar_delega_a_exportar_dataset_con_la_url_y_pagina_resueltas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from anonimizacion.salida.exportacion import ResumenExportacion
+
+    llamado_con: dict = {}
+
+    def _falso_exportar_dataset(engine, salida, *, tamano_pagina):
+        llamado_con["salida"] = salida
+        llamado_con["tamano_pagina"] = tamano_pagina
+        return ResumenExportacion(episodios=1, ecg=1, laboratorio=1, eco=1)
+
+    monkeypatch.setattr(cli, "exportar_dataset", _falso_exportar_dataset)
+
+    salida = tmp_path / "dataset"
+    codigo = cli.main(
+        ["exportar", "--db-url", "sqlite:///:memory:", "--salida", str(salida), "--tamano-pagina", "128"]
+    )
+
+    assert codigo == 0
+    assert llamado_con["salida"] == salida
+    assert llamado_con["tamano_pagina"] == 128
+
+
+def test_exportar_produce_parquet_y_manifiesto_sin_mutar_la_base_sqlite(tmp_path, capsys) -> None:
+    """Extremo real (sin mockear `exportar_dataset`): contra una base SQLite
+    de archivo (no Postgres, pero ejercita `construir_engine_postgres` +
+    `exportar_dataset` de punta a punta) -- confirma que el subcomando
+    produce los 4 Parquet + manifiesto y que ninguna fila cambia como efecto
+    de exportar."""
+    from datetime import date
+
+    import sqlalchemy as sa
+
+    from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio
+
+    ruta_db = tmp_path / "exportar_cli.db"
+    url = f"sqlite:///{ruta_db}"
+    motor = sa.create_engine(url)
+    Base.metadata.create_all(motor)
+    with sa.orm.Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-cli-1", id_paciente="pid-cli-1", fecha_ancla=date(2024, 3, 1)))
+        sesion.add(
+            Estudio(
+                id_episodio="ep-cli-1",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2024, 3, 1),
+                precision_hora="ausente",
+                completo=False,
+                campos_no_extraidos=["laboratorio.resultado"],
+            )
+        )
+    motor.dispose()
+
+    with sa.orm.Session(sa.create_engine(url)) as sesion:
+        conteo_antes = sesion.scalar(sa.select(sa.func.count()).select_from(Estudio))
+
+    salida = tmp_path / "dataset"
+    codigo = cli.main(["exportar", "--db-url", url, "--salida", str(salida)])
+
+    assert codigo == 0
+    assert (salida / "episodios.parquet").exists()
+    assert (salida / "manifiesto.json").exists()
+    assert "Exportación completa" in capsys.readouterr().err
+
+    with sa.orm.Session(sa.create_engine(url)) as sesion:
+        conteo_despues = sesion.scalar(sa.select(sa.func.count()).select_from(Estudio))
+    assert conteo_antes == conteo_despues == 1
+
+
 def test_pyproject_registra_el_punto_de_entrada_unico() -> None:
     raiz = Path(__file__).resolve().parents[1]
     datos = tomllib.loads((raiz / "pyproject.toml").read_text(encoding="utf-8"))
