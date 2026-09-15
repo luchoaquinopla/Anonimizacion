@@ -14,6 +14,7 @@ Estado: **completa** — 6/6 tareas de la Fase 1.
 | 1.4 | `tests/extraccion/test_senal_ecg.py`, `tests/dominio/test_senal_ecg.py` | `src/anonimizacion/dominio/senal_ecg.py`, `src/anonimizacion/extraccion/senal_ecg.py` | Descompuesto desde el inicio en `_clasificar`/`_calibracion_valida`/`_asignar_derivaciones`/`_particionar`/`_muestrear`, cada una bajo el límite de complejidad 10 (`pyproject.toml` mccabe) — sin `noqa: C901` necesario | `135bee6` |
 | 1.5 | `tests/fixtures/test_pdf_sintetico_ecg.py` | `tests/fixtures/pdf_sintetico.py` (`crear_pdf_ecg_con_trazos_sinteticos`) + fix de línea base de amplitud (centro de banda, no primer punto) | — | `5f1f1d8` |
 | 1.6 | — | — | Revisión de complejidad: sin hallazgos, ver 1.4 | `135bee6` |
+| Corrección | `test_pdf_sintetico_ecg_recupera_signo_amplitud_y_linea_base`, `test_construir_senal_sigue_la_direccion_del_pulso_invertido`, `test_construir_senal_falla_si_los_pulsos_apuntan_en_direcciones_distintas`, `test_construir_senal_ignora_el_orden_de_los_puntos_del_pulso` | `_pie_y_meseta`, `_calibrar_pulsos`, `_emparejar_por_proximidad` en `extraccion/senal_ecg.py` | Ninguna (fix quirúrgico sobre función ya descompuesta) | `b1af035` |
 
 ### Archivos
 
@@ -70,16 +71,67 @@ medido (sin aplicar `derotation_matrix`) reemplaza esa redacción tentativa —
 no es una desviación, es la resolución explícita de la ambigüedad que el
 diseño delegaba a esta tarea.
 
-### Estado de la suite completa
+### Estado de la suite completa (post-corrección, con Postgres levantado)
 
-`uv run pytest -q`: **929 passed, 13 skipped** (12 por Postgres real no
-disponible en ese momento + 1 por falta de privilegio de symlink en
-Windows, sin relación con este cambio). Se levantó `docker compose up -d`
-(Postgres queda healthy) y se corrieron los 12 tests `@pytest.mark.postgres`
-aparte: **12 passed, 0 failed**. Total combinado: **941 passed, 1 skipped
-(symlink, ambiental), 0 failed**.
+`uv run pytest -q`: **945 passed, 1 skipped** (symlink en Windows,
+ambiental, sin relación con este cambio). Una corrida anterior mostró 13
+errores transitorios (`LlamadaDeRedBloqueada`) en tests no relacionados
+con esta entrega; se repitió la corrida completa y no reprodujo -- flake
+preexistente de aislamiento entre tests, no introducido por este cambio.
+
+### Corrección post-revisión adversarial (commit `b1af035`)
+
+**CRITICAL — signo de amplitud invertido.** El ECG real mide +1 mV como
+**-10 mm** en X (pie a la derecha, meseta a la izquierda) -- `senal_ecg.py`
+usaba una convención de signo fija (`mv = (x - xs.mean()) / 10`, +X = +mV)
+y el fixture sintético dibujaba con la fórmula EXACTAMENTE inversa (`x =
+centro + mv*10`): el test nunca podía detectar un signo invertido, porque
+ambos lados del test compartían la misma convención. **Regla aprendida: un
+fixture que comparte la fórmula del código bajo prueba no es un oráculo —
+es un espejo.** Un oráculo tiene que fijar valores independientes (aquí:
+plateaus a mV conocidos, no una expresión algebraica en función de x/mv) y,
+donde el signo importa, el fixture debe poder invertirse por parámetro
+mientras el código sigue derivando la dirección de la evidencia geométrica
+(el pulso), no de una constante.
+
+Fix: cada banda de amplitud (3 filas de la grilla + la banda propia de la
+tira -- medido: hay 4 pulsos porque hay 4 bandas, no porque haya 4
+columnas como se asumió en el commit anterior) deriva su signo y su línea
+base del pulso de calibración de ESA banda (`x_pie`, `x_meseta` por
+posición temporal). Si los 4 pulsos no apuntan en la misma dirección, la
+señal se descarta.
+
+**WARNING** -- `_pie_y_meseta` ahora ordena los puntos del pulso por Y
+antes de leer pie/meseta (antes se asumía que el primer punto de la tupla
+ya era el pie, sin ordenar).
+
+**SUGGESTION** -- `TOLERANCIA_DURACION` separada de `TOLERANCIA_CALIBRACION`;
+`_muestrear` rechaza también sobre-cobertura temporal, no sólo
+sub-cobertura.
+
+Se agregó `ruff>=0.16` a `dev` en `pyproject.toml` (faltaba, bloqueaba el
+lint pedido).
+
+### Verificación contra ECG real, signo corregido (sólo lectura, sin PII)
+
+aVR: mín -0,683 mV, máx 0,156 mV -- predominantemente NEGATIVO (esperado
+clínicamente). II: mín -0,36 mV, máx 1,162 mV -- predominantemente
+POSITIVO (esperado). Antes del fix quedaban invertidos.
+
+### Tamaño del cambio
+
+`git diff --shortstat feat/senal-ecg-y-dataset-vinculado...HEAD`: **14
+files changed, 1189 insertions(+), 15 deletions(-)** -- por encima de los
+~350 estimados en `proposal.md` para esta entrega. La corrección
+reemplazó tests existentes en lugar de sumarlos donde fue posible (el test
+de integración autoconfirmatorio se reemplazó por el oráculo
+independiente, no se agregó al lado); el excedente es la complejidad real
+del algoritmo de calibración por banda + su cobertura de violaciones de
+layout, no relleno. Riesgo a decidir por el orquestador: dividir esta
+entrega en PRs más chicos o aceptar `size:exception` para PR1.
 
 ### Restante
 
 Fase 2, 3 y 4 (PR 2, 3, 4) — no empezadas. `uv.lock` sigue sin versionar
-(corresponde a la tarea 3.6, no a esta entrega).
+(corresponde a la tarea 3.6, no a esta entrega) salvo por el cambio de
+`pyproject.toml` que agrega `ruff` a `dev`.
