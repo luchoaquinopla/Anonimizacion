@@ -23,13 +23,17 @@ corregido post-PR5, commit 07da933).
 
 from __future__ import annotations
 
+import socket
 from dataclasses import replace
 from datetime import date, time
 
+import numpy as np
 import pytest
 import sqlalchemy as sa
 
 from pydantic import SecretStr
+
+from anonimizacion.dominio.senal_ecg import SenalEcg
 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, IdentidadCruda, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -41,7 +45,8 @@ from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos import postgres as destinos_postgres
 from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
-from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
+from anonimizacion.salida.codec_senal import decodificar_mascara, decodificar_muestras
+from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, SenalEcgOrm, TextoSeccionEco, VinculoPaciente
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 SHA256_SINTETICO_TEST = "e" * 64  # huella inventada de 64 hex, ningún valor real
@@ -197,6 +202,70 @@ def test_escribir_registro_ecg_crea_fila_ancha(escritor: EscritorPostgres, motor
     assert len(filas) == 1
     assert filas[0].vent_rate == "72"
     assert filas[0].id_episodio == "ep-1"
+
+
+# --- senal_ecg: satélite 1:1 de estudio (openspec `senal-ecg-y-dataset-vinculado`) --
+
+
+def _senal_conocida() -> SenalEcg:
+    muestras = np.zeros((12, 5000), dtype=np.int16)
+    muestras[0, 0] = 1234
+    mascara = np.zeros((12, 5000), dtype=bool)
+    mascara[0, :] = True
+    return SenalEcg(muestras_uv=muestras, mascara=mascara)
+
+
+def _registro_ecg_con_senal(
+    senal: SenalEcg | None, *, clave: str = CLAVE_DOCUMENTO_TEST, id_episodio: str = "ep-1"
+) -> RegistroAnonimizado:
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40", senal=senal
+        ),
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    return construir_registro(documento, claves, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
+
+
+def test_escribir_registro_ecg_con_senal_valida_crea_fila_en_senal_ecg(escritor: EscritorPostgres, motor) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_ecg_con_senal(_senal_conocida()))
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    (fila,) = _leer_todas(motor, SenalEcgOrm)
+    assert fila.id_estudio == estudio.id_estudio
+    assert fila.frecuencia_hz == 500
+    assert fila.version_extractor == 1
+    assert decodificar_muestras(fila.muestras_uv)[0, 0] == 1234
+    assert bool(decodificar_mascara(fila.mascara)[0, 0]) is True
+
+
+def test_escribir_registro_ecg_sin_senal_no_crea_fila_en_senal_ecg(escritor: EscritorPostgres, motor) -> None:
+    """`senal=None` (layout que no valida): el estudio se escribe igual, sin fila satélite."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_ecg_con_senal(None))
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+    assert len(_leer_todas(motor, SenalEcgOrm)) == 0
+
+
+def test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_en_senal_ecg(
+    escritor: EscritorPostgres, motor
+) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_ecg_con_senal(_senal_conocida())
+
+    for _ in range(3):
+        escritor.escribir_registro(registro)
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+    assert len(_leer_todas(motor, SenalEcgOrm)) == 1
 
 
 def test_escribir_registro_eco_pivota_medidas_conocidas_y_guarda_extras_en_adicionales(
@@ -598,4 +667,92 @@ def test_construir_engine_postgres_no_le_pasa_connect_timeout_a_sqlite(motor) ->
             sesion.execute(sa.text("SELECT 1"))
     finally:
         engine.dispose()
+
+
+# --- senal_ecg: MISMA transacción que estudio, contra Postgres real --------
+#
+# SQLite no impone FKs por defecto (`PRAGMA foreign_keys` apagado salvo que
+# se active a mano) -- ningún test contra SQLite puede probar que la fila
+# huérfana es imposible. Sólo Postgres real, con la migración 0013 real
+# (`ON DELETE CASCADE`, FK real), ejerce esa garantía.
+
+
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+
+
+@pytest.fixture()
+def _engine_postgres_real(monkeypatch: pytest.MonkeyPatch):
+    """Ver `tests/integracion/test_postgres_carrera_real.py` para el mismo
+    patrón documentado en detalle (captura de `_CONNECT_REAL` ANTES del
+    guardia de red de sesión, `connect_timeout` para no colgarse sin
+    Docker)."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_escribir_registro_ecg_con_senal_persiste_ambas_filas_en_una_transaccion_contra_postgres_real(
+    _engine_postgres_real: sa.Engine,
+) -> None:
+    """GREEN: contra Postgres real, `estudio` + `senal_ecg` quedan
+    persistidos juntos, con la FK real de la migración 0013 (recreada acá
+    vía `Base.metadata.create_all`, que declara la misma FK que la
+    migración -- ver `tests/salida/test_migraciones.py::
+    test_indices_y_restricciones_unicas_del_orm_coinciden_con_la_migracion`)."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-1", id_paciente="pid-real-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(
+        _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-1", id_episodio="ep-real-1")
+    )
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        (estudio,) = sesion.scalars(sa.select(Estudio)).all()
+        (senal,) = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert senal.id_estudio == estudio.id_estudio
+
+
+@pytest.mark.postgres
+def test_fallo_al_escribir_la_senal_revierte_tambien_el_estudio_contra_postgres_real(
+    _engine_postgres_real: sa.Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED antes del fix: si `senal_ecg` se escribiera en una transacción
+    SEPARADA de `estudio`, este test fallaría (quedaría un `estudio` sin
+    `senal_ecg`, huérfano). Fuerza un fallo NO relacionado con `IntegrityError`
+    (el único tipo que `escribir_registro` atrapa a propósito -- ver su
+    docstring) durante la codificación de la señal: como ambas escrituras
+    viven en la MISMA `sesion.begin()` (`_insertar`), la excepción debe
+    propagar y el `estudio` de este intento NUNCA debe quedar commiteado."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-2", id_paciente="pid-real-2", fecha_ancla=date(2024, 1, 10))
+
+    def _falla(*_args: object, **_kwargs: object) -> bytes:
+        raise RuntimeError("fallo forzado de codificación -- no debe dejar nada persistido")
+
+    monkeypatch.setattr(destinos_postgres, "codificar_muestras", _falla)
+
+    with pytest.raises(RuntimeError):
+        escritor.escribir_registro(
+            _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-2", id_episodio="ep-real-2")
+        )
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+        senales = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert estudios == [], "un fallo en la señal no debe dejar un estudio huerfano sin señal"
+    assert senales == [], "un fallo en la señal no debe dejar ninguna señal huerfana"
 
