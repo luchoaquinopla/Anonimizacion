@@ -1,31 +1,8 @@
-"""Punto de entrada único instalable (`arranque-para-el-instituto`).
-
-Antes de este módulo, operar el pipeline exigía clonar el repositorio y
-lanzar DOS scripts sueltos (`scripts/procesar_carpeta.py`,
-`scripts/servir_panel.py`), cada uno con su propio `argparse` y su propia URL
-de base por defecto. Este módulo es el composition root real: un único
-comando instalado (`[project.scripts]`, ver `pyproject.toml`) con
-subcomandos --
-
-    anonimizacion diagnosticar   # ¿está todo listo para operar?
-    anonimizacion procesar --entrada <carpeta>
-    anonimizacion servir
-
-Fuera de alcance deliberado de este cambio (ver la respuesta completa en
-`sdd/arranque-para-el-instituto/apply-progress`): empaquetar un instalador o
-un servicio de Windows. Este comando sigue asumiendo una instalación editable
-del repositorio clonado (`pip install -e .`) -- IT hace ese paso una vez;
-después el operador sólo usa este comando y un archivo de configuración.
-
-`procesar`/`servir` (auditoria-y-poda, E4): la lógica que antes vivía en
-`scripts/procesar_carpeta.py`/`scripts/servir_panel.py` -- cargados por RUTA
-con `importlib.util.spec_from_file_location`, porque `scripts/` nunca formó
-parte del wheel instalado -- se movió a `comandos/procesar.py` y
-`comandos/servir.py` (paquete real, sí empaquetado). Este módulo ya no carga
-nada por ruta ni re-parsea `sys.argv` con un segundo `argparse`: resuelve
-banderas/config y llama a `comandos.procesar.ejecutar(...)`/
-`comandos.servir.servir(...)` con argumentos con nombre (design.md D3,
-`punto-entrada-instalable`)."""
+"""Punto de entrada único instalable: composition root con subcomandos
+(`diagnosticar`/`procesar`/`esqueleto`/`exportar`/`servir`). Resuelve banderas/config y
+llama a `comandos.procesar.ejecutar(...)`/`comandos.servir.servir(...)` con argumentos
+con nombre -- no carga nada por ruta ni re-parsea `sys.argv`. Instalador/servicio de
+Windows fuera de alcance (ver `sdd/arranque-para-el-instituto/apply-progress`)."""
 
 from __future__ import annotations
 
@@ -49,9 +26,8 @@ from anonimizacion.trabajadores.despacho_paralelo import validar_grado_concurren
 
 
 def _reportar_diagnostico(hallazgos: list[Hallazgo]) -> bool:
-    """Imprime TODOS los hallazgos (ok y error) para que el operador vea de
-    una vez todo lo que falta, no un problema a la vez en sucesivos intentos
-    fallidos. Devuelve `True` sólo si no hay ningún error."""
+    """Imprime todos los hallazgos de una vez, no uno por intento fallido.
+    Devuelve `True` sólo si no hay ningún error."""
     todo_ok = True
     for hallazgo in hallazgos:
         etiqueta = "OK   " if hallazgo.ok else "FALTA"
@@ -66,10 +42,8 @@ def _resolver(valor_cli: object, valor_config: object) -> object:
 
 
 def _tipo_procesos(valor: str) -> int:
-    """`type=` de argparse para `--procesos`: valida contra el tope duro ACÁ
-    (antes duplicado en `scripts/procesar_carpeta.py` y `scripts/servir_panel.py`,
-    ahora aplicado una sola vez) para que un valor inválido falle con un
-    mensaje de `argparse` claro antes de tocar Postgres/spaCy."""
+    """`type=` de argparse para `--procesos`: valida el tope duro una sola vez, para
+    que un valor inválido falle antes de tocar Postgres/spaCy."""
     return validar_grado_concurrencia(int(valor))
 
 
@@ -118,12 +92,8 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_esqueleto.add_argument(
         "--salida", type=Path, default=None, help="archivo donde escribir el esqueleto (default: stdout)"
     )
-    # Opción, no subcomando: ambos modos comparten el 100% del resto del
-    # pipeline (extraer el PDF, resolver --salida, reportar errores sin ruta
-    # cruda) -- lo único que cambia es la función de sustitución dentro de
-    # `esqueleto.py` (`enmascarar_por_forma` vs. `sustituir_por_valores_plausibles`,
-    # misma allowlist estructural para ambas). Un subcomando nuevo duplicaría
-    # el parsing de `pdf`/`--salida` para cero beneficio real.
+    # Opción, no subcomando: ambos modos comparten el resto del pipeline, sólo
+    # cambia la función de sustitución dentro de esqueleto.py.
     p_esqueleto.add_argument(
         "--modo",
         choices=("enmascarado", "parseable"),
@@ -199,11 +169,8 @@ def _comando_procesar(args: argparse.Namespace) -> int:
     print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
     pepper = obtener_pepper()
 
-    # `motor` sólo se carga en este proceso para el camino SECUENCIAL
-    # (`procesos<=1`): con `procesos>1` cada hijo del `ProcessPoolExecutor`
-    # arma su PROPIO `MotorPii()` -- cargarlo también acá sería una copia de
-    # más (~875 MB medidos, ver `despacho_paralelo.py`) que este proceso
-    # nunca usaría para procesar nada.
+    # motor sólo se carga acá para el camino secuencial: con procesos>1 cada hijo
+    # arma su propio MotorPii (~875 MB) -- cargarlo también acá sería una copia de más.
     motor: MotorPii | None = None
     if procesos <= 1:
         print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
@@ -228,15 +195,12 @@ def _comando_procesar(args: argparse.Namespace) -> int:
 
 
 def _comando_esqueleto(args: argparse.Namespace) -> int:
-    """No requiere `--config`/`--db-url` ni `diagnosticar`: es una herramienta
-    de lectura local, sin tocar la base de datos ni la cola -- el operador la
-    corre directo sobre sus PDFs reales, que nunca se copian al repositorio.
-    """
+    """No requiere `--config`/`--db-url` ni `diagnosticar`: herramienta de lectura
+    local que el operador corre directo sobre PDFs que nunca se copian al repo."""
     try:
         texto = extraer_texto(args.pdf)
     except ErrorParseo as error:
-        # Nunca la ruta cruda del PDF acá (mismo principio que
-        # `dominio/errores.py`: sin mensajes crudos ni rutas de archivo).
+        # Nunca la ruta cruda del PDF acá (sin mensajes crudos ni rutas de archivo).
         print(f"No se pudo extraer texto del PDF: {error.codigo.value}", file=sys.stderr)
         return 1
 
@@ -261,10 +225,8 @@ def _comando_esqueleto(args: argparse.Namespace) -> int:
 
 
 def _comando_exportar(args: argparse.Namespace) -> int:
-    """Exporta el dataset vinculado. Sin `diagnosticar` de por medio: no
-    procesa PDFs ni requiere `--entrada` -- sólo lee `db_url`, ya validada
-    implícitamente por `exportar_dataset` (falla con un error de conexión
-    normal de SQLAlchemy si la URL no sirve)."""
+    """Exporta el dataset vinculado. Sin `diagnosticar`: no procesa PDFs, sólo lee
+    `db_url` (validada implícitamente por `exportar_dataset` al conectar)."""
     config = _cargar_config_o_none(args.config)
     if config is None:
         return 1

@@ -21,12 +21,7 @@ _PATRONES_INVENTARIO = (
     ("ecg.nombre", "header", re.compile(r"(?m)^[^\n~]+~,")),
     ("ecg.id_estudio", "header", re.compile(r"ID:\S+")),
     ("ecg.fecha_estudio", "header", _PATRON_TIMESTAMP_COMPLETO),
-    # Gotcha 1 (design.md, decisión 4): NO usar un patrón suelto
-    # `\d{2}:\d{2}:\d{2}` -- matchearía cualquier otra hora del documento
-    # (p. ej. una hora de impresión) y produciría `COBERTURA_AMBIGUA`. Se
-    # reutiliza el mismo patrón del timestamp completo que `ecg.fecha_estudio`
-    # (anclado a `DD-MON-YYYY HH:MM:SS`) para identificar sin ambigüedad la
-    # hora del estudio.
+    # Reutiliza el timestamp completo (no una hora suelta) para no matchear otra hora del doc.
     ("ecg.hora_estudio", "header", _PATRON_TIMESTAMP_COMPLETO),
     ("ecg.fecha_nacimiento", "header", re.compile(r"(?m)^\d{2}-[A-Za-z]{3}-\d{4}\s*\(\d+\s*yr\)")),
     ("ecg.vent_rate", "medida", re.compile(r"\bVent\.?\s*[Rr]ate\b")),
@@ -74,9 +69,7 @@ def _asociacion_ecg(referencia: object, esperado: str, pagina: str) -> bool:  # 
         coincidencia = re.search(r"\b(\d{2}-[a-z]{3}-\d{4})\s+\d{2}:\d{2}:\d{2}", pagina, re.IGNORECASE)
         return coincidencia is not None and _igual(coincidencia.group(1), esperado)
     if selector == "ecg.hora_estudio":
-        # Misma ancla que `ecg.fecha_estudio`: solo cuenta la hora que sigue
-        # inmediatamente a una fecha `DD-MON-YYYY` (el timestamp completo del
-        # estudio), nunca una hora suelta en otra parte del documento.
+        # Misma ancla que ecg.fecha_estudio: sólo la hora que sigue a la fecha DD-MON-YYYY.
         coincidencia = re.search(r"\b\d{2}-[a-z]{3}-\d{4}\s+(\d{2}:\d{2}:\d{2})", pagina, re.IGNORECASE)
         return coincidencia is not None and _igual(coincidencia.group(1), esperado)
     if selector == "ecg.fecha_nacimiento":
@@ -166,12 +159,7 @@ class ReconciliadorEcgMortara:
             validador_asociacion=_asociacion_ecg,
         )
         cobertura = reconciliar_cobertura(documento, self.inventariar(texto))
-        # `ecg.senal` (openspec `senal-ecg-y-dataset-vinculado`): no viene del
-        # inventario de texto (`inventariar` sólo reconoce header/medidas) --
-        # el layout de trazos que `construir_senal` valida es geometría, no
-        # texto. Cuando la señal no valida (`None`), se agrega acá, nunca
-        # como motivo de cuarentena (requirement "Validación geométrica del
-        # layout con degradación explícita").
+        # ecg.senal es geometría, no texto: no viene del inventario. Señal invalida no es cuarentena.
         if contenido.senal is None:
             cobertura = (*cobertura, "ecg.senal")
         return cobertura

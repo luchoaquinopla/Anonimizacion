@@ -1,11 +1,6 @@
-"""Tests de `salida/codec_senal.py` (tasks.md 2.1, openspec `senal-ecg-y-dataset-vinculado`).
-
-Lección de la entrega 1: un fixture que comparte la fórmula del código bajo
-prueba no es un oráculo, es un espejo. Por eso, además del ida y vuelta,
-estos tests fijan bytes/valores conocidos calculados a mano o con
-`zlib`/`numpy` crudo (nunca reusando `codificar_muestras`/`codificar_mascara`
-para verificarse a sí mismos).
-"""
+"""Tests de `salida/codec_senal.py`: además del ida y vuelta, fijan bytes/valores
+calculados a mano o con `zlib`/`numpy` crudo, nunca reusando el código bajo prueba.
+Invariante: «Prueba anti-espejo del codec de señal» (Obsidian, Invariantes medidos)."""
 
 from __future__ import annotations
 

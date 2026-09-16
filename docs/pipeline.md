@@ -24,7 +24,7 @@ flowchart LR
     PII --> PSEUDO["Pseudonimización<br/>HMAC(DNI + pepper) → patient_id"]
     PSEUDO <--> BRIDGE["Tabla puente<br/>alt_id ↔ patient_id<br/>(la escribe Lab/Eco, la lee ECG)"]
 
-    PSEUDO --> LINK["Vinculación<br/>±7 días por patient_id"]
+    PSEUDO --> LINK["Vinculación<br/>ancla + hasta 7 días después, por patient_id"]
 
     LINK --> PG[("Postgres<br/>relacional")]
 
@@ -191,7 +191,7 @@ El detalle completo de la comparación está en Engram
 
 - **Qué es**: binding Python sobre MuPDF, un motor C de renderizado/parsing de PDF. Extrae texto,
   posición (bounding boxes) e imágenes.
-- **Cómo la usamos**: en `extraction/pymupdf_text.py`, para convertir cada PDF en bloques de texto
+- **Cómo la usamos**: en `extraccion/texto_pymupdf.py`, para convertir cada PDF en bloques de texto
   con su posición. Los 3 layouts (ECG, laboratorio, ecocardiograma) son PDFs de **texto nativo**
   (no escaneados), así que esta extracción alcanza sin OCR.
 - **Por qué**: es determinístico, rápido, corre 100% local (sin enviar el documento a ningún
@@ -213,8 +213,8 @@ El detalle completo de la comparación está en Engram
   cada uno con un score de confianza. spaCy es la librería de NLP que le provee el reconocedor de
   entidades nombradas (`PERSON`, entre otras) vía el modelo `es_core_news_lg`, entrenado en
   español.
-- **Cómo los usamos**: en `pii/engine.py`, Presidio corre dos tipos de recognizer sobre cada
-  registro parseado — un `PatternRecognizer` **custom** para DNI argentino (`pii/recognizers/dni_ar.py`,
+- **Cómo los usamos**: en `pii/motor.py`, Presidio corre dos tipos de recognizer sobre cada
+  registro parseado — un `PatternRecognizer` **custom** para DNI argentino (`pii/reconocedores/dni_ar.py`,
   regex + validación de formato + contexto de palabras como "DNI"/"documento") y el
   `SpacyRecognizer` (es_core_news_lg) para nombres de persona. Corre también sobre texto libre
   (ej. las conclusiones del ecocardiograma), no solo sobre los campos del header, porque el nombre

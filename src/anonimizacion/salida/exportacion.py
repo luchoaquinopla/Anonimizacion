@@ -1,44 +1,8 @@
-"""Exportación derivada (Parquet + manifiesto) del dataset vinculado.
-
-design.md, decisiones 4/5/6: PostgreSQL sigue siendo la única fuente de
-verdad (spec `anonymized-output`, requisito MODIFICADO) -- este módulo SOLO
-lee, nunca escribe. La vinculación de episodio (paciente + ventana ±7 días)
-YA está resuelta al momento de escribir cada `estudio` (`estudio.id_episodio`,
-ver `pseudonimizacion/vinculacion.py` y `destinos/postgres.py::escribir_episodio`)
--- exportar no reimplementa esa lógica, sólo agrupa por la clave que ya existe.
-
-Streaming: una transacción, paginación por clave (`id_episodio`, no OFFSET
-ciego) de a `TAMANO_PAGINA_DEFECTO` episodios, un `ParquetWriter` por tabla
-con un row group por página, escritura en `<archivo>.tmp` + rename atómico.
-El manifiesto se escribe último (spec: si el proceso se corta a mitad de
-camino, nunca queda un manifiesto declarando datos que no llegaron a
-persistirse en disco).
-
-`.tmp` huérfano de una corrida anterior que murió a mitad de camino: no
-requiere limpieza manual ni rompe la corrida siguiente. `pq.ParquetWriter`
-abre el archivo en modo escritura (equivalente a `wb`, verificado a mano):
-una corrida nueva sobre el mismo `<archivo>.parquet.tmp` lo trunca y lo
-reescribe desde cero, nunca falla por "archivo ya existe" ni mezcla filas
-de la corrida vieja con la nueva.
-
-Lista blanca de columnas (spec "Cero PII en la exportación" + decisión de
-comité): afuera `clave_documento`, `corrida_id`, cualquier `id_medico*` y el
-texto libre del eco (`texto_seccion_eco`). `adicionales_json` es JSON del
-campo `estudio.adicionales`, que YA debería llegar saneado de nombres de
-médico/técnico (`constructor_registro.py::_adicionales_sin_personal`,
-migración 0014, probado contra Postgres real en
-`tests/salida/destinos/test_postgres.py`) -- pero esta capa NO confía
-ciegamente en esa garantía de escritura: revisión adversarial (CRÍTICO)
-señaló que es una lista fija de 3 claves y la base puede tener filas
-escritas por una versión anterior del código (o un parser futuro que la
-rompa sin que nadie note la regresión hasta que ya está en el dataset
-exportado). Por eso `exportacion.py` vuelve a filtrar `adicionales_json` con
-`_CLAVES_PERSONAL` **importada** de `constructor_registro.py` (no una copia
-literal -- si esa tupla cambia, el filtro de acá cambia con ella sin
-intervención manual), como defensa en profundidad en el ÚLTIMO punto antes
-de que el dato salga del sistema (ver `_adicionales_sin_personal_exportacion`,
-`test_estudio_adicionales_con_claves_personales_de_una_fila_vieja_nunca_llega_al_parquet`).
-"""
+"""Exportación derivada (Parquet + manifiesto) del dataset vinculado: sólo lectura, nunca
+escribe. Streaming con paginación por clave, escritura atómica `.tmp`+rename, manifiesto
+último (nunca declara datos que no llegaron a disco). Lista blanca de columnas: filtra de
+nuevo `adicionales_json` con `_CLAVES_PERSONAL` importada (no copiada) de
+`constructor_registro.py`, como defensa en profundidad ante filas viejas o una regresión futura."""
 
 from __future__ import annotations
 
@@ -71,8 +35,7 @@ UNIDAD_MUESTRAS = "uV"
 ORDEN_DERIVACIONES = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 _FILAS_SENAL, _COLUMNAS_SENAL = FORMA_SENAL  # (12, 5000)
 _MUESTRAS_SENAL_APLANADA = _FILAS_SENAL * _COLUMNAS_SENAL  # 60000
-# Ventanas de columna del layout del PDF (design.md, `extraccion/senal_ecg.py::OFFSETS_COLUMNA`):
-# 4 columnas de 1238 muestras a 500 Hz, salvo V1 (tira de ritmo completa).
+# Layout del PDF: 4 columnas de 1238 muestras a 500 Hz, salvo V1 (tira de ritmo completa).
 _OFFSETS_COLUMNA = (0, 1250, 2500, 3750)
 _MUESTRAS_POR_TRAMO = 1238
 _COLUMNAS_DERIVACIONES = (
@@ -119,19 +82,7 @@ ESQUEMA_ECG = pa.schema(
         ("frecuencia_hz", pa.int32()),
         ("version_extractor", pa.int32()),
         ("version_formato", pa.int32()),
-        # Lista de largo VARIABLE (no `pa.list_(tipo, _MUESTRAS_SENAL_APLANADA)`
-        # fijo), a propósito: pyarrow 25.0.1 (repo pinneado) no hace un
-        # round-trip correcto a través de Parquet de un `FixedSizeListArray`
-        # cuando TODAS las filas de una página son `None` (bug confirmado por
-        # auditoría, reproducido con `pa.Table.from_pylist`/`FixedSizeListArray.
-        # from_arrays` directo, ambos fallan igual al releer con
-        # `ArrowInvalid: Expected all lists to be of size=N but index K had
-        # size=0`) -- escenario nada hipotético: cualquier página cuyos ECG
-        # todavía no tengan señal capturada (grado de cobertura real del
-        # extractor) lo dispara. El invariante de largo exacto (60000 =
-        # 12×5000) sigue garantizado por `SenalEcg.__post_init__` para toda
-        # fila no nula; sólo cambia el tipo de columna Parquet, no el
-        # contenido ni el criterio de validez.
+        # Lista de largo variable, no FixedSizeListArray: éste no hace round-trip por Parquet cuando toda la página es None (bug de pyarrow 25.0.1).
         ("muestras_uv", pa.list_(pa.int16())),
         ("mascara", pa.list_(pa.bool_())),
     ]
@@ -173,12 +124,8 @@ ESQUEMA_ECO = pa.schema(
 
 
 def _adicionales_sin_personal_exportacion(adicionales: dict) -> dict:
-    """Defensa en profundidad (revisión adversarial, CRÍTICO): filtra de
-    nuevo por `_CLAVES_PERSONAL` (importada de `constructor_registro.py`,
-    NUNCA una copia literal) en el último punto antes de que el dato salga
-    del sistema -- no asume que `estudio.adicionales` ya llegó limpio, aunque
-    la escritura ya debería garantizarlo. Cubre filas viejas escritas por una
-    versión anterior del código o una regresión futura en el escritor."""
+    """Defensa en profundidad: filtra de nuevo por `_CLAVES_PERSONAL` (importada, no copiada)
+    en el último punto antes de que el dato salga -- cubre filas viejas o una regresión futura."""
     return {clave: valor for clave, valor in adicionales.items() if clave not in _CLAVES_PERSONAL}
 
 
@@ -189,10 +136,8 @@ def _json_o_none(valor: dict | None) -> str | None:
 
 
 def _ids_episodio_paginados(sesion: Session, *, tamano_pagina: int = TAMANO_PAGINA_DEFECTO) -> Iterator[list[str]]:
-    """Paginación por CLAVE (`id_episodio > ultimo`), no por `OFFSET` ciego --
-    memoria acotada a `tamano_pagina` filas por consulta, sin importar cuántos
-    episodios haya en total (ver test de paginación, que lo verifica contando
-    filas materializadas por página, nunca con un umbral de tiempo)."""
+    """Paginación por clave (`id_episodio > ultimo`), no por `OFFSET` ciego: memoria acotada
+    a `tamano_pagina` filas, sin importar cuántos episodios haya en total."""
     ultimo: str | None = None
     while True:
         consulta = sa.select(Episodio.id_episodio).order_by(Episodio.id_episodio).limit(tamano_pagina)
@@ -327,9 +272,7 @@ class _EscritoresPagina:
 
 @dataclass
 class _ContextoTipos:
-    """Acumuladores por tipo, mutados por cada `_procesar_*` (Requisito 1,
-    extensibilidad-tipo-documento: mismo patrón que `postgres.py` --
-    whitelist y despacho son la MISMA estructura, `_PROCESADORES_POR_TIPO`)."""
+    """Acumuladores por tipo, mutados por cada `_procesar_*`; mismo patrón de whitelist/despacho que `postgres.py`."""
 
     mediciones_ecg: dict
     senales: dict
@@ -358,21 +301,14 @@ def _procesar_eco(estudio: Estudio, ctx: _ContextoTipos) -> bool:
     return True
 
 
-# `Estudio.tipo_documento` es `String`, no un enum de SQLAlchemy -- se
-# compara contra `TipoDocumento.X.value` (fuente única del vocabulario de
-# tipos, `dominio/tipos_documento.py`), nunca contra literales sueltos como
-# antes ("ecg"/"laboratorio"). Whitelist == despacho: un tipo sin entrada
-# levanta `ValueError` explícito, nunca cae en un `else`.
+# Se compara contra TipoDocumento.X.value, nunca literales sueltos. Whitelist == despacho: sin entrada levanta ValueError, nunca cae en un else.
 _PROCESADORES_POR_TIPO: dict[str, Callable[[Estudio, _ContextoTipos], bool]] = {
     TipoDocumento.ECG.value: _procesar_ecg,
     TipoDocumento.LABORATORIO.value: _procesar_laboratorio,
     TipoDocumento.ECOCARDIOGRAMA.value: _procesar_eco,
 }
 
-# Claves cortas de `tiene_tipo`/columnas `tiene_*` del episodio -- NO son
-# idénticas a `TipoDocumento.value` ("eco" vs "ecocardiograma"): se
-# mantienen así porque son el nombre de columna Parquet ya publicado
-# (`ESQUEMA_EPISODIOS`), no un vocabulario a unificar en esta entrega.
+# No idénticas a TipoDocumento.value ("eco" vs "ecocardiograma"): son nombre de columna Parquet ya publicado.
 _CLAVE_TIENE_TIPO_POR_TIPO: dict[str, str] = {
     TipoDocumento.ECG.value: "ecg",
     TipoDocumento.LABORATORIO.value: "laboratorio",
@@ -381,10 +317,8 @@ _CLAVE_TIENE_TIPO_POR_TIPO: dict[str, str] = {
 
 
 def _procesar_pagina(sesion: Session, pagina_ids: list[str], escritores: _EscritoresPagina) -> tuple[int, int, int, int]:
-    """Arma y escribe las 4 tablas de UNA página de episodios. Extraído de
-    `exportar_dataset` para bajar su complejidad ciclomática bajo el límite
-    del repo (`pyproject.toml`, `mccabe`, mismo criterio que `construir_senal`
-    en la Fase 1 de este cambio)."""
+    """Arma y escribe las 4 tablas de UNA página de episodios; extraído para bajar la
+    complejidad ciclomática de `exportar_dataset` bajo el límite del repo."""
     episodios_pagina = {
         e.id_episodio: e for e in sesion.scalars(sa.select(Episodio).where(Episodio.id_episodio.in_(pagina_ids)))
     }
@@ -457,15 +391,8 @@ def _procesar_pagina(sesion: Session, pagina_ids: list[str], escritores: _Escrit
 def exportar_dataset(
     engine: sa.Engine, salida: Path, *, tamano_pagina: int = TAMANO_PAGINA_DEFECTO
 ) -> ResumenExportacion:
-    """Exporta `episodios/ecg/laboratorio/eco.parquet` + `manifiesto.json` a `salida`.
-
-    Sólo lectura de `engine`: ninguna fila de PostgreSQL se modifica (spec
-    `exportacion-dataset-vinculado`, "Exportación no muta la base"). Una
-    transacción de sólo lectura, `REPEATABLE READ` cuando el dialecto es
-    PostgreSQL (snapshot consistente durante toda la exportación, sin
-    bloquear escritores) -- SQLite (usado en tests) no soporta ese nivel de
-    aislamiento explícito, así que usa el que tenga por defecto.
-    """
+    """Exporta `episodios/ecg/laboratorio/eco.parquet` + `manifiesto.json` a `salida`. Sólo
+    lectura, `REPEATABLE READ` en Postgres (snapshot consistente sin bloquear escritores)."""
     salida.mkdir(parents=True, exist_ok=True)
     opciones = {}
     if engine.dialect.name == "postgresql":
@@ -501,9 +428,7 @@ def exportar_dataset(
                     contador_ecg += n_ecg
                     contador_laboratorio += n_laboratorio
                     contador_eco += n_eco
-            # Fin del `with sesion.begin()`: transacción de sólo lectura, sin
-            # ningún `INSERT`/`UPDATE`/`DELETE` emitido -- se cierra sin
-            # commitear ningún cambio (no hay ninguno que commitear).
+            # Transacción de sólo lectura: se cierra sin commitear ningún cambio.
 
     for clave, temporal in rutas_temporales.items():
         temporal.replace(rutas_finales[clave])

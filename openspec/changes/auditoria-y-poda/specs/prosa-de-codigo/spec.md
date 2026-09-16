@@ -37,14 +37,19 @@ fuera de esta especificación sin pasar por `sdd-propose`.
 
 | Invariante | Evidencia | Por qué no se puede perder |
 |---|---|---|
-| 875 MB RSS por `MotorPii`, medido con `K32GetProcessMemoryInfo`/ctypes | `despacho_paralelo.py:79-80,217,339,752` | Fija el grado de concurrencia; perderlo lleva a agotar memoria sin aviso |
-| Razonamiento del grado de concurrencia (2x núcleos lógicos; umbral de grupo tóxico revisado de 3 a 4 en revisión adversarial) | `despacho_paralelo.py:68-117,160,171,179` | Es la justificación del default de `--procesos`; sin ella el número parece arbitrario |
-| Motivo de cada `noqa: C901` | `pyproject.toml:56-72` | Las funciones exentas no se tocan sin corpus de PDFs reales; ya se descalibraron dos veces |
-| Cartel anti-espejo (esquema Arrow) | `tests/salida/test_esquema_arrow_de_exportacion.py:1-13` | Advierte contra reintroducir un test que compara el código con sí mismo |
-| Cartel anti-espejo (codec de señal) | `tests/salida/test_codec_senal.py` | Misma clase de advertencia, distinto módulo |
-| Latencias de red medidas contra Postgres (mediana 54,9 ms São Paulo; ~366 ms RDS sin `pre_ping`) y el timeout de 5 s derivado | `salida/destinos/postgres.py:87-135` | El timeout y el uso de `pre_ping` dejan de tener justificación sin el dato medido |
-| Constantes geométricas de calibración de la señal ECG (`_ANCHO_TRAZO_PT = 0.43`, correlación V1-grilla r=1,000, umbral de ruido ~4-5% del RMS) | `extraccion/trazos_pymupdf.py:22`, `extraccion/senal_ecg.py:10-85` | Son mediciones contra el ECG real; sin el puntero a su origen, un ajuste futuro no sabe qué margen tiene |
-| Trade-off medido del piso de confianza del reconocedor de DNI | `pii/reconocedores/dni_ar.py:43` | Bajar el piso sin saber por qué se fijó ahí reintroduce falsos negativos ya descartados |
+| 875 MB RSS por `MotorPii`, medido con `K32GetProcessMemoryInfo`/ctypes | `despacho_paralelo.py`, constante `_MEMORIA_ESTIMADA_POR_PROCESO_MB` | Fija el grado de concurrencia; perderlo lleva a agotar memoria sin aviso |
+| Razonamiento del grado de concurrencia (2x núcleos lógicos; tope de reintentos por grupo revisado a `MAX_REINTENTOS_POR_GRUPO = 1`, es decir 2 cargas totales -- intento normal + 1 reintento aislado) | `despacho_paralelo.py`, constantes `_TOPE_DEFAULT_CONSERVADOR`/`_MULTIPLICADOR_TOPE_DURO`/`MAX_REINTENTOS_POR_GRUPO` | Es la justificación del default de `--procesos`; sin ella el número parece arbitrario |
+| Motivo de cada `noqa: C901` | `pyproject.toml`, bloque `[tool.ruff.lint.mccabe]` | Las funciones exentas no se tocan sin corpus de PDFs reales; ya se descalibraron dos veces |
+| Cartel anti-espejo (esquema Arrow) | `tests/salida/test_esquema_arrow_de_exportacion.py`, docstring del módulo | Advierte contra reintroducir un test que compara el código con sí mismo |
+| Cartel anti-espejo (codec de señal) | `tests/salida/test_codec_senal.py`, docstring del módulo | Misma clase de advertencia, distinto módulo |
+| Latencias de red medidas contra Postgres (mediana 54,9 ms São Paulo; ~366 ms RDS sin `pre_ping`) y el timeout de 5 s derivado | `salida/destinos/postgres.py`, constantes `POOL_RECYCLE_SEGUNDOS`/`CONNECT_TIMEOUT_SEGUNDOS` | El timeout y el uso de `pre_ping` dejan de tener justificación sin el dato medido |
+| Constantes geométricas de calibración de la señal ECG (`_ANCHO_TRAZO_PT = 0.43`, correlación V1-grilla r=1,000, umbral de ruido ~4-5% del RMS) | `extraccion/trazos_pymupdf.py`, constante `_ANCHO_TRAZO_PT`; `extraccion/senal_ecg.py`, docstring del módulo | Son mediciones contra el ECG real; sin el puntero a su origen, un ajuste futuro no sabe qué margen tiene |
+| Trade-off medido del piso de confianza del reconocedor de DNI | `pii/reconocedores/dni_ar.py`, constante `_DNI_MINIMO` | Bajar el piso sin saber por qué se fijó ahí reintroduce falsos negativos ya descartados |
+
+**Corrección (verificada contra el código en `sdd-apply`, PR6f)**: la fila del umbral de
+grupo tóxico decía "revisado de 3 a 4". Es falso -- `MAX_REINTENTOS_POR_GRUPO = 1` (2 cargas
+en total). El "4" real en el código es `procesos=4`, la cantidad de procesos del experimento
+que reprodujo el defecto del culpable equivocado, no una revisión del tope de reintentos.
 
 #### Escenario: invariante presente después de la poda
 - **Given** cualquier invariante de la tabla anterior

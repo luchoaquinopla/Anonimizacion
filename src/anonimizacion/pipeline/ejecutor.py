@@ -1,37 +1,6 @@
 """Ejecutor del pipeline: orquesta las etapas end-to-end, aislando el fallo por documento.
-
-Spec `batch-processing`: (1) "Aislamiento de fallos por documento" -- el
-fallo de un documento nunca detiene el procesamiento del resto del lote;
-(2) "Reintentos ante fallos transitorios" -- solo errores NO tipados
-(IO/conexión, nunca `ErrorParseo`) se reintentan, con backoff; (3)
-"Trazabilidad sin PII" -- ver `pipeline/resultado.py`, que ya construye por
-diseño resúmenes sin PII.
-
-Secuencia por documento (design.md, "Data Flow"):
-`extraer -> detectar_tipo -> obtener_parseador+parsear -> reconciliar ->
-[detección de PII sobre texto libre] -> resolver_claves -> [batch:
-coordinar_episodios] -> construir_registro -> escribir`. La coordinación es
-la única etapa que opera sobre TODO el lote a la vez: espera a que cada
-documento esté reconciliado y bloquea la anonimización/salida de episodios
-incompletos o ambiguos. Sin el coordinador durable inyectado se conserva el
-vínculo histórico para los lotes existentes.
-
-Cada etapa concreta se recibe como dependencia inyectable (con default a la
-implementación real de la fase correspondiente): esto hace que este módulo
-sea testeable con fakes deterministas sin pagar el costo de levantar
-`MotorPii` (carga spaCy) o un `Engine` de base de datos real en cada test.
-
-Clasificación de reintentos (design.md, "Aislamiento de fallo y política de
-reintentos"): `ErrorParseo` (`dominio/errores.py`) es la jerarquía tipada y
-determinística del dominio -- nunca se reintenta, va directo a cuarentena.
-Cualquier OTRA excepción (`OSError`, `ConnectionError`, errores de conexión
-de SQLAlchemy, etc: fallos de infraestructura, no del contenido del
-documento) se considera transitoria y se reintenta hasta `MAX_REINTENTOS`
-veces con `BACKOFF_SEGUNDOS`, agotados los cuales se convierte en un
-`ErrorParseo(ERROR_TRANSITORIO_AGOTADO)` -- el mensaje crudo de la excepción
-original NUNCA se propaga más allá de ese punto (mismo principio que
-"Sin PII en cola, logs ni DLQ", design.md).
-"""
+`ErrorParseo` nunca se reintenta (va directo a cuarentena); cualquier otra excepción se
+considera transitoria y se reintenta con backoff, sin propagar nunca el mensaje crudo."""
 
 from __future__ import annotations
 
@@ -72,17 +41,11 @@ from .coordinador_episodios import (
 from .etapas import Etapa
 from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 
-# Backoff exponencial fijo (design.md, tasks.md 9.1): 3 reintentos tras el
-# intento inicial -- 4 intentos totales como máximo por documento/etapa.
+# 3 reintentos tras el intento inicial -- 4 intentos totales como máximo por documento/etapa.
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
-# El grupo ES la unidad completa de trabajo (design.md, Decisión 6): no hay un
-# lote posterior de esta misma corrida que pueda traer el estudio faltante,
-# así que no hay nada que dejar pendiente. Con `False` la coordinación
-# devolvería `episodios_pendientes` que `_coordinar_resueltos` no sabe
-# contabilizar -- ver el centinela en `tests/pipeline/test_particion_total_del_lote.py`.
-# No se expone como parámetro público: ofrecer la perilla sin la contabilidad
-# detrás sería ofrecer la trampa con un nombre bonito.
+# El grupo ES la unidad completa: no hay lote posterior que traiga el estudio faltante, así que
+# `False` dejaría episodios_pendientes sin contabilidad; no se expone como parámetro público.
 _GRUPO_ES_UNIDAD_COMPLETA = True
 _CODIGO_CUARENTENA_POR_MOTIVO = {
     MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA: CodigoErrorDocumento.EPISODIO_AMBIGUO,
@@ -91,15 +54,8 @@ _CODIGO_CUARENTENA_POR_MOTIVO = {
 
 
 class DestinoEscritura(Protocol):
-    """Lo único que el ejecutor necesita de un destino (`salida/destinos/postgres.py` lo implementa).
-
-    `escribir_episodio` (fix post-PR9): la fila `episodio` es padre por FK de
-    `resultado_laboratorio`/`medicion_ecg`/`medicion_eco`/`texto_seccion_eco`
-    (ver `salida/modelos_orm.py`) -- el ejecutor debe escribirla ANTES de
-    llamar `escribir_registro` para cualquier documento de ese episodio, o
-    la escritura del registro viola la FK (`ForeignKeyViolation` en Postgres
-    real). Ver docstring de `_emitir` para el detalle del fix.
-    """
+    """Lo único que el ejecutor necesita de un destino. `escribir_episodio` MUST llamarse antes
+    de `escribir_registro` para ese episodio: es padre por FK, violarlo rompe la escritura."""
 
     def escribir_registro(self, registro: RegistroAnonimizado) -> None: ...
     def escribir_episodio(self, *, id_episodio: str, id_paciente: str, fecha_ancla: date) -> None: ...
@@ -113,12 +69,8 @@ class DestinoCuarentena(Protocol):
 
 @dataclass(frozen=True)
 class ItemLote:
-    """Un documento a procesar: el `id_documento` es externo al `ArtefactoCrudo`.
-
-    Se asigna en la ingesta (ver `trabajadores/tareas.py`, tasks.md 9.2: el
-    mensaje de cola es exactamente `{id_documento, uri, sha256}`) -- por eso
-    viaja separado, no se deriva del artefacto acá.
-    """
+    """Un documento a procesar: `id_documento` es externo al `ArtefactoCrudo`, asignado en la
+    ingesta -- viaja separado, no se deriva del artefacto acá."""
 
     id_documento: str
     artefacto: ArtefactoCrudo
@@ -126,34 +78,20 @@ class ItemLote:
 
 @dataclass(frozen=True)
 class _DocumentoResuelto:
-    """Documento que ya pasó extracción, parseo y resolución de claves; falta vincular episodio + emitir.
-
-    `clave_documento` (spec `escritura-idempotente`): identidad estable del
-    documento, derivada en `_resolver_documento` a partir de
-    `item.artefacto.sha256` -- ya viaja acá para que `_emitir` la propague a
-    `construir_registro` sin tener que volver a tocar el `ItemLote` original.
-    """
+    """Documento que ya pasó extracción, parseo y resolución de claves; falta vincular episodio
+    y emitir. `clave_documento` viaja acá para que `_emitir` la propague sin releer `ItemLote`."""
 
     id_documento: str
     documento: DocumentoParseado
     claves: ClavesPaciente
     clave_documento: str
-    # Marca de completitud (ver `reconciliacion/base.py::ReconciliadorDocumento.reconciliar`
-    # y `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`): `id_campo` que el PDF trae
-    # y el modelo no citó. Default `()` -- ningún llamador de test que
-    # construya `_DocumentoResuelto` a mano sin conocer esta marca se rompe.
+    # id_campo que el PDF trae y el modelo no citó; default () para no romper tests existentes.
     campos_no_extraidos: tuple[str, ...] = ()
 
 
 def _observar_sin_romper(accion: Callable[[], None]) -> None:
-    """Ejecuta una llamada de observabilidad sin dejar que tumbe el pipeline.
-
-    design.md, Decisión 7, invariante 3: la observabilidad es accesoria --
-    una `BitacoraSegura` rota no puede perder un documento ni un grupo.
-    Cualquier excepción que lance `accion` se descarta acá, igual que
-    `_a_fallo` ya descarta el fallo de `self._cuarentena.registrar` por el
-    mismo motivo.
-    """
+    """Ejecuta una llamada de observabilidad sin dejar que tumbe el pipeline: es accesoria,
+    una `BitacoraSegura` rota no puede perder un documento ni un grupo."""
     try:
         accion()
     except Exception:
@@ -166,14 +104,9 @@ def _ejecutar_con_reintentos(
     etapa: str,
     dormir: Callable[[float], None],
 ) -> object:
-    """Ejecuta `funcion`, reintentando solo si lanza algo que NO sea `ErrorParseo`.
-
-    Al agotar los reintentos, la excepción transitoria original se descarta
-    y se reemplaza por `ErrorParseo(ERROR_TRANSITORIO_AGOTADO, etapa)` --
-    nunca se propaga el mensaje crudo (podría contener detalle de
-    infraestructura sensible, y en cualquier caso viola "Sin PII en cola,
-    logs ni DLQ" si en algún punto se serializa).
-    """
+    """Ejecuta `funcion`, reintentando solo si lanza algo que NO sea `ErrorParseo`. Al agotar
+    reintentos, la excepción original se descarta y nunca su mensaje crudo: puede traer
+    detalle de infra o PII hacia los logs."""
     intento = 0
     while True:
         try:
@@ -194,27 +127,9 @@ def _ahora() -> datetime:
 
 
 class EjecutorPipeline:
-    """Orquesta el pipeline completo sobre un lote, aislando el fallo por documento.
-
-    `resolutor` (fix post-merge, ver `sdd/pdf-pii-anonymization/apply-progress`,
-    sección "Fix: persistencia del puente id_alt_paciente en Postgres entre
-    corridas"): tipado contra `ResolutorClavesProtocol`, no contra la clase
-    concreta `ResolutorClaves` -- acepta indistintamente un `ResolutorClaves`
-    en memoria (uso en tests, o un lote único procesado de punta a punta en
-    la misma corrida) o un `ResolutorClavesPostgres` (uso real en producción,
-    ver `scripts/procesar_carpeta.py`: el puente sobrevive entre corridas
-    separadas del programa porque vive en la tabla `vinculo_paciente`, no en
-    memoria).
-
-    `fuente` (openspec `puerto-de-ingesta`, design.md): puerto de ingesta
-    (`ingesta/fuente.py::FuenteDeArtefactos`) usado para construir el
-    `extraer` por defecto -- `extraer_texto_de_flujo(fuente.abrir(artefacto))`.
-    El core ya no conoce `pathlib`: ningún `Path(artefacto.uri)` vive en este
-    módulo. `fuente` es opcional solo porque los tests inyectan su propio
-    `extraer` fake (no necesitan abrir nada real); en producción,
-    `trabajadores/tareas.py::configurar_ejecutor` siempre construye una
-    `FuenteLocal` y la inyecta acá.
-    """
+    """Orquesta el pipeline completo sobre un lote, aislando el fallo por documento. `resolutor`
+    acepta `ResolutorClaves` (memoria) o `ResolutorClavesPostgres` (puente persistente entre
+    corridas, ver `sdd/pdf-pii-anonymization/apply-progress`); `fuente` es el puerto de ingesta."""
 
     def __init__(
         self,
@@ -228,9 +143,7 @@ class EjecutorPipeline:
         dormir: Callable[[float], None] = time.sleep,
         extraer: Callable[[ArtefactoCrudo], TextoExtraido] | None = None,
         detectar_tipo: Callable[[TextoExtraido], TipoDocumento] = _detectar_tipo_real,
-        # design.md, decisión #1 (`senal-ecg-y-dataset-vinculado`): sólo el
-        # ECG tiene capturador registrado -- laboratorio/eco devuelven `None`
-        # y `extraer_texto_de_flujo` no invoca captura de trazos para ellos.
+        # Sólo el ECG tiene capturador registrado; laboratorio/eco devuelven None sin captura de trazos.
         capturador_de: Callable[[TipoDocumento], CapturadorDePagina | None] = _capturador_de_real,
         obtener_parseador: Callable[[TipoDocumento], ParseadorDocumento] = _obtener_parseador_real,
         obtener_reconciliador: Callable[[TipoDocumento], ReconciliadorDocumento] = _obtener_reconciliador_real,
@@ -238,24 +151,12 @@ class EjecutorPipeline:
         vincular_episodios: Callable[[list[DocumentoParaVincular], bytes], ResultadoVinculacion] = (
             _vincular_episodios_real
         ),
-        # `None` DESACTIVA la validacion de completitud de episodio: sin
-        # coordinador, `_coordinar_resueltos` no aparta ningun documento.
-        #
-        # El default se conserva en `None` a proposito: "un lote no es
-        # necesariamente un episodio" es una verdad del nucleo. Que en produccion
-        # el lote SEA el grupo de un paciente es politica de despliegue, y por eso
-        # el coordinador lo inyecta la raiz de composicion
-        # (`trabajadores/tareas.py::construir_fabrica_ejecutor`), no este default.
-        # Ver `tests/pipeline/test_modo_sin_validacion_de_episodio.py`, que fija
-        # las dos mitades de esa afirmacion.
+        # None desactiva la validación de completitud de episodio: "un lote no es necesariamente
+        # un episodio" es una verdad del núcleo; que en producción sí lo sea es política de despliegue.
         coordinar_episodios: Callable[..., ResultadoCoordinacion] | None = None,
         construir_registro: Callable[..., RegistroAnonimizado] = _construir_registro_real,
         clasificar_pii: Callable[[DocumentoParseado, MotorPii], object] = _clasificar_real,
-        # `None` = sin observabilidad (la mayoría de los tests de este módulo
-        # no la necesitan). La raíz de composición de producción
-        # (`trabajadores/tareas.py::construir_fabrica_ejecutor`) siempre pasa
-        # una instancia real -- ver design.md, Decisión 7. Es accesoria por
-        # construcción: ver `_observar_sin_romper`.
+        # None = sin observabilidad (accesoria por construcción, ver _observar_sin_romper).
         bitacora: BitacoraSegura | None = None,
     ) -> None:
         self._resolutor = resolutor
@@ -287,23 +188,8 @@ class EjecutorPipeline:
         self._clasificar_pii = clasificar_pii
 
     def _extraer_por_defecto(self, artefacto: ArtefactoCrudo) -> TextoExtraido:
-        """`extraer` por defecto: abre el artefacto vía `self._fuente` y
-        extrae su texto del flujo, sin tocar `pathlib` (design.md, Decisión 2
-        y 4). `self._fuente` no puede ser `None` acá -- `__init__` ya validó
-        que si `extraer` no se proveyó, `fuente` sí.
-
-        `capturador_para` (design.md, decisión #1 `senal-ecg-y-dataset-
-        vinculado`): closure que cierra sobre `self._detectar_tipo` y
-        `self._capturador_de` -- el único punto del pipeline que conoce
-        ambos a la vez, para que `extraccion/texto_pymupdf.py` nunca importe
-        `deteccion` (evita el ciclo, ver su docstring). `detectar_tipo` corre
-        acá y de nuevo en `_resolver_documento` (dos veces por documento,
-        aceptado por diseño): el costo es una búsqueda de subcadena en
-        microsegundos, a cambio de abrir el PDF una sola vez.
-
-        Ciclo de vida: `fuente.abrir()` entrega un `BinaryIO` fresco; este es
-        el LLAMADOR, así que lo cierra con `with` apenas termina de leerlo.
-        """
+        """`extraer` por defecto: abre vía `self._fuente` y extrae el texto del flujo, cerrado
+        con `with`. `capturador_para` evita que `extraccion/` importe `deteccion` (rompe el ciclo)."""
         assert self._fuente is not None  # invariante garantizado por __init__
 
         def _capturador_para(texto: TextoExtraido) -> CapturadorDePagina | None:
@@ -315,16 +201,8 @@ class EjecutorPipeline:
     def procesar_lote(
         self, items: Sequence[ItemLote], *, corrida_id: str | None = None
     ) -> tuple[ResultadoDocumento, ...]:
-        """Procesa el lote completo, aislando el fallo por documento.
-
-        `corrida_id` (spec `trazabilidad-por-corrida`, design.md Decisión 1):
-        parámetro HERMANO del lote, nunca una cuarta clave de `ItemLote` ni de
-        la referencia de cola -- eso rompería el centinela de claves exactas
-        de `trabajadores/tareas.py::procesar_grupo`. Se copia tal cual a
-        `RegistroAnonimizado.corrida_id` (`_emitir`) y a
-        `ErrorDocumento.corrida_id` (`_a_fallo`), y no participa de ninguna
-        decisión del pipeline: es un dato de trazabilidad, no de negocio.
-        """
+        """Procesa el lote completo, aislando el fallo por documento. `corrida_id` es dato de
+        trazabilidad, nunca clave de `ItemLote`; no participa de ninguna decisión del pipeline."""
         resultados: list[ResultadoDocumento] = []
         resueltos: list[_DocumentoResuelto] = []
 
@@ -345,11 +223,7 @@ class EjecutorPipeline:
             resueltos, corrida_id=corrida_id
         )
         resultados.extend(fallos_coordinacion)
-        # episodios ya escritos EN ESTE LOTE (fix post-PR9): `escribir_episodio`
-        # es idempotente del lado del destino (ver `EscritorPostgres.
-        # escribir_episodio`), pero este set evita el round-trip redundante a
-        # DB para cada documento adicional que comparte episodio, y mantiene
-        # la semántica "una escritura por episodio único" que pide el fix.
+        # Evita el round-trip redundante a DB por cada documento que comparte episodio.
         episodios_escritos: set[str] = set()
 
         for resuelto in resueltos:
@@ -365,10 +239,7 @@ class EjecutorPipeline:
                     )
                 )
 
-        # Bitácora (design.md, Decisión 7): un evento por resultado, al CIERRE
-        # del lote -- no por documento resuelto, no por intento de reintento.
-        # `resumen_trazable()` ya es la whitelist sin PII (ver `resultado.py`);
-        # `bitacora.registrar` aplica su propia whitelist encima, por si acaso.
+        # Un evento por resultado al cierre del lote, no por intento de reintento.
         if self._bitacora is not None:
             for resultado in resultados:
                 _observar_sin_romper(lambda resultado=resultado: self._bitacora.registrar(resultado.resumen_trazable()))
@@ -392,12 +263,7 @@ class EjecutorPipeline:
                 dormir=self._dormir,
             )
             reconciliador = self._obtener_reconciliador(tipo)
-            # `reconciliar` devuelve los `id_campo` que el PDF trae y el
-            # modelo no citó (marca de completitud, ver
-            # `reconciliacion/base.py::ReconciliadorDocumento.reconciliar` y
-            # `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`) -- nunca lanza por
-            # esos casos, así que llegar acá no significa "documento
-            # completo", significa "documento sin problema de integridad".
+            # reconciliar nunca lanza por campos sin citar: llegar acá es "sin problema de integridad", no "completo".
             campos_no_extraidos = cast(
                 "tuple[str, ...]",
                 _ejecutar_con_reintentos(
@@ -406,13 +272,7 @@ class EjecutorPipeline:
                     dormir=self._dormir,
                 ),
             )
-            # Detección de PII sobre texto libre (design.md, "corre también sobre texto
-        # libre"): se ejecuta acá para que la etapa exista explícitamente en el
-        # pipeline real y clasifique la PII en sus namespaces (paciente/médico/
-        # cuasi-identificador, ver `pii/politica.py`). La REDACCIÓN efectiva de
-        # `secciones_texto` (el gap dejado abierto por PR7/PR8) se aplica más
-        # abajo, en `_emitir`, pasando `self._motor` a `construir_registro` --
-        # ver `pii/redaccion.py` y el docstring de `salida/constructor_registro.py`.
+            # Clasifica PII en sus namespaces; la redacción efectiva de secciones_texto ocurre en _emitir, vía construir_registro.
             self._clasificar_pii(documento, self._motor)
             claves = _ejecutar_con_reintentos(
                 lambda: self._resolver_claves(
@@ -488,12 +348,7 @@ class EjecutorPipeline:
             for resuelto in resueltos
             if (motivo := coordinacion.documentos_en_cuarentena.get(resuelto.id_documento)) is not None
         ]
-        # Invariante de la Decisión 6: todo resuelto cae exactamente en una de
-        # las dos puertas (aprobado o cuarentena). Un `episodios_pendientes`
-        # no vacío -- imposible hoy con `_GRUPO_ES_UNIDAD_COMPLETA` fijo, pero
-        # alcanzable si alguien inyecta un coordinador distinto -- dejaría
-        # documentos sin contabilizar en ninguna de las dos listas: fallar acá
-        # es preferible a que ese documento se evapore del embudo en silencio.
+        # Todo resuelto cae en aprobado o cuarentena; fallar acá es preferible a que se evapore del embudo en silencio.
         contabilizados = {resuelto.id_documento for resuelto in resueltos_aprobados}
         contabilizados.update(fallo.id_documento for fallo in fallos)
         sin_contabilizar = {resuelto.id_documento for resuelto in resueltos} - contabilizados
@@ -535,21 +390,9 @@ class EjecutorPipeline:
         *,
         corrida_id: str | None = None,
     ) -> ExitoDocumento:
-        """Escribe el episodio (si todavía no se escribió en este lote) y luego el registro.
-
-        Fix post-PR9: `resultado_laboratorio`/`medicion_ecg`/`medicion_eco`/
-        `texto_seccion_eco` son FK contra `episodio.id_episodio` (ver
-        `salida/modelos_orm.py`) -- escribir el registro sin que exista antes
-        la fila `episodio` viola esa FK (`ForeignKeyViolation` en Postgres
-        real). `escribir_episodio` se llama ANTES de `escribir_registro`,
-        envuelta en la misma política de reintentos, y solo una vez por
-        `id_episodio` (idempotente del lado del destino de todos modos, ver
-        `EscritorPostgres.escribir_episodio`). Si la escritura del episodio
-        falla de forma transitoria y agota reintentos, `episodios_escritos`
-        NO se marca -- el próximo documento del mismo episodio la reintenta,
-        preservando el aislamiento de fallo por documento (spec
-        `batch-processing`).
-        """
+        """Escribe el episodio (si todavía no se escribió en este lote, FK de las filas hijas)
+        y luego el registro. Si la escritura del episodio agota reintentos, no se marca como
+        escrito: el próximo documento del mismo episodio la reintenta."""
         if id_episodio not in episodios_escritos:
             metadata = resultado_vinculacion.metadata_por_episodio[id_episodio]
             _ejecutar_con_reintentos(
@@ -607,9 +450,6 @@ class EjecutorPipeline:
         try:
             self._cuarentena.registrar(error)
         except Exception:
-            # el registro de cuarentena en sí falló (infraestructura); el
-            # ErrorDocumento igual se devuelve en el resultado del lote para
-            # que este documento no se pierda en silencio, aunque no haya
-            # quedado persistido en la tabla de cuarentena.
+            # Falló el registro de cuarentena (infra); igual se devuelve el ErrorDocumento para no perder el documento en silencio.
             pass
         return FalloDocumento(id_documento=id_documento, error=error, timestamp=_ahora())

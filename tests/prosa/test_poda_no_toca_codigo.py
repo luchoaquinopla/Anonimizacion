@@ -248,9 +248,13 @@ def test_ref_explicita_inexistente_falla_en_vez_de_saltear() -> None:
         _resolver_ref(ref_explicita="esta-ref-no-existe-de-ninguna-forma-jamas-en-la-vida")
 
 
-def test_sin_ref_explicita_se_saltea_si_no_existe_la_de_defecto(tmp_path: Path) -> None:
+def test_sin_ref_explicita_se_saltea_si_no_existe_la_de_defecto(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Sin COMPUERTA_AST_REF, y sin la rama base por defecto (repo nuevo/clon sin fetch),
     la compuerta se saltea explícitamente -- distinto del caso anterior."""
+    # Aísla del entorno: quien corre la compuerta suele definir la variable.
+    monkeypatch.delenv("COMPUERTA_AST_REF", raising=False)
     raiz = tmp_path
     _crear_repo_git(raiz)
     with pytest.raises(pytest.skip.Exception):

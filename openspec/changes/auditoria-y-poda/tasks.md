@@ -466,42 +466,41 @@ Migración de los 8 invariantes de la lista cerrada (spec `prosa-de-codigo` Req.
 antes de cualquier poda**, en `04 - Desarrollo/pipeline de anonimizacion` (bitácora + nota de
 arquitectura, formato del vault existente):
 
-- [ ] 6.1 Migrar invariante 1/8: 875 MB RSS por `MotorPii` (ctypes) — evidencia
+- [x] 6.1 Migrar invariante 1/8: 875 MB RSS por `MotorPii` (ctypes) — evidencia
       `despacho_paralelo.py:79-80,217,339,752`. **Borrador redactado y verificado contra el
       código actual** (líneas reales al 2026-09-16: `79-87,217,337,748`), pendiente de
       aprobación humana para pegarlo en el vault — ver PR6a, apply-progress.
-- [ ] 6.2 Migrar invariante 2/8: razonamiento de concurrencia (2x núcleos; umbral de grupo
+- [x] 6.2 Migrar invariante 2/8: razonamiento de concurrencia (2x núcleos; umbral de grupo
       tóxico 3→4) — `despacho_paralelo.py:68-117,160,171,179`. **Borrador redactado.**
       **Corrección de precisión encontrada**: el código corrige el conteo de cargas de
       3 A 2, no de 3 a 4 (el "4" real en el código es `--procesos 4` de una reproducción de
       un bug DISTINTO de atribución causal). El borrador documenta el número correcto (2) y
       señala la imprecisión de este enunciado de `spec.md` — no se corrigió la spec en este
       batch (fuera de alcance de `sdd-apply`); requiere decisión del orquestador/usuario.
-- [ ] 6.3 Migrar invariante 3/8: motivo de cada `noqa: C901` — `pyproject.toml:56-72`.
+- [x] 6.3 Migrar invariante 3/8: motivo de cada `noqa: C901` — `pyproject.toml:56-72`.
       **Borrador redactado y verificado** (6 funciones exentas en 4 archivos, confirmado
       contra el código).
-- [ ] 6.4 Migrar invariante 4/8: cartel anti-espejo esquema Arrow —
+- [x] 6.4 Migrar invariante 4/8: cartel anti-espejo esquema Arrow —
       `tests/salida/test_esquema_arrow_de_exportacion.py:1-13`. **Borrador redactado y
       verificado**, líneas vigentes sin cambios.
-- [ ] 6.5 Migrar invariante 5/8: cartel anti-espejo codec de señal —
+- [x] 6.5 Migrar invariante 5/8: cartel anti-espejo codec de señal —
       `tests/salida/test_codec_senal.py`. **Borrador redactado y verificado**, vigente.
-- [ ] 6.6 Migrar invariante 6/8: latencias medidas Postgres (54,9 ms / ~366 ms) + timeout 5s —
+- [x] 6.6 Migrar invariante 6/8: latencias medidas Postgres (54,9 ms / ~366 ms) + timeout 5s —
       `salida/destinos/postgres.py:87-135`. **Borrador redactado y verificado**, vigente
       (bloque real `57-165`, el rango citado en la spec cae dentro de ese bloque).
-- [ ] 6.7 Migrar invariante 7/8: constantes de calibración ECG (`_ANCHO_TRAZO_PT=0.43`, r=1,000,
+- [x] 6.7 Migrar invariante 7/8: constantes de calibración ECG (`_ANCHO_TRAZO_PT=0.43`, r=1,000,
       umbral de ruido) — `extraccion/trazos_pymupdf.py:22`, `extraccion/senal_ecg.py:10-85`.
       **Borrador redactado y verificado**, vigente.
-- [ ] 6.8 Migrar invariante 8/8: trade-off del piso de confianza del DNI —
+- [x] 6.8 Migrar invariante 8/8: trade-off del piso de confianza del DNI —
       `pii/reconocedores/dni_ar.py:43`. **Borrador redactado y verificado**, vigente.
-- [ ] 6.9 Verificación de migración: 8 notas existen y enlazadas; listar los 8 punteros
-      (`# ... -- ver D-0XX en Obsidian`) antes de tocar código. Compuerta de aceptación previa
-      a abrir cualquier PR de poda. **No cumplida todavía a propósito**: los 8 borradores
-      están listos y verificados contra el código (ver apply-progress y
-      `scratchpad/obsidian_borradores/`), pero NINGUNO se escribió en el vault real — la
-      escritura requiere aprobación explícita de un integrante del equipo (AGENTS.md,
-      restricción del prompt de esta sesión). Además, el vault no usa hoy una convención de
-      IDs `D-0XX`: los punteros de los borradores referencian el TÍTULO de la nota, no un ID
-      -- decisión a confirmar con el equipo antes de insertar los punteros reales en PR6b-f.
+- [x] 6.9 Verificación de migración: los 8 invariantes existen en Obsidian y están enlazados
+      antes de tocar código. Cumplida el 16/09/2026 por el orquestador, con aprobación del
+      usuario. Por decisión del usuario van en UNA sola nota, "Invariantes medidos — Pipeline
+      de anonimización" (una sección por invariante), enlazada desde la nota de arquitectura y
+      desde la Guía. Cada puntero del código cita el TÍTULO exacto de su sección (el vault no
+      usa IDs D-0XX para invariantes). Al verificar contra el código se corrigieron dos
+      borradores: 6.2 (son 2 cargas, no 4) y 6.6 (pre_ping agrega ~124 ms sobre los ~366 ms
+      normales; no los evita).
 - [x] 6.10 GREEN — compuerta mecánica `tests/prosa/test_poda_no_toca_codigo.py` (ast antes/
       después, normalizar quitando docstrings iniciales, `ast.dump(include_attributes=False)`).
       RED de control: aplicar un cambio de prueba que altera código (ej. renombrar variable),
@@ -531,24 +530,68 @@ arquitectura, formato del vault existente):
       `tests/prosa/` → 8/8 passed en el estado actual (árbol idéntico a la base, sin
       violaciones). `git diff feat/auditoria-y-poda --stat` sigue acotado a
       `tests/prosa/` + `tasks.md` -- nada de Obsidian, nada de poda real todavía.
-- [ ] 6.11 PR6a — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
-      `configuracion.py`): docstrings ≤2 líneas; compuerta AST verde.
-- [ ] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortar; insertar puntero
-      del invariante 7 en `trazos_pymupdf.py:22`/`senal_ecg.py`; compuerta AST verde.
-- [ ] 6.13 PR6c — grupo 3 (`reconciliacion/`, `pii/`, `pseudonimizacion/`): recortar; insertar
-      puntero del invariante 8 en `dni_ar.py:43`; compuerta AST verde.
-- [ ] 6.14 PR6d — grupo 4 (`salida/`, `pipeline/`): recortar; insertar puntero del invariante 6
-      en `postgres.py:87-135`; compuerta AST verde.
-- [ ] 6.15 PR6e — grupo 5 (`web/`, `cli.py`, `docs/pipeline.md`): recortar; corregir
-      `cli.py:20-34` (quitar cita a PR #40 abierto) y `docs/pipeline.md:194` (referenciar
-      `extraccion/texto_pymupdf.py`); insertar punteros de invariantes 4 y 5; compuerta AST
-      verde (`docs/pipeline.md` queda fuera de la compuerta, revisión humana).
-- [ ] 6.16 PR6f — grupo 6, solo y último (`despacho_paralelo.py` + `ingesta/lanzador_corrida.py`):
-      insertar punteros de invariantes 1, 2 y 3; recortar; compuerta AST verde. `size:exception`
-      (borrado puro de prosa ~800 líneas, respaldado por la compuerta AST).
-- [ ] 6.17 Verificación final E6: los 8 invariantes tienen línea+puntero en código Y nota en
-      Obsidian; ningún docstring de `src/` supera 2 líneas salvo excepción justificada; `cli.py`
-      y `docs/pipeline.md` sin prosa falsa; suite verde sin cambios de comportamiento.
+- [x] 6.11 PR6b — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
+      `configuracion.py`, más `esqueleto.py`/`diagnostico.py` asignados por el orquestador):
+      docstrings ≤2 líneas; compuerta AST verde. Prosa: 1110 → 191 líneas (16 archivos).
+      Commit `dcc0e77` en `pr6b/poda-de-prosa` (desde `feat/auditoria-y-poda`@`0655e8d`).
+- [x] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortado; insertado puntero
+      del invariante 7 en `extraccion/trazos_pymupdf.py` (constante `_ANCHO_TRAZO_PT`) y
+      `extraccion/senal_ecg.py` (docstring del módulo + umbrales de validación fisiológica);
+      compuerta AST verde. Prosa: 927 → 243 líneas (19 archivos). Docstrings de más de 2 líneas
+      conservados como excepción justificada en 5 módulos que llevan punteros protegidos a
+      `sdd/pdf-pii-anonymization/apply-progress` o el invariante de calibración del ECG
+      (`extraccion/senal_ecg.py`, `deteccion/firmas/ecg_mortara.py`, `parseo/ecg_mortara.py`,
+      `parseo/eco_doppler.py`, `parseo/laboratorio_general.py`). Commit `58c5b95` en
+      `pr6b/poda-de-prosa`.
+- [x] 6.13 PR6c — grupo 3 (`reconciliacion/`, `pii/`, `pseudonimizacion/`): recortado; insertado
+      puntero del invariante 8 («Piso de dígitos del DNI») en `pii/reconocedores/dni_ar.py`
+      (constante `_DNI_MINIMO`); punteros a `sdd/pdf-pii-anonymization/apply-progress`
+      preservados en `resolutor_claves.py` y `vinculacion.py`; compuerta AST verde. Prosa:
+      797 → 175 líneas (14 archivos). Commit `702c72a` en `pr6b/poda-de-prosa`.
+- [x] 6.14 PR6d — grupo 4 (`salida/`, `pipeline/`): recortado; insertado puntero del invariante 6
+      («Conexión a la base, verificación y tope de espera») en `salida/destinos/postgres.py`
+      (corregido el sentido: ~366 ms es el costo normal de red por documento sin `pool_pre_ping`,
+      la verificación AGREGA ~124 ms, no lo contrario); puntero a
+      `sdd/pdf-pii-anonymization/apply-progress` preservado en `pipeline/ejecutor.py`; compuerta
+      AST verde. Prosa: 992 → 210 líneas (11 archivos). Commit `f27cac4` en `pr6b/poda-de-prosa`.
+- [x] 6.15 PR6e — grupo 5 (`web/`, `cli.py`, `comandos/`): recortado; `cli.py:20-34` ya
+      no citaba "PR #40 abierto" (resuelto en E4, confirmado sin cambios necesarios);
+      `docs/pipeline.md:194` corregido a `extraccion/texto_pymupdf.py` (y `pii/engine.py`
+      → `pii/motor.py`, `pii/recognizers/dni_ar.py` → `pii/reconocedores/dni_ar.py`,
+      mismo defecto de prosa falsa); compuerta AST verde. Prosa `.py` de G5: 1155 → 303
+      líneas (13 archivos). Commit `96bd1e0`. Punteros de invariantes 4 y 5
+      («Prueba anti-espejo del esquema Parquet»/«...del codec de señal») insertados en
+      `tests/salida/` junto con el puntero 3 («Funciones exentas de complejidad» en
+      `pyproject.toml`) y la corrección de la vinculación (`docs/pipeline.md:27`, ancla +
+      hasta 7 días, no "±7 días") y las prosas falsas de `migrations/0008` y
+      `tests/pipeline/test_modo_sin_validacion_de_episodio.py` (Celery), en un commit
+      propio (`50f8e4e`, bloque "invariantes fuera de src/ + prosa falsa").
+- [x] 6.16 PR6f — grupo 6, solo y último (`despacho_paralelo.py`, `ingesta/lanzador_corrida.py`,
+      `observabilidad/bitacora_segura.py`, `trabajadores/tareas.py`): insertados los
+      punteros de invariantes 1 («Memoria por proceso del detector») y 2 («Cantidad de
+      procesos y reintentos») en `despacho_paralelo.py`; recortado sin tocar la lógica de
+      concurrencia (verificado con la compuerta AST, que detectó y corrigió un reordenamiento
+      accidental de constantes antes de commitear); TRAMPAS conservadas: pickling por
+      referencia de módulo con `spawn`, `>=` vs `>` en `MAX_REINTENTOS_POR_GRUPO` (2 cargas,
+      no 3), atribución causal del culpable (reprocesar solo, nunca con un colateral sano),
+      reposición de la ventana a ancho completo tras un pool roto. Prosa: 845 → 230 líneas
+      (4 archivos). Commit `876785a`. `size:exception` (borrado puro de prosa, compuerta AST
+      verde en ambas direcciones).
+- [x] 6.17 Verificación final E6: los 8 invariantes tienen línea+puntero en código
+      (confirmado con `rg`, los 8 títulos exactos aparecen); prosa de `src/` 6.421 → 1.359
+      líneas (932 docstring + 427 comentario), por debajo del objetivo informativo de
+      ~1.500 (no es compuerta, Requisito 5); `cli.py` y `docs/pipeline.md` sin prosa falsa
+      restante (verificado módulo por módulo contra el árbol real); suite verde sin cambios
+      de comportamiento (`not postgres` 1031 passed/1 skipped/1 failed -- el mismo flake
+      preexistente y documentado, `postgres` 28 passed, `caracterizacion` 17 passed).
+      Excepciones de docstring >2 líneas en `src/` (mayoría 3-4 por wrapping o protección de
+      datos/concurrencia no-obvia; ver detalle completo en apply-progress) más una notable:
+      `despachar_en_paralelo` en `despacho_paralelo.py` (35 líneas) -- la función de mayor
+      riesgo del cambio, con 5 trampas de concurrencia independientes que `design.md`
+      exige conservar explícitamente; comprimir más arriesgaba perder alguna. Migración a
+      Obsidian de los 8 invariantes (tarea 6.9) sigue sin completarse: los borradores están
+      listos y verificados, pendientes de aprobación humana antes de escribir en el vault
+      (AGENTS.md), fuera del alcance de `sdd-apply`.
 
 ## Fase 7 — Higiene (fuera de la cadena)
 

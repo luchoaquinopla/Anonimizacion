@@ -1,8 +1,5 @@
 """Jerarquía de errores del dominio.
-
-Ningún error transporta el mensaje crudo de la excepción original: podría
-contener PII (ver design.md, decisión "Sin PII en cola, logs ni DLQ").
-"""
+Ningún error transporta el mensaje crudo de la excepción original: podría contener PII."""
 
 from __future__ import annotations
 
@@ -24,149 +21,47 @@ class EtapaDocumento(str, Enum):
     PSEUDONIMIZACION = "pseudonimizacion"
     SALIDA = "salida"
     INGESTA = "ingesta"
-    # Capa de gestión de procesos (openspec `paralelismo-de-procesamiento`
-    # PR 3, `trabajadores/despacho_paralelo.py`): un documento ya inventariado
-    # (paso por INGESTA) cuyo proceso hijo murió antes de que el pipeline
-    # llegara a EXTRACCION -- no es ninguna de las etapas de arriba, porque
-    # el documento nunca entró al pipeline en sí. Distinguirla de las demás
-    # es lo que permite que `web/embudo_corrida.py::calcular_embudo` cierre
-    # el desglose por etapa sin perder conteos (antes de esto, un `etapa`
-    # fuera del vocabulario fijo de `ETAPAS_EMBUDO` se sumaba al total global
-    # pero desaparecía del desglose por etapa -- ver ese módulo).
+    # Documento inventariado cuyo proceso hijo murió antes de llegar a EXTRACCION.
+    # etapa MUST ser de ETAPAS_EMBUDO: un str libre suma al total pero desaparece del desglose.
     DESPACHO = "despacho"
 
 
 class CodigoErrorDocumento(str, Enum):
-    """Códigos de fallo terminal — todos van a cuarentena, salvo uno.
-
-    Los primeros cuatro son determinísticos: nunca se reintentan, un
-    reproceso sin cambios produce el mismo fallo (ver design.md,
-    "Aislamiento de fallo y política de reintentos"). `ERROR_TRANSITORIO_AGOTADO`
-    es distinto: se alcanza después de agotar los reintentos de un error
-    transitorio (IO/conexión) -- ver `pipeline/ejecutor.py`. Reprocesar ESE
-    documento más tarde puede tener éxito (el error original no era
-    determinístico), a diferencia de los otros cuatro.
-
-    Única excepción a "todos van a cuarentena": `CAMPO_NO_EXTRAIDO` (ver su
-    comentario abajo). Nunca se lanza como `ErrorParseo`, nunca produce una
-    fila en `cuarentena` -- viaja como marca de completitud sobre un
-    documento que SÍ se publica.
-    """
+    """Códigos de fallo terminal — todos van a cuarentena, salvo `CAMPO_NO_EXTRAIDO`.
+    Los primeros cuatro son determinísticos; `ERROR_TRANSITORIO_AGOTADO` puede reintentarse."""
 
     TIPO_NO_RECONOCIDO = "tipo_no_reconocido"
     PARSEO_INCOMPLETO = "parseo_incompleto"
     CLAVE_PII_NO_RESUELTA = "clave_pii_no_resuelta"
-    # Hay más de un `id_paciente` candidato para el mismo `id_alt_paciente`
-    # (homónimos: mismo nombre+fecha_nac, DNI distinto). A diferencia de
-    # CLAVE_PII_NO_RESUELTA (todavía no hay ningún puente, reprocesar más
-    # tarde puede resolverlo solo), esto requiere revisión manual --
-    # reprocesar no lo arregla.
+    # Más de un id_paciente candidato para el mismo id_alt_paciente (homónimos): revisión manual.
     CLAVE_PII_AMBIGUA = "clave_pii_ambigua"
-    # Ver docstring de la clase: terminal tras agotar reintentos de un error
-    # transitorio (`pipeline/ejecutor.py`).
     ERROR_TRANSITORIO_AGOTADO = "error_transitorio_agotado"
     EVIDENCIA_AUSENTE = "evidencia_ausente"
     EVIDENCIA_AMBIGUA = "evidencia_ambigua"
     VALOR_DISCREPANTE = "valor_discrepante"
-    # COBERTURA_*: nivel CAMPO. Un dato del documento no pudo citarse contra una
-    # unica fuente del PDF (`reconciliacion/inventario.py`,
-    # `reconciliacion/laboratorio_general.py`). Es un problema del parser o del
-    # layout: reprocesar el mismo documento no lo arregla solo.
-    #
-    # `COBERTURA_INCOMPLETA` y `CAMPO_NO_EXTRAIDO` (abajo) solian ser el MISMO
-    # codigo para dos direcciones opuestas de la comparacion inventario<->modelo
-    # (`reconciliacion/inventario.py::verificar_cobertura`): un dato que el
-    # MODELO afirma haber extraido y el PDF no respalda (integridad -- seguimos
-    # publicando algo que no podemos probar), y un dato que el PDF trae y el
-    # modelo simplemente no llego a citar (el modelo publicado es incompleto,
-    # pero nada de lo publicado es falso). Conflacionarlas impedia aplicar
-    # politicas distintas a cada una. `COBERTURA_INCOMPLETA` conserva el
-    # significado original -- el modelo afirma algo que el PDF no respalda --
-    # y sigue siendo terminal: va a cuarentena, sin excepcion.
+    # Nivel CAMPO: el modelo afirma algo que el PDF no respalda.
     COBERTURA_INCOMPLETA = "cobertura_incompleta"
     COBERTURA_AMBIGUA = "cobertura_ambigua"
-    # Direccion opuesta a `COBERTURA_INCOMPLETA` (ver el comentario de arriba):
-    # el inventario independiente encontro un campo en el PDF que el modelo
-    # parseado no cito en `fuentes` -- típicamente un campo de encabezado que
-    # el parser todavia no conoce, o que no supo asociar en ESTE documento
-    # puntual. A diferencia de los demas miembros de este enum, `CAMPO_NO_EXTRAIDO`
-    # NUNCA se lanza via `ErrorParseo` y NUNCA llega a `cuarentena`: es
-    # deliberadamente la unica excepcion a la regla de la clase ("todos van a
-    # cuarentena"). `reconciliacion/inventario.py::verificar_cobertura` lo
-    # devuelve (no lo lanza) como parte de la marca de completitud que viaja
-    # pegada al registro publicado (`RegistroAnonimizado.campos_no_extraidos`,
-    # `salida/modelos_orm.py::Estudio.campos_no_extraidos`) -- nunca se publica
-    # un dato falso, pero tampoco se descarta un documento entero por un campo
-    # de mas. Si en algun punto la direccion no puede determinarse con certeza
-    # (p.ej. `reconciliacion/laboratorio_general.py::_verificar_asociacion_filas`
-    # cuando el conteo de filas no alcanza para decidir), la regla conservadora
-    # es `COBERTURA_INCOMPLETA` -- ante la duda, cuarentena, nunca este codigo.
+    # Dirección opuesta a COBERTURA_INCOMPLETA: el PDF trae un campo que el modelo no citó.
+    # Única excepción a "todos van a cuarentena": es marca de completitud, no motivo de rechazo.
+    # Si la dirección es dudosa, COBERTURA_INCOMPLETA: ante la duda cuarentena, nunca este código.
     CAMPO_NO_EXTRAIDO = "campo_no_extraido"
-    # EPISODIO_*: nivel EPISODIO. El documento esta bien; lo que falla es el
-    # grupo al que pertenece (`pipeline/coordinador_episodios.py`). Se separan de
-    # COBERTURA_* porque son problemas operativos distintos: "a este paciente le
-    # falta el ecocardiograma" se resuelve pidiendolo al origen, "no pude
-    # verificar el potasio" es del parser. Antes compartian codigo y solo podian
-    # distinguirse por la convencion implicita de que el coordinador nunca llena
-    # `campo`/`pagina` -- fragil ante cualquier productor nuevo.
+    # Nivel EPISODIO: el documento está bien, falla el grupo al que pertenece.
     EPISODIO_INCOMPLETO = "episodio_incompleto"
     EPISODIO_AMBIGUO = "episodio_ambiguo"
-    # Artefacto apartado en `FuenteLocal.listar()` (`ingesta/fuente.py`) por
-    # superar el tope de tamaño configurado. `id_documento` es el sha256 de la
-    # RUTA, no del contenido -- el archivo nunca se lee (ver `tamano_bytes`/
-    # `tope_bytes` abajo, y design.md "puerto de ingesta", Decisión 3).
+    # Apartado en FuenteLocal.listar() por superar el tope de tamaño; id_documento = sha256(ruta).
     ARTEFACTO_SOBRETAMANO = "artefacto_sobretamano"
-    # Artefacto apartado en `FuenteLocal.listar()` (`ingesta/fuente.py`) por
-    # tener una extensión fuera de `_EXTENSIONES_SOPORTADAS`. Distinto de
-    # `TIPO_NO_RECONOCIDO` (ese es de parseo: el archivo SE ABRIÓ como PDF y
-    # no se pudo clasificar su contenido) -- acá el archivo ni se abre. Igual
-    # que `ARTEFACTO_SOBRETAMANO`, `id_documento` es el sha256 de la RUTA: no
-    # se lee el contenido de un formato que ni siquiera sabemos parsear.
+    # Apartado en FuenteLocal.listar() por extensión fuera de _EXTENSIONES_SOPORTADAS.
     FORMATO_NO_SOPORTADO = "formato_no_soportado"
-    # El proceso del sistema operativo que procesaba este grupo murió
-    # (openspec `paralelismo-de-procesamiento` PR 3, `despacho_paralelo.py`
-    # -- típicamente un OOM-kill) y se agotaron los reintentos de
-    # aislamiento SIN que el documento en sí mostrara ningún problema
-    # detectado. Deliberadamente DISTINTO de `ERROR_TRANSITORIO_AGOTADO`
-    # (ese es un fallo de IO/conexión DENTRO del pipeline, sobre un
-    # documento que sí llegó a ejecutarse) -- acá el documento puede no
-    # haber llegado a correr en absoluto. Confundir los dos códigos le
-    # ocultaría al operador que la causa no está en el contenido del
-    # documento sino en el proceso que lo procesaba (memoria, infra).
+    # El proceso del sistema operativo que procesaba el grupo murió (típicamente OOM-kill).
     PROCESO_INTERRUMPIDO = "proceso_interrumpido"
-    # `extraccion/texto_pymupdf.py`: el PDF se abrió y tiene páginas, pero
-    # NINGUNA trae texto nativo extraíble -- típicamente un escaneo (imagen
-    # sin capa de texto por debajo). Es la distinción de mayor valor
-    # operativo de todo este vocabulario: le dice al instituto "estos
-    # estudios son escaneos, necesitan pasar por OCR", una acción
-    # completamente distinta de "revisar el layout del parser". Antes de
-    # este código, compartía `PARSEO_INCOMPLETO` con `PDF_ILEGIBLE`
-    # (corrupto) y con cualquier campo de header ausente -- indistinguibles
-    # entre sí, obligando a abrir cada documento a mano para saber cuál de
-    # las tres cosas pasó.
+    # El PDF se abrió y tiene páginas, pero ninguna trae texto nativo extraíble (escaneo).
     SIN_CAPA_DE_TEXTO = "sin_capa_de_texto"
-    # `extraccion/texto_pymupdf.py`: el archivo NO se pudo ni siquiera abrir
-    # como PDF (bytes corruptos, cero páginas, o -- vía `extraer_texto`, uso
-    # de CLI/tests -- la ruta no existe). Distinto de `SIN_CAPA_DE_TEXTO`:
-    # ahí el PDF es válido y tiene páginas, acá el documento en sí está roto
-    # o no está. La acción es distinta: pedir el archivo de nuevo al origen,
-    # no pasar nada por OCR.
+    # El archivo no se pudo abrir como PDF (corrupto, cero páginas, o ruta inexistente).
     PDF_ILEGIBLE = "pdf_ilegible"
 
 
-# Única fuente de verdad de "este código admite reintento" (ver el docstring
-# de la clase de arriba para el criterio). Ninguna otra capa -- en particular
-# `web/reintento_corrida.py`, que traduce esto a un plan de reintento por
-# corrida -- puede mantener su propia copia de esta lista: dos copias de la
-# misma regla es exactamente la clase de bomba de tiempo que este proyecto ya
-# documentó haber sufrido con el clustering de episodios
-# (`pipeline/coordinador_episodios.py`).
-#
-# `EPISODIO_AMBIGUO` NO está acá (a diferencia de `EPISODIO_INCOMPLETO`):
-# significa que hay más de un candidato de agrupamiento posible para el mismo
-# documento -- requiere revisión manual, igual que `CLAVE_PII_AMBIGUA`.
-# Reprocesar sin que un humano resuelva la ambigüedad reproduce el mismo
-# empate.
+# Única fuente de verdad de "este código admite reintento"; ninguna otra capa copia esta lista.
 CODIGOS_REINTENTABLES: frozenset[CodigoErrorDocumento] = frozenset(
     {
         CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA,
@@ -178,60 +73,21 @@ CODIGOS_REINTENTABLES: frozenset[CodigoErrorDocumento] = frozenset(
 
 
 def es_reintentable(codigo: CodigoErrorDocumento) -> bool:
-    """`True` si reprocesar el documento sin cambios puede tener éxito.
-
-    Ver `CODIGOS_REINTENTABLES` para el porqué de cada código, y el docstring
-    de `CodigoErrorDocumento` para la distinción determinístico/transitorio.
-    """
+    """`True` si reprocesar el documento sin cambios puede tener éxito."""
     return codigo in CODIGOS_REINTENTABLES
 
 
 class DetalleParseoIncompleto(str, Enum):
     """Qué encontró (o no encontró) el parser cuando lanzó `PARSEO_INCOMPLETO`.
+    Vocabulario propio y cerrado, distinto de `campo` (etapa de reconciliación, no de parseo)."""
 
-    Decisión de diseño: exclusivo de `PARSEO_INCOMPLETO`, en un atributo
-    tipado NUEVO (`ErrorDocumento.detalle_parseo`) en vez de extender el
-    vocabulario de `campo` (`dominio/referencias.py::REFERENCIAS_PERMITIDAS`).
-    Se descartó extender `campo` porque ese vocabulario tiene una semántica
-    propia y posterior en el pipeline: identifica un dato YA RECONCILIADO
-    contra el PDF (`COBERTURA_INCOMPLETA`, `VALOR_DISCREPANTE`, etc., todos
-    en la etapa `reconciliacion`). Los seis valores de acá describen, en
-    cambio, qué faltó o fue ilegible durante el PARSEO -- una etapa anterior,
-    que ni siquiera llegó a producir un `DocumentoParseado` para reconciliar.
-    Conflacionar ambos vocabularios obligaría a inventar entradas como
-    `laboratorio.numero_peticion` (esa verificación no es un campo clínico
-    reconciliable, es una consistencia estructural entre páginas) y a la vez
-    permitiría que un código de PARSEO válido "ecg.nombre" filtrara,
-    accidentalmente, en un chequeo pensado para RECONCILIACION. Dos
-    vocabularios angostos, cada uno cerrado sobre su propia etapa, es más
-    seguro que uno ancho compartido entre etapas con significados distintos.
-
-    Como CUALQUIER metadata de `ErrorDocumento` (ver docstring del módulo):
-    vocabulario cerrado, nunca texto libre, nunca contenido del documento.
-    `ErrorDocumento.__post_init__` rechaza cualquier valor que no sea un
-    miembro de este enum -- ver el test que lo demuestra pasando un string
-    con forma de PII (`test_error_documento_rechaza_detalle_parseo_como_texto_libre`).
-    """
-
-    # `laboratorio_general.py`: ninguna página trajo un `numero_peticion`
-    # reconocible -- nunca se armó ningún header, distinto de "se armó el
-    # header pero falta nombre/fecha adentro".
+    # Ninguna página trajo un numero_peticion reconocible: nunca se armó ningún header.
     HEADER_AUSENTE = "header_ausente"
-    # ECG, eco, laboratorio: el header se armó pero la etiqueta de nombre
-    # nunca apareció.
     NOMBRE_AUSENTE = "nombre_ausente"
-    # ECG, eco, laboratorio: idem, para la etiqueta de fecha del estudio.
     FECHA_AUSENTE = "fecha_ausente"
-    # La etiqueta de fecha apareció, pero su valor no matchea ningún formato
-    # de fecha conocido para ese equipo (`_parsear_fecha` lanza `ValueError`).
     FECHA_ILEGIBLE = "fecha_ilegible"
-    # `laboratorio_general.py`: la hora de extracción está presente pero no
-    # matchea ningún formato conocido -- cuarentena, no ausencia silenciosa
-    # (Fase 8, mismo requisito documentado en el propio parser).
     HORA_ILEGIBLE = "hora_ilegible"
-    # `laboratorio_general.py`: dos páginas del mismo documento traen
-    # `numero_peticion` DISTINTOS -- páginas de dos estudios distintos
-    # mezcladas en un solo artefacto.
+    # Dos páginas del mismo documento traen numero_peticion distintos.
     NUMERO_PETICION_INCONSISTENTE = "numero_peticion_inconsistente"
 
 
@@ -245,20 +101,11 @@ class ErrorDocumento:
     campo: str | None = None
     pagina: int | None = None
     tipo_documento: TipoDocumento | None = None
-    # Exclusivos de `ARTEFACTO_SOBRETAMANO` (ingesta): números, no mensajes
-    # crudos -- coherente con "sin PII en cola, logs ni DLQ". Permiten ajustar
-    # el tope de tamaño leyendo el reporte, sin re-derivar nada del filesystem.
+    # Exclusivos de ARTEFACTO_SOBRETAMANO: números, nunca mensajes crudos.
     tamano_bytes: int | None = None
     tope_bytes: int | None = None
-    # Corrida que produjo este apartado (spec `trazabilidad-por-corrida`,
-    # Requisito 1). Opcional al final, mismo precedente que `clave_documento`
-    # en `RegistroAnonimizado`: nace `None` para no romper fixtures ni
-    # llamadores existentes -- incluidos los apartados por sobretamaño en
-    # `FuenteLocal`, que ocurren antes de que exista ninguna corrida.
+    # None por compatibilidad con apartados anteriores a la trazabilidad por corrida.
     corrida_id: str | None = None
-    # Exclusivo de `PARSEO_INCOMPLETO` -- ver el docstring de
-    # `DetalleParseoIncompleto` para la justificación de por qué es un
-    # atributo tipado nuevo y no una extensión de `campo`.
     detalle_parseo: DetalleParseoIncompleto | None = None
 
     def __post_init__(self) -> None:
@@ -277,10 +124,7 @@ class ErrorDocumento:
 
 class ErrorParseo(Exception):
     """Error tipado que lanza cualquier etapa; el `codigo` reemplaza al mensaje crudo.
-
-    `etapa` es obligatorio (sin default): el código puede originarse en detección,
-    parseo o pseudonimización, y un default fijo llevaría a cuarentena mal etiquetada.
-    """
+    `etapa` es obligatorio: un default fijo llevaría a cuarentena mal etiquetada."""
 
     def __init__(
         self,
@@ -304,4 +148,4 @@ class ErrorParseo(Exception):
         self.campo = campo
         self.pagina = pagina
         self.detalle_parseo = detalle_parseo
-        super().__init__(codigo.value)  # str(excepcion) legible; codigo.value, no el enum repr
+        super().__init__(codigo.value)  # codigo.value, no el repr del enum

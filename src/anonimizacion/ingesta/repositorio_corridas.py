@@ -1,12 +1,5 @@
 """Repositorio SQL para recuperar corridas y documentos luego de una interrupción.
-
-Producción hoy sólo llama `registrar_documentos` (vía `LanzadorCorrida.lanzar`)
-y `obtener_corrida`/`actualizar_corrida` (marcar `PROCESANDO`, ver
-`servicio_corridas.py`). `documentos_para_reanudar` y `actualizar_documento`
-no tienen llamador de producción todavía -- son la mitad de la reanudación
-que falta conectar. Ver `dominio/estados_corrida.py` para el detalle completo
-de qué existe, qué falta y qué decisión lo desbloquea.
-"""
+`documentos_para_reanudar`/`actualizar_documento` sin llamador de producción todavía."""
 
 from __future__ import annotations
 
@@ -26,10 +19,7 @@ _ESTADOS_TERMINALES = {
     EstadoDocumentoCorrida.ERROR_FINAL,
 }
 
-# Estados TERMINALES de `corrida` (plano de control, no de documento -- ver
-# `_ESTADOS_TERMINALES` arriba para la distinción). Usado por
-# `listar_corridas_no_terminales`: feature `despachador-desde-el-panel`, para
-# el gate de "una corrida a la vez" y la recuperación de arranque.
+# Estados terminales de `corrida` (plano de control, distinto de `_ESTADOS_TERMINALES`).
 _ESTADOS_CORRIDA_TERMINALES = {
     EstadoCorrida.COMPLETADA,
     EstadoCorrida.COMPLETADA_CON_CUARENTENA,
@@ -38,11 +28,7 @@ _ESTADOS_CORRIDA_TERMINALES = {
 
 
 def _es_activa(estado: EstadoCorrida) -> bool:
-    """`CorridaOrm.activa` -- ver su docstring en `modelos_orm.py` para el
-    porqué (revisión adversarial ronda 3, hallazgo 4: el gate de "una
-    corrida a la vez" tiene que vivir en la BASE, no sólo en un lock de un
-    proceso, para que `scripts/procesar_carpeta.py` (otro proceso) también
-    lo respete)."""
+    """`CorridaOrm.activa`: el gate de "una corrida a la vez" vive en la base, no en un lock."""
     return estado not in _ESTADOS_CORRIDA_TERMINALES
 
 
@@ -53,11 +39,7 @@ class RepositorioCorridas:
         self._motor = motor
 
     def crear_corrida(self, corrida: Corrida) -> None:
-        """Inserta la fila -- o deja que la BASE la rechace si ya hay otra
-        corrida activa (`ux_corrida_una_activa`, revisión adversarial ronda
-        3): `IntegrityError` se propaga sin atrapar acá, `LanzadorCorrida.lanzar`
-        es quien la traduce a `CorridaEnCursoError`, porque es quien tiene
-        acceso a `listar_corridas_no_terminales` para armar un mensaje útil."""
+        """Inserta la fila o deja que la base la rechace (`ux_corrida_una_activa`) sin atrapar."""
         with Session(self._motor) as sesion, sesion.begin():
             if sesion.get(CorridaOrm, corrida.id_corrida) is None:
                 sesion.add(
@@ -71,14 +53,7 @@ class RepositorioCorridas:
                 )
 
     def obtener_corrida(self, id_corrida: str) -> Corrida | None:
-        """Recupera `Corrida` (estado + version) para volver a avanzarla.
-
-        Necesario para `LanzadorCorrida.marcar_procesando` (cierre de silencio
-        de auditoría, `fix/silencios-de-ingesta-y-panel`): quien marca
-        `PROCESANDO` no necesariamente es el mismo proceso/objeto que corrió
-        `lanzar()`, así que no puede asumir que tiene el `Corrida` en memoria
-        -- tiene que leerlo.
-        """
+        """Recupera `Corrida` (estado + version) para volver a avanzarla."""
         with Session(self._motor) as sesion:
             fila = sesion.get(CorridaOrm, id_corrida)
         if fila is None:
@@ -91,26 +66,7 @@ class RepositorioCorridas:
         )
 
     def listar_corridas_no_terminales(self) -> list[Corrida]:
-        """Corridas en cualquier estado ACTIVO (no `COMPLETADA`/
-        `COMPLETADA_CON_CUARENTENA`/`FALLIDA`) -- feature `despachador-desde-el-panel`.
-
-        Dos llamadores reales, misma pregunta: "¿hay trabajo en curso?"
-
-        - `ServicioCorridasReal.crear_corrida`: gate de "una corrida a la
-          vez" -- rechaza un `POST /corridas` nuevo mientras una siga activa
-          (ver su docstring para el porqué de esa decisión, memoria y
-          `ProcessPoolExecutor` compartidos entre corridas concurrentes).
-        - `lanzador_corrida.recuperar_corridas_abandonadas`: al arrancar el
-          servidor, cualquier corrida que esta consulta devuelva es
-          necesariamente una corrida abandonada por un proceso anterior (el
-          servidor es de un solo proceso, sin persistencia de "hay un hilo
-          corriendo para este `corrida_id`").
-
-        Orden estable por `id_corrida` (no hay columna de fecha de creación
-        en `corrida` hoy) -- sólo importa para que el gate reporte SIEMPRE la
-        misma corrida activa en `409`, no una elección arbitraria entre
-        varias filas no terminales.
-        """
+        """Corridas en cualquier estado activo; orden estable por `id_corrida` para el gate 409."""
         with Session(self._motor) as sesion:
             filas = sesion.scalars(
                 select(CorridaOrm)
@@ -123,43 +79,8 @@ class RepositorioCorridas:
         ]
 
     def ultima_actividad(self, id_corrida: str) -> datetime | None:
-        """Última evidencia REAL de trabajo en curso sobre `id_corrida`, sin
-        importar QUÉ proceso la produjo -- revisión adversarial crítico 1
-        (feature `despachador-desde-el-panel`).
-
-        `recuperar_corridas_abandonadas` asumía "servidor de un solo proceso
-        ⇒ toda corrida no terminal está abandonada". Es falso:
-        `scripts/procesar_carpeta.py` usa el MISMO `LanzadorCorrida` contra
-        la MISMA base, en OTRO proceso, y nunca llama
-        `marcar_finalizada`/`marcar_fallida` -- dejar una corrida en
-        `PROCESANDO` mientras escribe documentos reales es su comportamiento
-        NORMAL, no un bug. Reproducido contra Postgres real: arrancar el
-        panel mientras el script seguía corriendo la marcaba `FALLIDA` a
-        mitad de la escritura -- la inversión exacta del defecto que cerró
-        el PR #33.
-
-        El máximo entre tres candidatos, cualquiera puede ganar:
-        - `corrida.actualizada_en`: se actualiza sola (`onupdate`, columna de
-          SQLAlchemy) en cada transición de estado -- cubre una corrida
-          recién creada, antes de que exista ningún documento publicado.
-        - El `creado_en` más reciente de `estudio` para esta corrida:
-          evidencia de que el pipeline sigue publicando.
-        - El `creado_en` más reciente de `cuarentena` para esta corrida:
-          evidencia de que el pipeline sigue procesando, aunque el último
-          documento haya terminado en cuarentena.
-
-        `None` sólo si la corrida no existe -- el llamador decide qué hacer
-        con eso (`recuperar_corridas_abandonadas` sólo llama esto sobre
-        corridas que `listar_corridas_no_terminales` ya confirmó que existen).
-
-        LIMITACIÓN CONOCIDA, ACEPTADA, NO RESUELTA ACÁ: `documento_corrida`
-        (el inventario) no tiene columna de tiempo -- una corrida que tarda
-        mucho SÓLO inventariando (antes de que `procesar_grupo` escriba el
-        primer `estudio`/`cuarentena`) no deja evidencia nueva más allá de la
-        transición a `INVENTARIANDO`. El margen de inactividad
-        (`recuperar_corridas_abandonadas`) tiene que ser generoso para no
-        confundir ese tramo con abandono.
-        """
+        """Máximo entre `corrida.actualizada_en`, último `estudio` y última `cuarentena`.
+        Limitación conocida: el inventario no tiene columna de tiempo propia."""
         with Session(self._motor) as sesion:
             fila = sesion.get(CorridaOrm, id_corrida)
             if fila is None:
@@ -174,36 +95,8 @@ class RepositorioCorridas:
         return max(momento for momento in candidatos if momento is not None)
 
     def registrar_latido(self, id_corrida: str) -> None:
-        """Toca `corrida.actualizada_en` SIN pasar por `Corrida.avanzar_a` --
-        no es una transición de dominio, es sólo "el proceso que trabaja
-        sigue vivo" (revisión adversarial ronda 3, hallazgo 2).
-
-        Por qué hace falta además de `ultima_actividad`: un corpus PLANO (sin
-        subcarpetas) colapsa en un único grupo, y `FuenteLocal.listar_grupos`
-        agota TODO el listado -- hasheando cada archivo -- antes de entregar
-        ese grupo (`ingesta/fuente.py`, docstring de `listar_grupos`). Con
-        ~400.000 documentos eso puede tardar mucho más que cualquier margen
-        de inactividad razonable, y en toda esa ventana no se escribe ningún
-        `estudio` ni `cuarentena` -- la única evidencia sería la transición a
-        `PROCESANDO`, marcada una sola vez al principio. Sin un latido
-        propio, esa ventana larga y silenciosa es indistinguible de una
-        corrida abandonada.
-
-        Llamador de producción: un hilo de latido dedicado, lanzado por
-        `web/servicio_corridas.py::_despachar_y_cerrar` mientras el despacho
-        real está en curso -- ver ese módulo para el intervalo.
-
-        Sin bloqueo optimista (a propósito): un latido es best-effort y
-        NUNCA debe competir por la versión de dominio con
-        `marcar_procesando`/`marcar_finalizada`/`marcar_fallida` -- si pisa
-        una actualización real por una carrera rarísima, la próxima vuelta
-        del latido (segundos después) lo corrige solo. `estado`/`version` NO
-        se tocan: sólo `actualizada_en`.
-
-        Silencioso si `id_corrida` no existe (corrida borrada/migrada entre
-        medio): un latido tardío no puede tumbar el hilo de despacho por una
-        fila que ya no está.
-        """
+        """Toca sólo `corrida.actualizada_en`, sin bloqueo optimista ni transición de dominio.
+        Cubre la ventana larga de un corpus plano donde `listar_grupos` no entrega nada aún."""
         with Session(self._motor) as sesion, sesion.begin():
             sesion.execute(
                 update(CorridaOrm)
@@ -212,20 +105,8 @@ class RepositorioCorridas:
             )
 
     def registrar_documentos(self, documentos: Sequence[DocumentoCorrida], *, tamano_lote: int = 1000) -> int:
-        """Inventaría `documentos` en lotes -- una sesión por lote, no una por documento.
-
-        Motivo medido (design.md, Decisión 5): abrir una `Session` y una
-        transacción por documento sale caro -- 100.000 transacciones sueltas
-        son minutos de arranque para un trabajo que en una sesión por millar
-        son segundos. Esta es la versión por lote, con la misma guarda de
-        idempotencia por `(corrida_id, huella_contenido)` que
-        `uq_documento_corrida_huella` ya exige: consulta las huellas
-        existentes del lote antes de insertar, así que relanzar la misma
-        corrida (mismo inventario, mismas huellas) no duplica el denominador
-        del embudo.
-
-        Devuelve la cantidad de filas efectivamente insertadas.
-        """
+        """Inventaría `documentos` en lotes, una sesión por lote, idempotente por huella.
+        Devuelve la cantidad de filas efectivamente insertadas."""
         insertados = 0
         for inicio in range(0, len(documentos), tamano_lote):
             lote = documentos[inicio : inicio + tamano_lote]
@@ -283,18 +164,7 @@ class RepositorioCorridas:
             return resultado.rowcount == 1
 
     def actualizar_corrida(self, corrida: Corrida, *, version_esperada: int) -> bool:
-        """Persiste `corrida.estado`, mismo bloqueo optimista que `actualizar_documento`.
-
-        Sin esto, las transiciones `CREADA -> INVENTARIANDO -> PROCESANDO` que
-        `Corrida.avanzar_a` hace en memoria (`LanzadorCorrida`, design.md
-        "Recorrido") nunca llegan a `corrida.estado` -- la fila queda en
-        `creada` para siempre, y ese es un campo que después el embudo expone
-        tal cual (`ServicioCorridasReal`, design.md "El contrato JSON").
-        Persistir sólo estas tres transiciones -- nada de cierre en estados
-        terminales -- es justo lo que design.md pide: "el panel deriva la
-        marcha de la evidencia, no del estado" (Decisión 8); esto es
-        trazabilidad administrativa, no un sustituto de esa decisión.
-        """
+        """Persiste `corrida.estado`, mismo bloqueo optimista que `actualizar_documento`."""
         with Session(self._motor) as sesion, sesion.begin():
             resultado = sesion.execute(
                 update(CorridaOrm)

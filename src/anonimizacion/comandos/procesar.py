@@ -1,53 +1,14 @@
-"""Composición del subcomando `anonimizacion procesar` (`cli.py` es quien
-resuelve banderas/config y llama a `ejecutar()` con argumentos con nombre --
-ver design.md D3, `punto-entrada-instalable`).
+"""Composición del subcomando `anonimizacion procesar` (`cli.py` resuelve
+banderas/config y llama a `ejecutar()` con argumentos con nombre). Crea el esquema con
+`create_all` (no Alembic: válido para pruebas rápidas, no producción) y sólo escribe a
+Postgres.
 
-Simplificaciones deliberadas de este módulo (no del pipeline en si):
-- Crea el esquema con `Base.metadata.create_all` en vez de correr las
-  migraciones de Alembic -- valido para probar rapido, no para produccion
-  (ahi corresponde `alembic upgrade head`, ver migrations/).
-- Solo escribe a Postgres, no exporta a Parquet en el mismo paso (serian
-  dos destinos distintos; EjecutorPipeline hoy toma uno solo -- exportar a
-  Parquet despues es una consulta aparte contra lo ya escrito en Postgres).
-
-Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, seccion
-"Fix: persistencia del puente id_alt_paciente en Postgres entre corridas"):
-este script usaba `ResolutorClaves()` (puente en memoria, vacio en cada
-corrida) -- el laboratorio de un paciente subido en una corrida y el ECG del
-mismo paciente subido en OTRA corrida posterior nunca se vinculaban, aunque
-el laboratorio ya estuviera en la base. Ahora usa `ResolutorClavesPostgres`
-(`pseudonimizacion/resolutor_claves.py`), que delega contra la tabla real
-`vinculo_paciente` via `EscritorPostgres` -- el puente persiste entre
-corridas separadas del script, no solo dentro de un mismo lote.
-
-Fix `panel-de-operacion` (tasks.md 6.8-6.9, PR 2.5): este script armaba
-`FuenteLocal`/`ItemLote` a mano y llamaba `EjecutorPipeline.procesar_lote(items)`
-directo, sin ningun `corrida_id` -- ni la corrida ni el inventario quedaban
-registrados en ningun lado. Ahora usa `LanzadorCorrida` (crea la `Corrida`,
-inventaria via `RepositorioCorridas.registrar_documentos`) y
-`trabajadores.tareas.procesar_grupo` -- la MISMA función que invoca el
-despacho paralelo en producción, llamada en directo (este script corre
-sincrónico) -- para que `corrida_id` viaje hasta
-`estudio`/`cuarentena` (design.md, "Recorrido"). Es tambien el primer
-llamador de produccion real de `LanzadorCorrida`/`CuarentenaDeCorrida`
-(Fase 6.4-6.7): sin este cambio quedaban con tests pero sin ningun camino
-que los ejecutara fuera de la suite.
-
-Fix `arranque-para-el-instituto` (revision adversarial, CRITICO 1): este
-script llamaba `lanzador.marcar_procesando(...)` pero nunca
-`marcar_finalizada`/`marcar_fallida` al terminar -- a diferencia de
-`web/servicio_corridas.py`, que si cierra sus corridas. Mientras no existia
-el gate de "una corrida a la vez" (`ux_corrida_una_activa`, `modelos_orm.py`)
-esto era inofensivo. Con el gate ya en `main`, CUALQUIER corrida procesada
-por este script (exitosa o no) quedaba `activa=true` para siempre, y la
-proxima invocacion sobre CUALQUIER carpeta fallaba con `CorridaEnCursoError`
-citando una espera que nunca iba a terminar -- reproducido contra Postgres
-real. `ejecutar()` ahora cierra la corrida en los tres desenlaces posibles:
-`COMPLETADA`/`COMPLETADA_CON_CUARENTENA` al terminar el despacho,
-`FALLIDA` si no hay PDFs (la corrida nunca llega a `PROCESANDO`) y `FALLIDA`
-si el despacho lanza una excepcion inesperada (que igual se repropaga, mismo
-patron que `web/servicio_corridas.py::_despachar_y_cerrar`).
-"""
+Usa `ResolutorClavesPostgres`, no `ResolutorClaves()` en memoria -- ver
+`sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: persistencia del puente
+id_alt_paciente en Postgres entre corridas": el puente debe persistir entre corridas
+separadas, no sólo dentro de un mismo lote. `ejecutar()` cierra la corrida en los tres
+desenlaces posibles (COMPLETADA/COMPLETADA_CON_CUARENTENA/FALLIDA) -- antes quedaba
+`activa=true` para siempre si nunca se llamaba a marcar_finalizada/marcar_fallida."""
 
 from __future__ import annotations
 
@@ -81,30 +42,16 @@ def _configurar_ejecutor_secuencial(
     cuarentena: EscritorCuarentena,
     tope_bytes: int | None,
 ) -> None:
-    """Arma y registra la fábrica de `EjecutorPipeline` en ESTE proceso --
-    solo para el camino secuencial (`procesos<=1`). Extraído de `ejecutar()`
-    para mantener su complejidad ciclomática bajo el límite (`ruff`/`C901`),
-    no por otra razón de diseño.
-
-    Con `procesos>1` cada hijo arma su PROPIA fábrica
-    (`despacho_paralelo.inicializar_trabajador`) -- armar una acá también
-    sería cargar un `MotorPii()` entero (~875 MB medidos, ver
-    `despacho_paralelo`) en el padre para un ejecutor que nunca se usa, la
-    copia N+1 que este tramo existe para evitar.
-    """
+    """Arma y registra la fábrica de `EjecutorPipeline` en este proceso, sólo para el
+    camino secuencial (`procesos<=1`). Extraído de `ejecutar()` para mantener su
+    complejidad ciclomática bajo el límite."""
     if motor is None:
         raise ValueError("motor es obligatorio cuando procesos <= 1 (camino secuencial, en este mismo proceso)")
-    # puente id_alt_paciente -> id_paciente persistente contra
-    # `vinculo_paciente` (ver docstring del módulo, fix post-merge): sobrevive
-    # entre corridas separadas del script, a diferencia de `ResolutorClaves()`
-    # en memoria.
+    # Puente id_alt_paciente -> id_paciente persistente, a diferencia de ResolutorClaves() en memoria.
     resolutor = ResolutorClavesPostgres(destino)
 
-    # Se arma por la MISMA raíz de composición que el trabajador
-    # (`construir_fabrica_ejecutor`) y no a mano: armarlo por separado fue lo que
-    # dejó a este script sin validación de episodio mientras el banco de carga sí
-    # la tenía. Con la fábrica, el script valida igual que producción
-    # (spec `procesamiento-por-grupo`, requisito 6).
+    # Misma raíz de composición que el trabajador -- armarlo a mano dejaba a este
+    # script sin validación de episodio mientras el banco de carga sí la tenía.
     fabrica = tareas.construir_fabrica_ejecutor(
         raices=(entrada,),
         resolutor=resolutor,
@@ -129,22 +76,12 @@ def _despachar_grupos(
     directorio_marcador_pid: Path | None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Secuencial (`procesos<=1`, en este proceso) o paralelo (`procesos>1`,
-    `ProcessPoolExecutor` vía `despacho_paralelo`). Extraído de `ejecutar()`
-    por la misma razón que `_configurar_ejecutor_secuencial`: mantener la
-    complejidad ciclomática de `ejecutar()` bajo el límite."""
+    `ProcessPoolExecutor` vía `despacho_paralelo`). Extraído de `ejecutar()` para
+    mantener su complejidad ciclomática bajo el límite."""
     if procesos <= 1:
         print(f"Corrida {corrida_id}: procesando por grupo (secuencial)...", file=sys.stderr)
-        # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
-        # PR 2). `procesar_grupo` es la MISMA función que invoca el despacho
-        # paralelo en producción, llamada en directo (este script corre
-        # sincrónico). Antes se le pasaba `lanzamiento.referencias`
-        # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
-        # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
-        # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una
-        # vez POR GRUPO, iterando el generador en una sola pasada (nunca contando
-        # de antemano), acota ese pico al tamaño de un grupo (un paciente) sin
-        # cambiar el resultado: cada grupo sigue siendo un lote independiente con
-        # su propio aislamiento de fallo.
+        # procesar_grupo se llama una vez POR GRUPO (nunca con el generador entero):
+        # acota el pico de RAM al tamaño de un grupo en vez de la corrida completa.
         resultados: list[dict[str, object]] = []
         total_documentos = 0
         total_grupos = 0
@@ -160,19 +97,12 @@ def _despachar_grupos(
             "(una conexion de socket no sobrevive un pickle a traves del limite de proceso)"
         )
     print(f"Corrida {corrida_id}: procesando por grupo ({procesos} procesos)...", file=sys.stderr)
-    # `metricas` (revisión adversarial, hallazgo no bloqueante): la
-    # recuperación ante un hijo muerto tiene un costo real en recargas
-    # completas de `MotorPii` (~875 MB medidas cada una) que sin esto era
-    # invisible para quien opera la corrida -- ver "Costo real de la
-    # recuperación" en el docstring de `despacho_paralelo.despachar_en_paralelo`.
+    # Sin esto, el costo de recargar MotorPii completo tras un hijo muerto es invisible.
     metricas_despacho = despacho_paralelo.MetricasDespacho()
     resultado = despacho_paralelo.despachar_en_paralelo(
         corrida_id=corrida_id,
         grupos=grupos_a_despachar,
-        # `crear_pool` recibe el grado de concurrencia deseado -- no siempre
-        # es `procesos`: la recuperación ante un pool roto pide un pool de
-        # UN solo worker para aislar causalmente un crash (ver
-        # `despacho_paralelo._EstadoDespacho._reprocesar_en_aislamiento`).
+        # No siempre es `procesos`: la recuperación de un pool roto pide 1 solo worker.
         crear_pool=lambda n: despacho_paralelo.crear_pool_de_trabajadores(
             entrada=entrada,
             db_url=db_url,
@@ -208,17 +138,8 @@ def _despachar_y_cerrar_corrida(
     directorio_marcador_pid: Path | None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Marca `PROCESANDO`, despacha y cierra la corrida en el desenlace que
-    corresponda -- simétrico de `web/servicio_corridas.py::_despachar_y_cerrar`
-    (revisión adversarial, CRÍTICO 1: este script llamaba `marcar_procesando`
-    pero nunca `marcar_finalizada`/`marcar_fallida` al terminar, así que
-    CUALQUIER corrida procesada quedaba `activa=true` para siempre una vez
-    que existió el gate `ux_corrida_una_activa`). Una excepción inesperada
-    durante el despacho cierra la corrida como `FALLIDA` y se re-lanza --
-    cerrar la corrida no debe tragarse el error real.
-
-    Extraída de `ejecutar()` para mantener su complejidad ciclomática bajo
-    el límite (`ruff`/`C901`), mismo motivo que `_configurar_ejecutor_secuencial`
-    y `_despachar_grupos`."""
+    corresponda -- simétrico de `web/servicio_corridas.py::_despachar_y_cerrar`.
+    Una excepción inesperada cierra `FALLIDA` y se re-lanza sin tragarse el error."""
     lanzador.marcar_procesando(corrida_id)
     try:
         resultados, total_documentos, total_grupos = _despachar_grupos(
@@ -255,39 +176,10 @@ def ejecutar(
     directorio_marcador_pid: Path | None = None,
 ) -> int:
     """Lanza una corrida sobre `entrada` y procesa su inventario de punta a punta.
-
-    Separado de la composición de `cli.py` para poder ejercitarlo con un motor/engine inyectados
-    en tests (`tests/comandos/test_procesar.py`) sin tocar argparse,
-    variables de entorno, ni Postgres real. `tope_bytes=None` es "usar el
-    default de producción" -- mismo convenio que `LanzadorCorrida`/`FuenteLocal`.
-
-    `procesos=1` (default) mantiene el camino SECUENCIAL sin cambios --
-    llama `tareas.procesar_grupo` en directo, en el mismo proceso, igual que
-    antes del tramo 3. `procesos>1` despacha por
-    `anonimizacion.trabajadores.despacho_paralelo.despachar_en_paralelo`
-    (openspec `paralelismo-de-procesamiento` PR 3): cada grupo se procesa en
-    un `ProcessPoolExecutor`, con recuperación automática si un hijo muere.
-    En ese caso `db_url` es OBLIGATORIO -- cada proceso hijo arma su PROPIO
-    `Engine` de Postgres (`construir_engine_postgres(db_url)`); el `engine`
-    que recibe esta función nunca cruza el límite de proceso (una conexión
-    de socket no sobrevive un pickle), solo se usa acá en el padre para
-    crear el esquema y para registrar en `cuarentena` los grupos que se dan
-    por perdidos tras agotar reintentos.
-
-    `pepper` (el parámetro) solo se usa con `procesos<=1` -- con `procesos>1`
-    cada hijo llama `obtener_pepper()` por su cuenta, leyendo
-    `ANONIMIZACION_PEPPER`/`ANONIMIZACION_PEPPER_ARCHIVO` de SU PROPIO
-    entorno heredado (ver `despacho_paralelo.inicializar_trabajador`), nunca
-    del valor pasado acá: hacerlo viajar como argumento sería pasarlo por el
-    mismo canal pickleado que cualquier otro dato, exactamente lo que la
-    decisión de diseño evita. Quien llame con `procesos>1` debe asegurarse
-    de que `ANONIMIZACION_PEPPER` esté seteada en el entorno del proceso que
-    invoca esta función (`os.environ[...] = ...` en runtime alcanza -- ver
-    `despacho_paralelo`, verificado con `spawn`).
-
-    `directorio_marcador_pid` (`None` = producción): instrumentación de test
-    -- ver el docstring de `despacho_paralelo.inicializar_trabajador`.
-    """
+    `procesos=1` corre secuencial en este proceso; `procesos>1` despacha por
+    `despacho_paralelo` (requiere `db_url`: cada hijo arma su propio `Engine`, una
+    conexión de socket no sobrevive el pickle). Con `procesos>1`, `pepper` no viaja
+    al hijo: cada uno llama `obtener_pepper()` leyendo su propio entorno heredado."""
     Base.metadata.create_all(engine, checkfirst=True)
 
     destino = EscritorPostgres(engine)
@@ -303,13 +195,8 @@ def ejecutar(
             tope_bytes=tope_bytes,
         )
 
-    # `LanzadorCorrida` es el único punto donde nace una corrida (design.md,
-    # "Recorrido"): crea la fila `corrida`, inventaría vía `FuenteLocal` +
-    # `RepositorioCorridas.registrar_documentos`, y devuelve las referencias
-    # ya en la forma exacta que exige `procesar_grupo`. Un artefacto apartado
-    # por sobretamaño (antes de calcular su huella, así que nunca llega al
-    # inventario) igual queda atribuido a esta corrida vía `CuarentenaDeCorrida`,
-    # que `LanzadorCorrida` arma internamente.
+    # Único punto donde nace una corrida: crea la fila, inventaría, y devuelve las
+    # referencias en la forma exacta que exige procesar_grupo.
     lanzador = LanzadorCorrida(
         repositorio=RepositorioCorridas(engine),
         cuarentena=cuarentena,
@@ -319,41 +206,20 @@ def ejecutar(
     try:
         lanzamiento = lanzador.lanzar(entrada)
     except CorridaEnCursoError as error:
-        # Revisión adversarial ronda 3, hallazgo 4: este script no tenía
-        # ningún gate propio -- la única protección real contra dos
-        # corridas simultáneas (esta y, por ejemplo, una lanzada desde el
-        # panel) es la que la BASE impone (`ux_corrida_una_activa`,
-        # `modelos_orm.py`). Traducir la excepción a un mensaje claro y un
-        # código de salida propio, en vez de dejar que el traceback crudo
-        # le llegue al operador.
+        # La única protección real contra dos corridas simultáneas la impone la base
+        # (ux_corrida_una_activa); acá sólo se traduce a un mensaje claro.
         print(f"No se puede lanzar esta corrida: {error}", file=sys.stderr)
         return 2
 
-    # `lanzamiento.referencias` es un GENERADOR de un solo uso (openspec
-    # `paralelismo-de-procesamiento` PR 2, revisión adversarial hallazgo
-    # crítico 2): ni `len()` ni un `bool()` directo funcionan sin consumirlo,
-    # y consumirlo dos veces (una para contar, otra para despachar) lo
-    # agotaría antes de procesar nada. `next(..., None)` extrae el primer
-    # grupo -- o confirma que no hay ninguno -- sin renunciar a la pereza.
+    # Generador de un solo uso: next(..., None) confirma si hay algo sin consumirlo dos veces.
     iterador_grupos = iter(lanzamiento.referencias)
     primer_grupo = next(iterador_grupos, None)
     if primer_grupo is None:
         print("No se encontraron PDFs en esa carpeta.", file=sys.stderr)
-        # Revisión adversarial, CRÍTICO 1: `lanzar()` ya dejó la corrida en
-        # INVENTARIANDO -- sin cerrarla acá, esa fila queda `activa=true`
-        # para siempre (`ux_corrida_una_activa`, ya en `main`) y bloquea la
-        # PRÓXIMA carpeta que se intente procesar, aunque esta corrida no
-        # haya hecho ni empezado a hacer ningún trabajo real.
-        # `INVENTARIANDO -> FALLIDA` es una transición válida (`dominio/corridas.py`).
+        # Sin cerrar acá, la corrida queda activa=true para siempre y bloquea la próxima.
         lanzador.marcar_fallida(lanzamiento.corrida_id)
         return 1
 
-    # `lanzador.lanzar()` sólo inventaría -- no avanza a PROCESANDO (cierre de
-    # silencio de auditoría, `fix/silencios-de-ingesta-y-panel`): inventariar
-    # y procesar son cosas distintas, y quien sólo inventaría no puede
-    # afirmar que está procesando. `_despachar_y_cerrar_corrida` es quien
-    # REALMENTE va a llamar `procesar_grupo` a continuación (y quien cierra
-    # la corrida al terminar -- ver su docstring, CRÍTICO 1).
     grupos_a_despachar = itertools.chain([primer_grupo], iterador_grupos)
 
     resultados, total_documentos, total_grupos = _despachar_y_cerrar_corrida(
@@ -395,6 +261,4 @@ def ejecutar(
     return 0
 
 
-# La composición completa (pepper, decisión de cargar `MotorPii`, engine vía
-# `construir_engine_postgres`) vive ahora en `cli.py::_comando_procesar` --
-# antes vivía en un `main()` propio de este módulo, con su propio `argparse`.
+# La composición completa vive en cli.py::_comando_procesar.
