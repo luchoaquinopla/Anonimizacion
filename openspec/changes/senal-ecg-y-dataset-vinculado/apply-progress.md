@@ -511,3 +511,91 @@ aparte (`sdd/senal-ecg-y-dataset-vinculado/apply-progress-entrega4`, ya
 iniciada en paralelo sobre otra rama, no mezclar). El dataset exportado por
 esta entrega queda listo para que esa fase lo audite con el verificador
 lineal (tarea 4.3), pero esa auditoría NO es parte de esta entrega.
+
+### Correcciones de revisión adversarial (misma rama, sin nuevo push/PR)
+
+1. **CRITICAL -- cero cobertura de `exportar_dataset` contra Postgres real**:
+   `-m postgres` seguía en 23 (los mismos de antes de esta entrega) pese a
+   que la exportación corre contra Postgres en producción. Agregado
+   `tests/salida/test_exportacion_postgres.py` (3 tests, `-m postgres` pasa a
+   **26**), contra una base ESCRATCH dedicada (`exportacion_scratch_test`,
+   creada/destruida en el propio archivo -- mismo patrón que
+   `tests/salida/test_migraciones.py::_url_postgres_scratch`, nunca la base
+   compartida `anonimizacion`):
+   - `test_exportar_decodifica_senal_bytea_de_postgres_correctamente`: oráculo
+     de señal+máscara escrito a mano, decodificado a través de `BYTEA` real
+     de Postgres (`psycopg` puede devolver `memoryview`) -- `zlib`/
+     `np.frombuffer` lo aceptan sin cambios, valores exportados EXACTOS al
+     oráculo.
+   - `test_exportar_conserva_estudio_adicionales_jsonb_con_las_mismas_claves_y_valores`:
+     `estudio.adicionales` como `JSONB` real (no el `TEXT` genérico de
+     SQLite), ida y vuelta con unicode (`"Instituto de Cardiología de
+     Corrientes"`) exacta.
+   - `test_exportar_usa_repeatable_read_de_verdad_y_no_ve_episodios_de_otra_conexion`:
+     dos garantías en un solo test (instrucción explícita de no inflar la
+     batería) -- (a) `current_setting('transaction_isolation')`, consultado
+     DENTRO de la transacción abierta por `exportar_dataset` (vía
+     `monkeypatch` de `_procesar_pagina`), da `'repeatable read'`; (b) un
+     episodio insertado y COMMITEADO por una conexión SEPARADA, después de
+     que la transacción de exportación ya tomó su snapshot, NO aparece ni en
+     una relectura dentro de esa misma transacción ni en el Parquet final --
+     la garantía real de `REPEATABLE READ` (snapshot fijo para toda la
+     transacción), no simulada con SQLite (que no la soporta).
+   No fue impracticable -- las tres garantías se pudieron probar de verdad
+   contra Postgres real sin tocar la base compartida.
+
+2. **WARNING elevado a bloqueante -- defensa en profundidad de PII**:
+   `exportacion.py` confiaba ciegamente en que `estudio.adicionales` ya
+   llegaba saneado de nombres de médico/técnico (migración 0014). Agregado
+   `_adicionales_sin_personal_exportacion`, que vuelve a filtrar por
+   `_CLAVES_PERSONAL` **importada** de `constructor_registro.py` (no una
+   copia literal -- si esa tupla crece, el filtro de acá cambia solo) en el
+   ÚLTIMO punto antes de que el dato salga del sistema. Dos tests nuevos en
+   `tests/salida/test_exportacion.py`:
+   - `test_estudio_adicionales_con_claves_personales_de_una_fila_vieja_nunca_llega_al_parquet`:
+     inserta a mano (sin pasar por `construir_registro`, que sí filtra) una
+     fila que simula una escritura de una versión anterior del código con
+     las 3 claves personales presentes -- confirma que ninguna llega al
+     Parquet.
+   - `test_ninguna_clave_de_claves_personal_completa_sobrevive_al_filtro_de_exportacion`:
+     test de PROPIEDAD, recorre TODAS las claves de `_CLAVES_PERSONAL` (no
+     sólo las que arma un fixture puntual) más un oráculo positivo
+     (`"origen"`) que debe sobrevivir.
+   **Falsabilidad demostrada**: revertí temporalmente el filtro (`_json_o_none`
+   sin `_adicionales_sin_personal_exportacion`) y confirmé que ambos tests
+   nuevos fallan mostrando las claves personales presentes en el JSON
+   exportado; luego restauré el fix y reconfirmé GREEN. Docstring del módulo
+   (líneas 17-23 originales) corregido: ya no afirma que la exportación
+   "confía" en la garantía de escritura sin volver a filtrar.
+
+3. **SUGGESTION -- `.tmp` huérfano**: documentado en el docstring del módulo
+   (sin test nuevo, ya lo manejaba: verificado a mano que `pq.ParquetWriter`
+   abre en modo escritura y trunca cualquier archivo preexistente en esa
+   ruta -- una corrida nueva sobre un `.tmp` huérfano de una corrida que
+   murió a mitad de camino lo sobreescribe limpio, sin fallar ni mezclar
+   filas).
+
+4. Esta entrega se abre como UN solo PR (aprobado por el usuario,
+   `size:exception`) -- no se partió en PRs más chicos.
+
+### Verificación tras las correcciones
+
+`uv run pytest -q -m postgres`: **26 passed** (23 previos + 3 nuevos de
+exportación) -- sin tocar la base compartida `anonimizacion` (base ESCRATCH
+`exportacion_scratch_test`, creada y destruida en el propio test).
+`uv run --extra dev ruff check .`: limpio. `uv run pytest -q` (suite
+completa, incluye `-m postgres`): corrida en curso al momento de escribir
+esta nota -- ver el resultado exacto en el result contract del turno.
+Nota operativa: correr `-m postgres` en paralelo con la suite completa
+(`pytest -q`, sin filtro) contra la MISMA base compartida produce fallos por
+carrera cruzada entre ambas corridas (`ForeignKeyViolation` en
+`documento_corrida`, no relacionado con este cambio) -- reproducido y
+descartado corriendo cada suite por separado, secuencialmente.
+
+### Tamaño del cambio (actualizado tras la revisión)
+
+`git diff --shortstat origin/feat/senal-ecg-y-dataset-vinculado...HEAD -- .
+':!uv.lock'`: ver el result contract del turno para el número exacto tras
+estas correcciones (3 tests nuevos de Postgres + 2 tests de defensa en
+profundidad de PII + comentarios corregidos, sin agregar código de producción
+más allá del filtro de una línea y su docstring).
