@@ -194,6 +194,25 @@ def test_detecta_archivo_py_renombrado_como_violacion(tmp_path: Path) -> None:
     )
 
 
+def test_alcance_incluye_tests_migrations_y_scripts(tmp_path: Path) -> None:
+    """RED (corrección 2): hoy el alcance es sólo `src/anonimizacion` -- un cambio de
+    código real en un .py de `tests/` (o `migrations/`, `scripts/`) no se detecta,
+    aunque la poda real de comentarios también va a tocar esas carpetas."""
+    raiz = tmp_path
+    _crear_repo_git(raiz)
+    (raiz / "tests").mkdir()
+    (raiz / "tests" / "test_modulo.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    base = _commit_todo(raiz, "base")
+
+    (raiz / "tests" / "test_modulo.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+
+    resultado = verificar_compuerta(base, raiz_repo=raiz)
+    assert "tests/test_modulo.py" in resultado.fallos_ast, (
+        "un cambio de codigo real en tests/ debe detectarse -- el alcance de la "
+        f"compuerta no puede quedarse en src/anonimizacion. Resultado: {resultado}"
+    )
+
+
 def test_normalizar_ignora_docstrings_pero_no_codigo() -> None:
     """Control unitario de la propia compuerta, sin depender de git ni de una referencia."""
     solo_docstring_distinto = (
