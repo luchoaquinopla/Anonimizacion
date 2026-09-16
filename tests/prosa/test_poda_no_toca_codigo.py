@@ -216,6 +216,23 @@ def test_alcance_incluye_tests_migrations_y_scripts(tmp_path: Path) -> None:
     )
 
 
+def test_ref_explicita_inexistente_falla_en_vez_de_saltear() -> None:
+    """RED (corrección 3): hoy, si `COMPUERTA_AST_REF` apunta a una ref que no existe, el
+    fixture hace `pytest.skip` en silencio. Si alguien la definió a mano, está pidiendo la
+    verificación -- una ref inválida debe fallar, no saltearse."""
+    with pytest.raises(RefCompuertaInvalida):
+        _resolver_ref(ref_explicita="esta-ref-no-existe-de-ninguna-forma-jamas-en-la-vida")
+
+
+def test_sin_ref_explicita_se_saltea_si_no_existe_la_de_defecto(tmp_path: Path) -> None:
+    """Sin COMPUERTA_AST_REF, y sin la rama base por defecto (repo nuevo/clon sin fetch),
+    la compuerta se saltea explícitamente -- distinto del caso anterior."""
+    raiz = tmp_path
+    _crear_repo_git(raiz)
+    with pytest.raises(pytest.skip.Exception):
+        _resolver_ref(ref_explicita=None, raiz_repo=raiz)
+
+
 def test_normalizar_ignora_docstrings_pero_no_codigo() -> None:
     """Control unitario de la propia compuerta, sin depender de git ni de una referencia."""
     solo_docstring_distinto = (
