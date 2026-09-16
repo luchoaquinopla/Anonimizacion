@@ -14,13 +14,14 @@ from pathlib import Path
 import pytest
 
 from anonimizacion.configuracion import (
+    VAR_ENV_RUTA_CONFIG,
     ConfiguracionOperador,
     ErrorConfiguracionClaveDesconocida,
     ErrorConfiguracionInvalida,
     ErrorConfiguracionNoEncontrada,
     ErrorConfiguracionSecretoEnArchivo,
     ErrorConfiguracionTipoInvalido,
-    VAR_ENV_RUTA_CONFIG,
+    _DB_URL_DEFAULT,
     cargar_configuracion,
 )
 
@@ -141,26 +142,17 @@ def test_rechaza_escuchar_red_que_no_es_booleano(tmp_path) -> None:
         cargar_configuracion(ruta)
 
 
-def _cargar_script_por_ruta(nombre_archivo: str):
-    """Mismo patrón que `tests/scripts/test_procesar_carpeta.py::_cargar_script`."""
-    import importlib.util
+def test_el_default_de_db_url_es_una_unica_fuente_importada_no_redeclarada() -> None:
+    """Corrección (auditoria-y-poda, E4): antes `procesar_carpeta.py` y
+    `servir_panel.py` redeclaraban su propio `_DB_URL_DEFAULT` -- el mismo
+    literal, triplicado -- y este test sólo podía confirmar que nadie los
+    había desincronizado TODAVÍA. Ahora `comandos/procesar.py` y
+    `comandos/servir.py` IMPORTAN el valor de acá (spec
+    `punto-entrada-instalable`, Requisito 3): la garantía es más fuerte que
+    un test -- es imposible que diverjan, porque son el mismo objeto. Se
+    confirma con `is`, no sólo `==`."""
+    from anonimizacion.comandos import procesar, servir
 
-    raiz_repo = Path(__file__).resolve().parents[1]
-    ruta = raiz_repo / "scripts" / nombre_archivo
-    spec = importlib.util.spec_from_file_location(f"_config_vs_{ruta.stem}", ruta)
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
-    return modulo
-
-
-def test_el_default_de_db_url_no_diverge_silenciosamente_de_los_dos_scripts() -> None:
-    """Los dos scripts sueltos (`procesar_carpeta.py`, `servir_panel.py`)
-    siguen existiendo con su propio `_DB_URL_DEFAULT` cada uno -- ver el
-    docstring de `anonimizacion.cli`. Los tres literales son idénticos HOY
-    porque nadie los desincronizó todavía, no porque compartan una única
-    fuente: este centinela falla el día que alguien cambie uno solo de los
-    tres y se olvide de los otros dos."""
-    procesar = _cargar_script_por_ruta("procesar_carpeta.py")
-    servir = _cargar_script_por_ruta("servir_panel.py")
-
-    assert ConfiguracionOperador().db_url == procesar._DB_URL_DEFAULT == servir._DB_URL_DEFAULT
+    assert ConfiguracionOperador().db_url == _DB_URL_DEFAULT
+    assert procesar._DB_URL_DEFAULT is _DB_URL_DEFAULT
+    assert servir._DB_URL_DEFAULT is _DB_URL_DEFAULT

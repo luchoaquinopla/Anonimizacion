@@ -24,7 +24,7 @@ flowchart LR
     PII --> PSEUDO["Pseudonimización<br/>HMAC(DNI + pepper) → patient_id"]
     PSEUDO <--> BRIDGE["Tabla puente<br/>alt_id ↔ patient_id<br/>(la escribe Lab/Eco, la lee ECG)"]
 
-    PSEUDO --> LINK["Vinculación<br/>±7 días por patient_id"]
+    PSEUDO --> LINK["Vinculación<br/>ancla + hasta 7 días después, por patient_id"]
 
     LINK --> PG[("Postgres<br/>relacional")]
 
@@ -87,7 +87,7 @@ El workspace conserva 1.005 PDFs de staging y 1.000 PDFs de entrada durante la c
 medición incluye ese doble I/O y no presenta las entradas como el total de archivos almacenados.
 
 Son reales la extracción PyMuPDF, detección, parser, reconciliación, coordinación y construcción
-anonimizada. El motor PII/Presidio-spaCy, HMAC/resolutor, cola, PostgreSQL y almacenamiento productivo
+anonimizada. El motor PII/Presidio-spaCy, HMAC/resolutor, PostgreSQL y almacenamiento productivo
 se reemplazan por adaptadores offline o no participan. La compuerta compara todos los literales
 sintéticos efímeros contra los registros finales, pero **no valida el NER institucional**. Por eso
 esta medición no demuestra todavía capacidad institucional. El escalón 10k se documenta a
@@ -116,8 +116,8 @@ PDFs y reporte se mantienen bajo `tmp/carga_10000/`, fuera de Git.
 
 Esta prueba aumenta la evidencia de volumen, pero conserva los límites del escalón 1k: mide
 extracción, detección de tipo, parsers, reconciliación, coordinación y construcción reales con
-adaptadores offline. No mide Presidio-spaCy institucional, HMAC real, Celery/Redis, PostgreSQL ni
-storage productivo. Por eso NO certifica todavía la capacidad del despliegue institucional; 100k
+adaptadores offline. No mide Presidio-spaCy institucional, HMAC real, PostgreSQL ni storage
+productivo. Por eso NO certifica todavía la capacidad del despliegue institucional; 100k
 y la prueba sobre la infraestructura final siguen pendientes.
 
 ## Señal de ECG y dataset vinculado exportado
@@ -191,7 +191,7 @@ El detalle completo de la comparación está en Engram
 
 - **Qué es**: binding Python sobre MuPDF, un motor C de renderizado/parsing de PDF. Extrae texto,
   posición (bounding boxes) e imágenes.
-- **Cómo la usamos**: en `extraction/pymupdf_text.py`, para convertir cada PDF en bloques de texto
+- **Cómo la usamos**: en `extraccion/texto_pymupdf.py`, para convertir cada PDF en bloques de texto
   con su posición. Los 3 layouts (ECG, laboratorio, ecocardiograma) son PDFs de **texto nativo**
   (no escaneados), así que esta extracción alcanza sin OCR.
 - **Por qué**: es determinístico, rápido, corre 100% local (sin enviar el documento a ningún
@@ -213,8 +213,8 @@ El detalle completo de la comparación está en Engram
   cada uno con un score de confianza. spaCy es la librería de NLP que le provee el reconocedor de
   entidades nombradas (`PERSON`, entre otras) vía el modelo `es_core_news_lg`, entrenado en
   español.
-- **Cómo los usamos**: en `pii/engine.py`, Presidio corre dos tipos de recognizer sobre cada
-  registro parseado — un `PatternRecognizer` **custom** para DNI argentino (`pii/recognizers/dni_ar.py`,
+- **Cómo los usamos**: en `pii/motor.py`, Presidio corre dos tipos de recognizer sobre cada
+  registro parseado — un `PatternRecognizer` **custom** para DNI argentino (`pii/reconocedores/dni_ar.py`,
   regex + validación de formato + contexto de palabras como "DNI"/"documento") y el
   `SpacyRecognizer` (es_core_news_lg) para nombres de persona. Corre también sobre texto libre
   (ej. las conclusiones del ecocardiograma), no solo sobre los campos del header, porque el nombre
@@ -253,24 +253,40 @@ El detalle completo de la comparación está en Engram
   - Cifrado reversible del DNI — rechazado: crearía un camino de re-identificación que el
     protocolo de investigación no necesita ni autoriza.
 
-### Celery + Redis
+### Concurrencia: `ProcessPoolExecutor` (stdlib)
 
-- **Qué son**: Celery es una librería de colas de tareas asíncronas para Python; Redis actúa como
-  *broker* (transporta los mensajes de tarea) y opcionalmente como backend de resultados.
-- **Cómo los usamos**: cada documento a procesar se encola como una tarea Celery. El mensaje de
-  cola transporta **solo** `{doc_id, uri, sha256}` — nunca el contenido del PDF ni datos
-  extraídos — precisamente para que ninguna PII pueda terminar en una dead-letter queue.
-- **Por qué**: procesar 100k documentos de forma síncrona no escala (sin reintentos, sin
-  paralelismo, sin visibilidad de progreso). Una cola con worker pool permite procesar en
-  paralelo, reintentar solo errores transitorios (IO, storage, DB — no errores de parsing, que
-  son deterministas y van directo a cuarentena) y agregar más workers sin tocar el código del
-  pipeline.
+- **Qué es**: `concurrent.futures.ProcessPoolExecutor`, de la biblioteca estándar de Python —
+  un pool de procesos hijos en la misma máquina, sin broker ni servicio externo.
+- **Cómo lo usamos**: `trabajadores/despacho_paralelo.py::despachar_en_paralelo` reparte los
+  grupos (un paciente/episodio cada uno) entre los procesos del pool; cada hijo invoca
+  `tareas.procesar_grupo(corrida_id, grupo)` en directo — la misma función que corre el camino
+  secuencial (`procesos=1`), sin reimplementar nada del procesamiento. El grado de concurrencia
+  no es "núcleos físicos" a secas: se midió que `MotorPii` (spaCy + Presidio) consume ~875 MB de
+  RSS por proceso (medido con `K32GetProcessMemoryInfo`), así que el default es
+  `min(heurística_de_núcleos_físicos, tope_conservador_fijo)` para no agotar la memoria de una
+  máquina típica con varias copias del modelo cargadas a la vez (ver el razonamiento completo en
+  `despacho_paralelo.py`). Si un hijo muere (`BrokenProcessPool`), el grupo que traía se
+  reprocesa en aislamiento contra un pool de tamaño 1, con un tope de reintentos — la
+  recuperación tiene un costo medido en recargas completas del modelo, contabilizado en
+  `MetricasDespacho`.
+- **Por qué**: procesar cientos de miles de documentos de forma síncrona no escala (sin
+  paralelismo, sin visibilidad de progreso), pero el volumen objetivo (~100k documentos, una
+  sola máquina del instituto) no justifica operar infraestructura distribuida — el paralelismo
+  necesario cabe en un pool de procesos del mismo proceso padre.
 - **Alternativas descartadas**:
-  - Procesamiento síncrono request/response — válido solo para probar los 3 documentos de hoy;
-    inviable a escala.
+  - Procesamiento síncrono (`procesos=1`) — válido para volúmenes chicos o depuración; sigue
+    disponible como modo, no es el default a escala.
+  - **Celery + Redis** (`auditoria-y-poda` E5, `trabajadores/app.py` + `@app.task` en
+    `tareas.py`): se esbozó una integración completa (broker/backend configurables, política de
+    reintentos con backoff, límite de concurrencia) pero **nunca tuvo llamador de producción**:
+    ningún script ni el ejecutor del pipeline invocaba `.delay()`/`.apply_async()` — sólo un
+    test lo ejercitaba — y no había servicio `redis` en `docker-compose.yml`. El paralelismo real
+    siempre fue el `ProcessPoolExecutor` descrito arriba. Se retiró por completo (código, test,
+    dependencias del `pyproject.toml`, variables de `deploy/`) en vez de mantenerse como
+    capacidad declarada sin uso — si algún día hace falta escalar más allá de una máquina
+    (workers distribuidos), el trabajo real es operar esa infraestructura (Redis, colas,
+    despliegue de workers), no reactivar código que ya existía y nunca se ejercitó.
   - BullMQ (Node) — descartado junto con la opción de usar Node como runtime (ver más abajo).
-  - RabbitMQ como broker — Celery lo soporta, pero Redis alcanza para este volumen y ya se usa
-    en otras partes del proyecto; se puede migrar sin cambiar la lógica de tareas si hiciera falta.
 
 ### PostgreSQL (vía SQLAlchemy)
 

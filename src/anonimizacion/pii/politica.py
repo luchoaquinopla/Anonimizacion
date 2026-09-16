@@ -1,34 +1,5 @@
-"""Política de PII: clasifica cada elemento en su namespace (spec `pii-detection`).
-
-`pii/motor.py` sabe DETECTAR PII; este módulo decide QUÉ HACER con cada
-hallazgo, clasificándolo en el namespace que va a usar Fase 6
-(`pseudonimizacion/claves.py`) para generar la clave HMAC correspondiente:
-
-- `NAMESPACE_PACIENTE` (`id_paciente`): nombre, DNI, fecha de nacimiento del
-  paciente -- la identidad que el pipeline pseudonimiza como sujeto del
-  estudio.
-- `NAMESPACE_MEDICO` (`id_medico`): el médico derivante/solicitante/
-  informante es PII de un profesional, NO del paciente (ver design.md,
-  decisión Q3) -- namespace separado y propio, nunca mezclado con el del
-  paciente ni vinculado al mismo grafo de identidad. Se recolecta tanto de
-  `adicionales` (campos de header ya extraídos por los parsers, p.ej.
-  `medico_derivante`/`medico_solicitante`) como de la firma al pie del
-  informe (p.ej. `ContenidoEco.firma.nombre`), leída por duck typing.
-- `NAMESPACE_CUASI_IDENTIFICADOR`: los IDs internos (Nº Petición, Nº
-  Estudio, ID interno de ECG) vía `MotorPii.evaluar_ids_internos` -- no
-  identifican por sí solos pero sí combinados con otros datos.
-- Texto libre (p.ej. `ContenidoEco.secciones_texto`): se escanea con
-  `MotorPii.detectar` porque puede traer PII no estructurada (un nombre
-  mencionado en la conclusión dictada). No se le asigna namespace acá: la
-  política solo señala el hallazgo con su posición en el texto: a qué
-  persona pertenece (paciente, médico u otra) es una decisión de Fase 6/7
-  que puede requerir contexto adicional (p.ej. comparar contra el nombre ya
-  conocido del paciente/médico de ese mismo documento).
-
-Duck typing, no imports de `anonimizacion.parseo`: esta fase (PR4) depende
-solo de PR1 (dominio) según el Work Units table de `tasks.md`, y `parseo`
-(PR3) es una fase paralela, no una dependencia.
-"""
+"""Política de PII: clasifica cada hallazgo en su namespace (paciente/médico/cuasi-id) para
+que `pseudonimizacion/claves.py` genere la clave HMAC correspondiente. Sin imports de `parseo` (duck typing)."""
 
 from __future__ import annotations
 
@@ -38,13 +9,10 @@ from anonimizacion.dominio.modelos import DocumentoParseado
 from anonimizacion.pii.motor import DeteccionPii, MotorPii
 
 NAMESPACE_PACIENTE = "id_paciente"
+# PII de un profesional, no del paciente: namespace propio, nunca mezclado con el del paciente.
 NAMESPACE_MEDICO = "id_medico"
 NAMESPACE_CUASI_IDENTIFICADOR = "cuasi_identificador"
 
-# Campos de header que los parsers ya dejan en `adicionales` con el nombre
-# del médico derivante/solicitante (ver parseo/laboratorio_general.py y
-# parseo/ecg_mortara.py: "medico_derivante"; parseo/eco_doppler.py:
-# "medico_solicitante").
 _CLAVES_ADICIONALES_MEDICO = ("medico_derivante", "medico_solicitante")
 
 

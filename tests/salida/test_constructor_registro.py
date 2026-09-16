@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from datetime import date, time
+from enum import Enum
 
 import pytest
 from pydantic import SecretStr
@@ -40,6 +41,13 @@ CLAVES_TEST = ClavesPaciente(id_paciente="pid-abc123", id_alt_paciente=None, ver
 ID_EPISODIO_TEST = "episodio-xyz789"
 SHA256_SINTETICO_TEST = "c" * 64  # huella inventada de 64 hex, ningún valor real
 CLAVE_DOCUMENTO_TEST = generar_clave_documento(PEPPER_TEST, SHA256_SINTETICO_TEST)
+
+
+# 4to tipo de documento simulado (Requisito 4, extensibilidad-tipo-documento):
+# `DocumentoParseado.tipo_documento` no valida en runtime que sea un miembro
+# de `TipoDocumento` -- alcanza un `str, Enum` propio con el mismo mixin.
+class _TipoDocumentoDePrueba(str, Enum):
+    RESONANCIA_MAGNETICA = "resonancia_magnetica"
 
 
 def test_laboratorio_pseudonimiza_medico_y_arma_contenido_eav() -> None:
@@ -438,6 +446,55 @@ def test_claves_sin_id_paciente_resuelto_lanza_value_error() -> None:
 
     with pytest.raises(ValueError):
         construir_registro(documento, claves_sin_resolver, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
+
+
+def test_un_4to_tipo_sin_constructor_registrado_lanza_value_error_nombrando_el_tipo() -> None:
+    """Requisito 3, Escenario 1. NO es RED (ver el test siguiente para el que
+    sí lo es): hoy `construir_registro` YA termina en `else: raise
+    ValueError(...)` -- no hay falla silenciosa acá, design.md D1 lo verifica
+    ("idioma distinto, no defecto"). Se deja como cobertura del contrato
+    final del registry, con un 4to tipo real (Requisito 4)."""
+    documento = DocumentoParseado(
+        tipo_documento=_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=None,
+    )
+
+    with pytest.raises(ValueError, match="resonancia_magnetica"):
+        construir_registro(documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST)
+
+
+def test_un_4to_tipo_con_constructor_registrado_construye_su_registro() -> None:
+    """Requisito 3, Escenario 2. RED contra el código de hoy: `construir_registro`
+    resuelve por cadena `if/elif/elif/else raise`, sin ningún punto de
+    extensión -- no existe manera de agregar el constructor de un tipo nuevo
+    sin editar esa cadena. `constructor_registro._CONSTRUCTORES_POR_TIPO` no
+    existe hoy (`AttributeError`); tras el registry, un tipo nuevo se
+    registra desde afuera y `construir_registro` lo usa."""
+    from anonimizacion.salida import constructor_registro
+
+    def _constructor_de_prueba(documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: object) -> str:
+        return "contenido-de-prueba-para-4to-tipo"
+
+    constructor_registro._CONSTRUCTORES_POR_TIPO[_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA] = _constructor_de_prueba
+    try:
+        documento = DocumentoParseado(
+            tipo_documento=_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA,
+            version_esquema=1,
+            identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+            fecha_estudio=date(2024, 1, 10),
+            contenido=None,
+        )
+
+        registro = construir_registro(
+            documento, CLAVES_TEST, id_episodio=ID_EPISODIO_TEST, pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+        )
+
+        assert registro.contenido == "contenido-de-prueba-para-4to-tipo"
+    finally:
+        del constructor_registro._CONSTRUCTORES_POR_TIPO[_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA]
 
 
 def test_tipo_no_reconocido_lanza_value_error() -> None:

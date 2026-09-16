@@ -1,15 +1,7 @@
-"""Payloads tipados de `RegistroAnonimizado.contenido`, uno por `TipoDocumento` (tasks.md 7.2).
-
-Estos dataclasses son el punto medio entre el `contenido` crudo de
-`DocumentoParseado` (los `ContenidoEcg`/`ContenidoLaboratorio`/`ContenidoEco`
-de `parseo/`) y las tablas SQL de `modelos_orm.py`: acá ya no queda PII de
-identidad (nombre/DNI/fecha de nacimiento del médico quedan reemplazados por
-sus HMAC `id_medico*`), pero la forma todavía es "genérica" -- no pivotea
-`MedidaEco` a columnas fijas. Ese pivote (la decisión "ancha" del eco) es
-responsabilidad de la capa de escritura SQL (`destinos/postgres.py`), no de
-este módulo: acá se decide QUÉ es PII y se saca, ahí se decide CÓMO se
-guarda en columnas.
-"""
+"""Payloads tipados de `RegistroAnonimizado.contenido`, uno por `TipoDocumento`: punto medio
+entre el `contenido` crudo de `parseo/` y las tablas SQL. Acá ya no hay PII de identidad
+(reemplazada por HMAC `id_medico*`), pero el pivote a columnas fijas es responsabilidad de
+`destinos/postgres.py`, no de este módulo."""
 
 from __future__ import annotations
 
@@ -41,12 +33,8 @@ class ContenidoLaboratorioSalida:
 
 @dataclass(frozen=True)
 class ContenidoEcgSalida:
-    """Payload de salida de un ECG: médico pseudonimizado + medidas (esquema fijo).
-
-    `senal` (openspec `senal-ecg-y-dataset-vinculado`): se propaga tal cual
-    desde `ContenidoEcg.senal` -- ni PII ni pivote, sólo geometría medida
-    del PDF. `None` cuando el layout no validó.
-    """
+    """Payload de salida de un ECG: médico pseudonimizado + medidas. `senal` se propaga tal
+    cual (ni PII ni pivote, geometría medida); `None` cuando el layout no validó."""
 
     id_medico: str | None
     vent_rate: str | None

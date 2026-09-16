@@ -11,7 +11,9 @@ def test_documentacion_de_despliegue_cubre_operacion_y_secretos() -> None:
 
     for termino in ("permisos", "backup", "retención", "rollback", "TLS", "cuarentena"):
         assert termino.lower() in operacion.lower()
-    for variable in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "CELERY_WORKER_CONCURRENCY"):
+    for variable in ("ANONIMIZACION_PEPPER", "ANONIMIZACION_PANEL_SECRETO", "ANONIMIZACION_DB_URL"):
         assert variable in variables
+    assert "CELERY_" not in operacion
+    assert "CELERY_" not in variables
     assert "no contiene secretos" in variables.lower()
     assert "deploy/operacion-institucional.md" in readme

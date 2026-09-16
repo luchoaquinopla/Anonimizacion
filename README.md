@@ -26,7 +26,14 @@ python -m pip install -e .[dev]
 pytest -q
 ```
 
-No agregar PDFs reales ni PII al repositorio. Para pruebas sin Redis se puede usar `CELERY_TASK_ALWAYS_EAGER=1`.
+No agregar PDFs reales ni PII al repositorio.
+
+Si usás `uv` (`uv sync --extra dev` / `uv lock`): el modelo de spaCy `es_core_news_lg` vive
+fuera del lock (se instala aparte, no declarado en `pyproject.toml`) y `uv sync` lo desinstala
+sin avisar si no está en el lock; reinstalarlo con `uv pip install
+"https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl"`
+después de cualquier `uv sync`/`uv lock`. Sin `--extra dev`, `uv sync` también desinstala
+`pytest`/`ruff`/`pytest-cov`.
 
 ### Fixtures de calibración a partir de PDFs reales
 

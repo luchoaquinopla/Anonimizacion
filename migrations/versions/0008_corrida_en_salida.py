@@ -12,7 +12,7 @@ exista ninguna corrida.
 
 `cuarentena` gana la restricción única `(corrida_id, id_documento)` que
 `estudio` ya tenía (`uq_estudio_clave_documento`, migración 0007): hoy no
-existe ninguna, y un reintento de Celery sobre el mismo grupo duplica el
+existe ninguna, y un reintento sobre el mismo grupo duplica el
 apartado (design.md, Decisión 4 y 9). Los `NULL` no colisionan entre sí ni en
 SQLite ni en Postgres, así que la restricción se crea sobre duplicados
 preexistentes SIN deduplicar ni rellenar nada -- las filas de antes de este

@@ -1,65 +1,12 @@
-"""Ensamblaje final: `DocumentoParseado` + `ClavesPaciente` -> `RegistroAnonimizado` (tasks.md 7.2).
-
-Última parada antes de escribir a Postgres (`destinos/postgres.py`, único
-destino del pipeline). Responsabilidades de `construir_registro`:
-
-1. Reemplazar `id_paciente`/`id_alt_paciente` crudos por los ya resueltos en
-   `ClavesPaciente` (Fase 6) y adjuntar `id_episodio` (ya resuelto por
-   `pseudonimizacion/vinculacion.py`, Fase 6 -- se recibe como parámetro
-   porque `vinculacion.py` opera en batch sobre todo el lote, no documento a
-   documento, así que no puede ir dentro de `ClavesPaciente`, que sí es
-   por-documento).
-2. Pseudonimizar al médico (decisión Q3): nombre -> `id_medico`
-   (`pseudonimizacion.claves.generar_id_medico`), matrícula ->
-   `id_matricula_medico` (`generar_id_matricula_medico`) cuando el documento
-   trae firma. El nombre/matrícula crudos NUNCA llegan a `RegistroAnonimizado`
-   -- ni en `contenido` ni en `adicionales`.
-3. Tipar `contenido` según `modelos_salida.py` (uno por `TipoDocumento`).
-
-4. Redactar PII de texto libre (`ContenidoEco.secciones_texto`) -- fix
-   aditivo de PR9 que cierra un gap dejado explícitamente abierto por PR7/PR8
-   (ver `apply-progress` de esas sesiones y el docstring de
-   `pii/redaccion.py`): `pii/politica.py::clasificar` ya detecta PII en texto
-   libre desde PR4, pero nadie usaba esos hallazgos para redactar antes de
-   este ensamblaje. Ahora `construir_registro` recibe un `motor_pii`
-   opcional (mismo patrón "modo degradado" que `observabilidad/
-   bitacora_segura.py`: sin motor solo se redactan DNIs por regex; con motor
-   -- el que inyecta `pipeline/ejecutor.py`, ya cargado -- también se
-   redactan nombres/otras entidades vía NER) y aplica
-   `pii/redaccion.py::redactar_texto` sobre cada sección de texto libre
-   antes de armar `ContenidoEcoSalida.secciones_texto`.
-
-   Además (Tarea 2, red de contención por comparación exacta): antes de
-   pseudonimizar al médico, `construir_registro` junta los nombres YA
-   CONOCIDOS de este documento -- `documento.identidad.nombre` (paciente),
-   `adicionales["medico_solicitante"]` y `contenido.firma.nombre` (médico) --
-   y se los pasa a `redactar_texto` como `nombres_conocidos`. Esa capa NO
-   depende del NER: si el texto libre menciona literalmente al propio
-   paciente o al médico de ESTE documento, se redacta siempre, con o sin
-   `motor_pii` inyectado (ver `pii/redaccion.py::redactar_por_nombres_conocidos`).
-
-5. Propagar `clave_documento` (spec `escritura-idempotente`): argumento
-   obligatorio de palabra clave -- ya derivado por el llamador
-   (`pipeline/ejecutor.py::_resolver_documento`, vía
-   `pseudonimizacion.claves.generar_clave_documento`) -- que se adjunta tal
-   cual al `RegistroAnonimizado` final. Obligatorio y sin default a
-   propósito: ningún llamador nuevo puede omitirla en silencio.
-
-Tampoco decide el pivote ancho de `MedidaEco` a columnas fijas de
-`medicion_eco` -- eso es una decisión de la capa SQL, no del ensamblado de
-dominio (ver `destinos/postgres.py`).
-
-6. Propagar `campos_no_extraidos` (marca de completitud, requisito "que un
-   campo nuevo no rompa el parseo"): tupla de `id_campo` que
-   `pipeline/ejecutor.py::_resolver_documento` ya recibió como retorno de
-   `ReconciliadorDocumento.reconciliar` (ver `reconciliacion/base.py`).
-   `construir_registro` NO la calcula -- sólo la adjunta tal cual, mismo
-   patrón que `clave_documento`. `RegistroAnonimizado.completo` se deriva de
-   ella (`not campos_no_extraidos`), nunca es un segundo estado que este
-   ensamblador tenga que mantener sincronizado.
-"""
+"""Ensamblaje final: `DocumentoParseado` + `ClavesPaciente` -> `RegistroAnonimizado`, última
+parada antes de escribir a Postgres. Pseudonimiza al médico (nombre/matrícula crudos NUNCA
+llegan a `RegistroAnonimizado`); redacta PII de texto libre en tres capas (regex DNI, nombres
+YA CONOCIDOS de este documento por comparación exacta -- sin depender del NER --, y NER si se
+inyecta `motor_pii`); propaga `clave_documento`/`campos_no_extraidos` tal cual, sin recalcularlos."""
 
 from __future__ import annotations
+
+from typing import Callable
 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -94,14 +41,8 @@ def _adicionales_sin_personal(adicionales: dict) -> dict:
 
 
 def _nombres_conocidos_documento(documento: DocumentoParseado) -> tuple[str, ...]:
-    """Nombres YA CONOCIDOS de este documento: paciente + médico (Tarea 2).
-
-    Duck typing sobre `contenido.firma`, mismo patrón que
-    `pii/politica.py::_elementos_medico` -- este módulo tampoco importa
-    `anonimizacion.parseo` directamente. Se usa para redactar por
-    comparación exacta (`pii/redaccion.py::redactar_por_nombres_conocidos`),
-    no para pseudonimizar -- eso sigue pasando por `generar_id_medico`.
-    """
+    """Nombres YA CONOCIDOS de este documento (paciente + médico), por duck typing sobre
+    `contenido.firma`; se usan para redactar por comparación exacta, no para pseudonimizar."""
     nombres = [documento.identidad.nombre.get_secret_value()]
     medico_solicitante = documento.adicionales.get(_CLAVE_MEDICO_SOLICITANTE)
     if medico_solicitante:
@@ -121,13 +62,8 @@ def _parsear_float(texto: str) -> float | None:
 
 
 def _parsear_rango_referencia(texto: str | None) -> tuple[float | None, float | None]:
-    """Parsea rangos `"min-max"` (p.ej. `"12-16"`); cualquier otro formato queda `(None, None)`.
-
-    El layout de columnas real todavía no está calibrado contra el corpus
-    (ver `parseo/laboratorio_general.py`, mismo comentario) -- este parser
-    tolerante evita que un formato de rango inesperado tumbe todo el
-    registro; simplemente no completa `ref_min`/`ref_max` para esa fila.
-    """
+    """Parsea rangos `"min-max"`; cualquier otro formato queda `(None, None)` en vez de tumbar
+    el registro entero."""
     if texto is None:
         return None, None
     partes = texto.split("-")
@@ -189,10 +125,7 @@ def _contenido_eco_salida(
         FilaMedidaEco(nombre=medida.nombre, valor=medida.valor, unidad=medida.unidad)
         for medida in contenido.medidas
     )
-    # Fix aditivo PR9 (cierra gap PR7/PR8): texto libre dictado puede traer
-    # PII incidental (ver docstring del módulo y `pii/redaccion.py`). Tarea 2:
-    # además del regex de DNI y el NER, se compara contra `nombres_conocidos`
-    # (paciente/médico de ESTE documento) -- esa capa no depende del NER.
+    # Texto libre dictado puede traer PII incidental: además del regex de DNI y el NER, se compara contra nombres_conocidos de este documento.
     secciones_texto = tuple(
         FilaTextoSeccionEco(
             nombre=seccion.nombre,
@@ -212,6 +145,38 @@ def _contenido_eco_salida(
     )
 
 
+def _construir_contenido_laboratorio(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoLaboratorioSalida:
+    id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
+    return _contenido_laboratorio_salida(documento, id_medico)
+
+
+def _construir_contenido_ecg(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoEcgSalida:
+    id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
+    return _contenido_ecg_salida(documento, id_medico)
+
+
+def _construir_contenido_eco(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoEcoSalida:
+    id_medico_solicitante = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE)
+    nombres_conocidos = _nombres_conocidos_documento(documento)
+    return _contenido_eco_salida(documento, pepper, id_medico_solicitante, motor_pii, nombres_conocidos)
+
+
+# Registry por tipo, mismo idioma que parseo/registro.py; preserva ValueError si el tipo falta, no KeyError crudo.
+_CONSTRUCTORES_POR_TIPO: dict[
+    TipoDocumento, Callable[[DocumentoParseado, dict, bytes, "DetectorEntidades | None"], object]
+] = {
+    TipoDocumento.LABORATORIO: _construir_contenido_laboratorio,
+    TipoDocumento.ECG: _construir_contenido_ecg,
+    TipoDocumento.ECOCARDIOGRAMA: _construir_contenido_eco,
+}
+
+
 def construir_registro(
     documento: DocumentoParseado,
     claves: ClavesPaciente,
@@ -228,22 +193,10 @@ def construir_registro(
 
     adicionales = dict(documento.adicionales)
 
-    if documento.tipo_documento is TipoDocumento.LABORATORIO:
-        id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
-        contenido = _contenido_laboratorio_salida(documento, id_medico)
-    elif documento.tipo_documento is TipoDocumento.ECG:
-        id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
-        contenido = _contenido_ecg_salida(documento, id_medico)
-    elif documento.tipo_documento is TipoDocumento.ECOCARDIOGRAMA:
-        id_medico_solicitante = _pseudonimizar_medico_de_adicionales(
-            adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE
-        )
-        nombres_conocidos = _nombres_conocidos_documento(documento)
-        contenido = _contenido_eco_salida(
-            documento, pepper, id_medico_solicitante, motor_pii, nombres_conocidos
-        )
-    else:
+    constructor = _CONSTRUCTORES_POR_TIPO.get(documento.tipo_documento)
+    if constructor is None:
         raise ValueError(f"tipo_documento no soportado por construir_registro: {documento.tipo_documento!r}")
+    contenido = constructor(documento, adicionales, pepper, motor_pii)
 
     return RegistroAnonimizado(
         id_paciente=claves.id_paciente,
@@ -251,9 +204,7 @@ def construir_registro(
         tipo_documento=documento.tipo_documento,
         version_esquema=documento.version_esquema,
         fecha_estudio=documento.fecha_estudio,
-        # Se propagan tal cual, sin transformar (Requirement: "Hora local sin
-        # conversión de huso" / "Ausencia explícita cuando el documento no
-        # trae hora", spec `momento-del-estudio`).
+        # Hora local sin conversión de huso; ausencia explícita si el documento no trae hora.
         hora_estudio=documento.hora_estudio,
         precision_hora=documento.precision_hora,
         contenido=contenido,

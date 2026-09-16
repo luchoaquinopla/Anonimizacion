@@ -141,7 +141,7 @@ def test_un_codigo_desconocido_no_se_pierde_en_silencio() -> None:
 #
 # `cuarentena` no tiene ninguna restricción única, a diferencia de `estudio`
 # (`uq_estudio_clave_documento`). Reprocesar el mismo documento -- p.ej. un
-# reintento de Celery sobre el mismo grupo -- deja DOS filas, y este reporte,
+# reintento sobre el mismo grupo -- deja DOS filas, y este reporte,
 # que ya está entregado, las cuenta dos veces. Este test reproduce el defecto
 # tal cual está hoy, antes de tocar el esquema (Fase 3, tasks.md 3.1).
 
