@@ -43,28 +43,33 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 
 ## Fase 0 — Entrega 0: red de seguridad (PR0, no toca `src/`)
 
-- [ ] 0.1 Agregar marcador `caracterizacion` en `pyproject.toml [tool.pytest.ini_options]`.
-- [ ] 0.2 `tests/caracterizacion/conftest.py`: fixture que crea `caracterizacion_<uuid>` en
+- [x] 0.1 Agregar marcador `caracterizacion` en `pyproject.toml [tool.pytest.ini_options]`.
+- [x] 0.2 `tests/caracterizacion/conftest.py`: fixture que crea `caracterizacion_<uuid>` en
       AUTOCOMMIT contra Postgres 5433, la destruye en `finally`, `pytest.skip` sin servidor.
-- [ ] 0.3 Escribir `test_pipeline_punta_a_punta.py` (Requisito 1): corpus sintético con
+- [x] 0.3 Escribir `test_pipeline_punta_a_punta.py` (Requisito 1): corpus sintético con
       episodio completo/incompleto/ambiguo/cuarentena, fija filas y registro de salida. Verde.
-- [ ] 0.4 Romper a propósito la reconciliación (aprobar campo sin evidencia); confirmar rojo;
-      pegar evidencia en el PR; restaurar el código.
-- [ ] 0.5 Escribir `test_contrato_cli.py` (Requisito 2): banderas, defaults efectivos y
+- [x] 0.4 Romper a propósito la reconciliación (aprobar campo sin evidencia); confirmar rojo;
+      pegar evidencia en el PR; restaurar el código. Evidencia: 4 tests preexistentes de
+      `tests/reconciliacion/` en rojo (ver apply-progress); el test punta a punta de E0 queda
+      verde -- caracteriza la superficie, no la estructura interna (design.md, D1).
+- [x] 0.5 Escribir `test_contrato_cli.py` (Requisito 2): banderas, defaults efectivos y
       códigos de salida por subcomando. Verde.
-- [ ] 0.6 Romper a propósito un código de salida de un subcomando; confirmar rojo; evidencia;
-      restaurar.
-- [ ] 0.7 Escribir `test_codigos_cuarentena.py` (Requisito 3): pares entrada→(código, etapa).
+- [x] 0.6 Romper a propósito un código de salida de un subcomando; confirmar rojo; evidencia;
+      restaurar. Evidencia: `test_diagnosticar_devuelve_1_si_hay_un_hallazgo_en_falta` en rojo.
+- [x] 0.7 Escribir `test_codigos_cuarentena.py` (Requisito 3): pares entrada→(código, etapa).
       Verde.
-- [ ] 0.8 Romper a propósito la etapa de un código; confirmar rojo; evidencia; restaurar.
-- [ ] 0.9 Escribir `test_embudo.py` (Requisito 4), fixture reutilizable literal para E2. Verde.
-- [ ] 0.10 Romper a propósito una etapa del cálculo del embudo (ej. quitar `"despacho"`);
-      confirmar rojo; evidencia; restaurar.
-- [ ] 0.11 Escribir `test_reporte_corrida.py` (Requisito 5) sobre `MetricasDespacho`. Verde.
-- [ ] 0.12 Romper a propósito la lectura de `MetricasDespacho` en el reporte; confirmar rojo;
-      evidencia; restaurar.
-- [ ] 0.13 Verificación PR0: `git diff main` no toca `src/`; `uv run pytest -m caracterizacion`
-      verde; las 5 evidencias de rojo pegadas en el cuerpo del PR.
+- [x] 0.8 Romper a propósito la etapa de un código; confirmar rojo; evidencia; restaurar.
+      Evidencia: los tests de `episodio_incompleto`/`episodio_ambiguo` en rojo.
+- [x] 0.9 Escribir `test_embudo.py` (Requisito 4), fixture reutilizable literal para E2. Verde.
+- [x] 0.10 Romper a propósito una etapa del cálculo del embudo (ej. quitar `"despacho"`);
+      confirmar rojo; evidencia; restaurar. Evidencia: ambos tests de `test_embudo.py` en rojo.
+- [x] 0.11 Escribir `test_reporte_corrida.py` (Requisito 5) sobre `MetricasDespacho`. Verde.
+- [x] 0.12 Romper a propósito la lectura de `MetricasDespacho` en el reporte; confirmar rojo;
+      evidencia; restaurar. Evidencia: `test_reporte_de_recuperacion_con_resultados_mixtos`
+      en rojo.
+- [x] 0.13 Verificación PR0: `git diff feat/auditoria-y-poda --stat -- src/` vacío;
+      `uv run pytest -q -m caracterizacion` verde (16/16); las 5 evidencias de rojo
+      documentadas en apply-progress (Engram `sdd/auditoria-y-poda/apply-progress`).
 
 ## Fase 1 — Entrega 1: trampas de extensión (PR1)
 
