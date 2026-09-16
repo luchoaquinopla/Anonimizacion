@@ -23,6 +23,27 @@ MUST incluir `patient_id` en lugar de cualquier identificador directo del pacien
 - WHEN se emiten sus registros de salida
 - THEN ninguno de los dos registros contiene nombre, DNI, ni fecha de nacimiento reales
 
+### Requirement: Persistencia de campos adicionales de header
+El sistema MUST persistir los campos adicionales de header (cuasi-identificadores
+como edad, sexo, peso, talla, superficie corporal, institución u origen, ya sin PII
+de médico/técnico) en `estudio.adicionales`, para los 3 tipos de documento (ECG,
+laboratorio, ecocardiograma) — no sólo para ECG. `medicion_eco.adicionales` sigue
+siendo un campo DISTINTO (medidas del cuerpo del eco sin pivote a columna fija) y no
+reemplaza a `estudio.adicionales`.
+
+#### Scenario: Adicionales de header persistidos para los 3 tipos
+- GIVEN un registro anonimizado de laboratorio, ECG o ecocardiograma con campos
+  adicionales de header (p. ej. edad, peso, institución)
+- WHEN se escribe en PostgreSQL
+- THEN `estudio.adicionales` queda poblado con esos campos, ya sin PII de
+  médico/técnico
+
+#### Scenario: Ningún campo personal en adicionales
+- GIVEN un registro anonimizado con adicionales de header
+- WHEN se escribe en PostgreSQL
+- THEN `estudio.adicionales` nunca contiene nombre crudo de médico derivante,
+  médico solicitante ni técnico
+
 ### Requirement: Sin PII en logs ni trazas de error
 El sistema MUST NOT escribir PII cruda (nombre, DNI, fecha de nacimiento) en ningún log de
 aplicación ni en mensajes de excepción/stack trace, incluso ante errores de emisión.
@@ -36,19 +57,19 @@ aplicación ni en mensajes de excepción/stack trace, incluso ante errores de em
 ### Requirement: Formato y storage de la salida
 El sistema MUST persistir el dataset de salida en PostgreSQL relacional
 (`src/anonimizacion/salida/destinos/postgres.py`, esquema gestionado por Alembic en
-`migrations/versions/`). No MUST existir ninguna salida adicional a archivo (Parquet u
-otro formato analítico): la única salida productiva es PostgreSQL.
-
-**Resuelto 2026-09-08** (originalmente BLOQUEADO pendiente de sdd-design, pregunta abierta
-#1 de la propuesta): el equipo evaluó en paralelo una salida a Parquet/bundles de archivo
-(`EscritorParquet`, `PublicadorBundles`), pero esos módulos nunca tuvieron un llamador de
-producción y se eliminaron en `3410d6c` (`fix(salida): elimina la ruta de salida Parquet,
-sin llamador de produccion`) por ser superficie sin consumidor. La decisión de producto es
-que la salida es la base de datos, no archivos — ver también el requisito retirado en
-`openspec/changes/operacion-segura-y-escalable/specs/bundles-anonimizados/spec.md`.
+`migrations/versions/`), como única fuente de verdad. El sistema MAY generar una
+exportación derivada a archivo (Parquet + manifiesto) mediante el subcomando `exportar`,
+siempre que esa exportación se genere exclusivamente a partir de una lectura de
+PostgreSQL, no mute la base, y no se convierta en una fuente de verdad alternativa.
 
 #### Scenario: Salida verificable en PostgreSQL
 - GIVEN un episodio anonimizado y aprobado
 - WHEN se publica
 - THEN sus filas quedan en las tablas relacionales de PostgreSQL (`estudio` y su medición)
-- AND no se genera ningún archivo Parquet, manifiesto ni bundle
+
+#### Scenario: Exportación derivada sin mutar la base
+- GIVEN una base con episodios publicados
+- WHEN se ejecuta el subcomando `exportar`
+- THEN se generan archivos Parquet y un manifiesto a partir de una lectura de PostgreSQL
+- AND ninguna fila de PostgreSQL se modifica como efecto de la exportación
+- AND la exportación no contiene PII (ver `exportacion-dataset-vinculado`)
