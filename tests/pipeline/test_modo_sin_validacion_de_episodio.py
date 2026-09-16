@@ -1,25 +1,9 @@
-"""Deja por escrito que el modo por documento NO valida completitud de episodio.
-
-Esto no es una prueba de una funcionalidad: es una prueba de una LIMITACIÓN
-conocida, para que deje de ser silenciosa.
-
-`EjecutorPipeline` recibe `coordinar_episodios=None` por defecto y, en ese modo,
-`_coordinar_resueltos` devuelve una lista de fallos vacía: ningún documento se
-aparta por episodio incompleto o por asociación ambigua. `procesar_grupo`
-arma `procesar_lote([item])` -- un lote de UN documento -- así que ese es el
-modo en que corre el worker hoy.
-
-Y no puede ser de otra forma con ese diseño: un lote de un documento nunca tiene
-los tres tipos requeridos, de modo que activar el coordinador ahí mandaría el
-100 % de los documentos a cuarentena. La validación de episodio necesita la
-corrida completa, y esa coordinación al cierre todavía no existe en producción.
-
-Consecuencia que hay que tener presente al leer los ensayos de carga: el corpus
-sintético SÍ inyecta el coordinador (`tests/fixtures/corpus_piloto.py`) porque
-procesa todo el corpus como un único lote. Sus conteos de cuarentena por
-episodio incompleto describen el modo por lote, no el modo por documento del
-worker.
-"""
+"""`EjecutorPipeline` sigue con `coordinar_episodios=None` por defecto -- "un lote no es
+necesariamente un episodio" es verdad del núcleo. Un lote de un solo documento nunca
+tiene los tres tipos requeridos, así que activarlo ahí mandaría el 100% a cuarentena
+(por eso el default no cambia). En producción, `tareas.construir_fabrica_ejecutor` SÍ
+inyecta el coordinador sobre el grupo completo que le pasa `procesar_grupo` -- el
+centinela inverso de más abajo falla si esa inyección se pierde."""
 from __future__ import annotations
 
 from datetime import date, timedelta

@@ -6,19 +6,19 @@ Fix (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: extracción 
 firmas ECG reales"): lee `texto.paginas_ordenadas` (orden geométrico), no `texto.paginas`;
 cada campo se trunca en el primer separador de 2+ espacios (`_primer_segmento`).
 
-Fix #4 (recalibración lab/eco contra 3 documentos reales, misma sección de apply-progress):
+Recalibración lab/eco contra 3 documentos reales (ver `sdd/pdf-pii-anonymization/apply-progress`):
 tres variantes de etiqueta no contempladas (`F.Nacimiento :`, `Médico:`, `Hora de
 Extracción:`); `_CAMPOS_HEADER` tolera espacio opcional y palabras intermedias, backward
 compatible. Calibrado contra una sola muestra.
 
-Fix #6 (cuerpo real de resultados, misma sección): el fix #4 sólo calibró el header; el
-cuerpo seguía asumiendo el formato `|` sintético (0 filas reales). `_extraer_resultados`
-reconoce también columnas por 2+ espacios, clasificando unidad/rango por forma del token.
+Cuerpo real de resultados: el header ya calibrado no alcanzaba; el cuerpo seguía asumiendo
+el formato `|` sintético (0 filas reales). `_extraer_resultados` reconoce también columnas
+por 2+ espacios, clasificando unidad/rango por forma del token.
 
-Fix post-merge (sección "Fix: persistencia del puente id_alt_paciente en Postgres entre
-corridas"): reconstruye un nombre de prueba partido en dos líneas por un paréntesis sin
-cerrar (`_completar_nombre_partido`), heurística conservadora que sólo actúa con paréntesis
-desbalanceado. Calibrado contra una sola muestra real.
+Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: persistencia
+del puente id_alt_paciente en Postgres entre corridas"): reconstruye un nombre de prueba
+partido en dos líneas por un paréntesis sin cerrar (`_completar_nombre_partido`), heurística
+conservadora que sólo actúa con paréntesis desbalanceado. Calibrado contra una sola muestra real.
 """
 
 from __future__ import annotations
@@ -152,8 +152,8 @@ def _es_encabezado_tabla_repetido(candidata: str) -> bool:
 
 
 def _es_subencabezado_seccion(linea_limpia: str, candidata: str) -> bool:
-    """Heurística para sub-bloques (ver Fix #6 en el docstring del módulo): línea sin dígitos,
-    sin `:`, íntegramente en mayúsculas y sólo letras/espacios/puntos."""
+    """Heurística para sub-bloques (ver "cuerpo real de resultados" en el docstring del
+    módulo): línea sin dígitos, sin `:`, íntegramente en mayúsculas y sólo letras/espacios/puntos."""
     if ":" in linea_limpia or any(caracter.isdigit() for caracter in linea_limpia):
         return False
     if linea_limpia != linea_limpia.upper():

@@ -6,7 +6,7 @@ Fix (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: extracción 
 firmas ECG reales"): el header se busca sobre `texto.texto_completo_ordenado` (orden
 geométrico), no `texto.texto_completo`.
 
-Fix #4 (recalibración lab/eco contra 3 documentos reales, misma sección de apply-progress):
+Recalibración lab/eco contra 3 documentos reales (ver `sdd/pdf-pii-anonymization/apply-progress`):
 header real usa `PACIENTE:`/`Fecha Estudio:`; medidas en tabla de dos sub-columnas por 2+
 espacios; secciones anidadas en dos niveles; firma sin etiqueta "Firma:", detectada por
 heurística de última línea nombre-like antes de la línea de Matrícula. Calibrado contra una

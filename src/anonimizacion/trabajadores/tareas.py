@@ -3,7 +3,7 @@
 restricción por construcción. Delega en `EjecutorPipeline`, que ya conoce el
 aislamiento de fallo. Construir el `EjecutorPipeline` real es responsabilidad del
 arranque del worker, no de este módulo: `configurar_ejecutor` es el punto de
-inyección explícito; sin él, `procesar_documento` falla ruidoso en vez de construir
+inyección explícito; sin él, `procesar_grupo` falla ruidoso en vez de construir
 dependencias pesadas (spaCy, DB) por default."""
 
 from __future__ import annotations

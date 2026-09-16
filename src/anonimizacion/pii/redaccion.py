@@ -1,4 +1,4 @@
-"""Redacción compartida de PII en texto libre, en tres capas por certeza creciente: regex DNI,
+"""Redacción compartida de PII en texto libre, en tres capas por certeza decreciente: regex DNI,
 comparación exacta contra nombres ya conocidos (paciente/médico de ESE documento), NER."""
 
 from __future__ import annotations

@@ -192,7 +192,7 @@ class ServicioCorridasReal:
     compartido por todos los despachos, nunca se resetea (apagado es del proceso, no
     de una corrida puntual). `_lock_creacion` cierra la ventana TOCTOU entre leer
     `listar_corridas_no_terminales` y crear la corrida dentro de este proceso -- no
-    protege contra un escritor externo (`scripts/procesar_carpeta.py`), donde la
+    protege contra un escritor externo (`comandos/procesar.py`), donde la
     protección real es que el `SELECT` ve la fila en cuanto existe."""
 
     lanzador: LanzadorCorrida
@@ -243,7 +243,7 @@ class ServicioCorridasReal:
                 },
                 # daemon=True NO acota el apagado por sí solo (medido: el atexit de
                 # ProcessPoolExecutor espera al pool activo igual, ~114s colgado). El
-                # apagado real es el mecanismo de dos pasos en servir_panel.py::main:
+                # apagado real es el mecanismo de dos pasos en comandos/servir.py::servir:
                 # solicitar_apagado()+esperar_despachos_en_curso(timeout), y si eso se
                 # agota, terminar_despachos_a_la_fuerza(). daemon=True sólo cubre el
                 # caso en que el proceso entero muere antes de llegar a ese mecanismo.

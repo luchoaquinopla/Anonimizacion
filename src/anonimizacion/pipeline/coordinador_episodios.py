@@ -1,6 +1,6 @@
-"""Coordinación durable de estudios por paciente y episodio. La ventana de ±7 días vive
-únicamente en `vinculacion.py::vincular_episodios`; este módulo sólo traduce ese resultado a
-`EpisodioCoordinado` y decide si el episodio está completo."""
+"""Coordinación durable de estudios por paciente y episodio. La ventana desde el ancla y
+hasta 7 días después vive únicamente en `vinculacion.py::vincular_episodios`; este módulo
+sólo traduce ese resultado a `EpisodioCoordinado` y decide si el episodio está completo."""
 
 from __future__ import annotations
 

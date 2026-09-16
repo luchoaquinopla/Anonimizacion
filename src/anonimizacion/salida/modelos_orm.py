@@ -38,7 +38,7 @@ class VinculoPaciente(Base):
 
 
 class Episodio(Base):
-    """Un episodio clínico: `id_paciente` + ventana ±7 días con ancla en `fecha_ancla`."""
+    """Un episodio clínico: `id_paciente` + ventana desde `fecha_ancla` hasta 7 días después."""
 
     __tablename__ = "episodio"
 

@@ -1,7 +1,7 @@
-"""Vinculación de episodios: clustering por ancla fija ±7 días por `id_paciente`, no encadenado
-transitivo (un encadenado dejaría "derivar" la ventana: d1-d2 y d2-d3 a 6 días juntarían d1 y d3
-a 12 días, clínicamente inaceptable). La ancla nunca se desplaza dentro de la ventana abierta;
-`id_episodio` es determinístico y recomputable en batch."""
+"""Vinculación de episodios: clustering por ancla fija, hasta 7 días después, por
+`id_paciente`, no encadenado transitivo (un encadenado dejaría "derivar" la ventana: d1-d2
+y d2-d3 a 6 días juntarían d1 y d3 a 12 días, clínicamente inaceptable). La ancla nunca se
+desplaza dentro de la ventana abierta; `id_episodio` es determinístico y recomputable en batch."""
 
 from __future__ import annotations
 
@@ -44,7 +44,8 @@ class ResultadoVinculacion:
 
 
 def vincular_episodios(documentos: list[DocumentoParaVincular], pepper: bytes) -> ResultadoVinculacion:
-    """Asigna `id_episodio` a cada `id_documento`, clusterizando por ancla ±7 días por paciente."""
+    """Asigna `id_episodio` a cada `id_documento`, clusterizando por ancla y hasta 7 días
+    después, por paciente."""
     por_paciente: dict[str, list[DocumentoParaVincular]] = {}
     for documento in documentos:
         por_paciente.setdefault(documento.id_paciente, []).append(documento)

@@ -7,8 +7,8 @@ Recalibración contra el layout real (posicional, sin etiquetas "Campo: valor"; 
 layout real Mortara"): agrega la extracción de `fecha_nac`, necesaria para el puente
 `id_alt_paciente -> id_paciente` hacia el laboratorio.
 
-Fix de medidas (regex + cuerpo real multilínea, ver la misma sección de apply-progress,
-"#6"): `\b` agregado a los marcadores cortos que podían matchear como substring de otra
+Fix de medidas (regex + cuerpo real multilínea, ver `sdd/pdf-pii-anonymization/apply-progress`):
+`\b` agregado a los marcadores cortos que podían matchear como substring de otra
 palabra (p. ej. "PR" dentro de "APR", mes en inglés); `_extraer_medida` prueba primero el
 formato legado de una sola línea y si no encuentra valor busca en una ventana de líneas
 vecinas (`_valor_en_ventana`/`_ejes_en_ventana`), fail-safe a `None` si no hay suficientes
