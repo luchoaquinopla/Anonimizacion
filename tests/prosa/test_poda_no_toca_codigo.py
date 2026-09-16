@@ -1,21 +1,21 @@
 """Compuerta mecánica de la poda de prosa (Entrega 6, auditoria-y-poda).
 
-design.md D6: compara el AST de cada módulo de `src/anonimizacion/` antes y
-después de la poda, ignorando docstrings (los comentarios `#` ni siquiera
-llegan al AST -- el tokenizador los descarta). Si el árbol normalizado
-cambió, la compuerta falla: el diff tocó algo más que prosa.
+design.md D6: compara el AST de cada `.py` modificado bajo `src/`, `tests/`,
+`migrations/`, `scripts/` (`_CARPETAS_ALCANCE`) antes y después de la poda,
+ignorando docstrings (los comentarios `#` ni siquiera llegan al AST -- el
+tokenizador los descarta). Si el árbol normalizado cambió, la compuerta
+falla: el diff tocó algo más que prosa. Un `.py` agregado, borrado o
+renombrado en ese alcance también es una violación -- una poda no crea,
+borra ni mueve archivos (`git diff --no-renames`, ver `_estado_archivos_python`).
 
 Límite real, declarado a propósito: esto prueba que la poda NO tocó código
 ejecutable. NO prueba que no se perdió conocimiento -- eso lo garantiza la
 migración a Obsidian (Requisito 3 de la spec `prosa-de-codigo`), un paso
 humano previo, no mecánico.
 
-Referencia contra la que se compara: rama/commit `feat/auditoria-y-poda`
-(el estado previo a cualquier PR de poda), configurable con la variable de
-entorno `COMPUERTA_AST_REF` para poder ejecutar la compuerta también contra
-un commit puntual. Si la referencia no existe en este checkout (clon sin el
-fetch correspondiente), la compuerta se salta explícitamente en vez de dar
-un falso verde.
+Ciclo de vida de la referencia (`_resolver_ref`): `COMPUERTA_AST_REF`
+explícita e inexistente FALLA (se pidió a mano); sin ella, si falta la base
+por defecto (`feat/auditoria-y-poda`) se SALTEA con el motivo y cómo activarla.
 """
 
 from __future__ import annotations
