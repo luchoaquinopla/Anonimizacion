@@ -379,36 +379,18 @@ def despachar_en_paralelo(
     registro_de_pool: RegistroDePool | None = None,
 ) -> tuple[list[dict[str, object]], int, int]:
     """Despacha `grupos` a un `ProcessPoolExecutor`, con recuperación ante un hijo
-    muerto y sin materializar la partición completa en memoria.
+    muerto y sin materializar la partición completa en memoria. Ventana deslizante, no
+    `executor.map`: hasta `procesos` grupos en vuelo, `grupos` consumido de a uno
+    (nunca `list(grupos)`, sería el problema de RAM que el iterador perezoso evita).
 
-    `registro_de_pool` opcional queda apuntando siempre al pool vigente, incluso tras
-    una recreación; el llamador lo usa para `terminar_a_la_fuerza()` si el apagado
-    cooperativo (`detener`) se agota, porque `detener` sólo evita tomar trabajo nuevo,
-    nunca interrumpe un worker ya ocupado. `metricas` (`None` = instancia descartable)
-    se muta en el lugar para que el llamador la inspeccione después.
+    Cuando un hijo muere, el pool ENTERO queda inutilizable -- `BrokenProcessPool` marca
+    TODOS los futuros pendientes, no sólo el de la tarea que lo disparó. Se reprocesa en
+    AISLAMIENTO ese grupo y cualquier colateral que seguía en vuelo; reencolar es seguro
+    porque `Estudio.clave_documento` (restricción única) evita duplicar el mismo documento.
 
-    **Ventana deslizante, no `executor.map`**: hasta `procesos` grupos en vuelo a la
-    vez, `grupos` consumido de a uno (nunca `list(grupos)`) -- con el corpus real
-    (~100.000 grupos) materializarlo sería el problema de RAM que el iterador perezoso
-    existe para evitar.
-
-    **`BrokenProcessPool`**: cuando un hijo muere, el pool ENTERO queda inutilizable, no
-    sólo esa tarea -- `concurrent.futures` marca `BrokenProcessPool` en TODOS los
-    futuros pendientes. Se descarta el pool viejo y se reprocesa en AISLAMIENTO tanto
-    el grupo que disparó la excepción como cualquier colateral que seguía en vuelo.
-    Reencolar es seguro por idempotencia: los escritores ya toleran reprocesar el mismo
-    documento.
-
-    **Costo real de la recuperación, alto y antes invisible**: recrear el pool apaga
-    TODOS sus workers, no sólo el que murió, y cada afectado recarga `MotorPii`
-    completo en su propio pool de un worker -- 3 crashes sobre 48 grupos produjeron 25
-    PIDs de hijos distintos contra 4 en estado estable. `MetricasDespacho` existe para
-    que esto no quede invisible.
-
-    **Tope de reintentos**: si un grupo agota sus reintentos en aislamiento, se da por
-    perdido -- se registra en `cuarentena` (necesario para que `residuo` del embudo
-    cierre: `entraron` ya lo cuenta desde el inventario) y la corrida sigue con los
-    demás grupos, nunca propaga la excepción hacia arriba.
+    Si un grupo agota sus reintentos en aislamiento, se da por perdido y se registra en
+    `cuarentena` (necesario para que `residuo` del embudo cierre, ya que `entraron` lo
+    cuenta desde el inventario); la corrida sigue con los demás grupos.
 
     Devuelve `(resultados, total_documentos, total_grupos)`, misma forma que el bucle
     secuencial.
