@@ -255,6 +255,18 @@ def test_sin_ref_explicita_se_saltea_si_no_existe_la_de_defecto(tmp_path: Path) 
         _resolver_ref(ref_explicita=None, raiz_repo=raiz)
 
 
+def test_sin_git_en_el_path_se_saltea(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RED (corrección 4): si `git` no está en el PATH, `subprocess.run` lanza
+    `FileNotFoundError` crudo -- debe convertirse en un `pytest.skip` con motivo claro."""
+
+    def _run_falso(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("git no encontrado")
+
+    monkeypatch.setattr(subprocess, "run", _run_falso)
+    with pytest.raises(pytest.skip.Exception):
+        _ejecutar_git(["rev-parse", "HEAD"], _RAIZ_REPO)
+
+
 def test_normalizar_ignora_docstrings_pero_no_codigo() -> None:
     """Control unitario de la propia compuerta, sin depender de git ni de una referencia."""
     solo_docstring_distinto = (
