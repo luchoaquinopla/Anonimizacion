@@ -3,14 +3,20 @@
 Fija, para un conjunto conocido de entradas inválidas, el par
 `(CodigoErrorDocumento, etapa)` que hoy produce cada una -- sin afirmar nada
 sobre qué clase lo lanzó (`design.md`, tabla "caracterizar la superficie").
-Reusa `scripts/procesar_carpeta.py::ejecutar()` con SQLite en memoria (mismo
-patrón que `tests/scripts/test_procesar_carpeta.py`): no necesita Postgres
+Reusa `anonimizacion.comandos.procesar::ejecutar()` con SQLite en memoria
+(mismo patrón que `tests/comandos/test_procesar.py`): no necesita Postgres
 real, a diferencia de `test_pipeline_punta_a_punta.py`.
+
+Corrección mecánica (auditoria-y-poda, E4): `ejecutar()` vivía en
+`scripts/procesar_carpeta.py`, cargado por ruta porque `scripts/` no era un
+paquete instalado; E4 lo movió a `anonimizacion.comandos.procesar` (paquete
+real). Este archivo no afirma nada sobre CÓMO se carga el módulo -- sólo lo
+usa como fixture para llegar a `ejecutar()` -- así que sólo cambia el
+`import`, ninguna aserción de las de abajo.
 """
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from types import ModuleType
 
@@ -25,15 +31,13 @@ from ..fixtures.v1 import documentos
 
 pytestmark = pytest.mark.caracterizacion
 
-_RUTA_SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "procesar_carpeta.py"
 PEPPER = b"pepper-caracterizacion-cuarentena-nunca-real"
 
 
 def _cargar_script() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("_procesar_carpeta_cuarentena", _RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
+    """Import normal -- ver nota de corrección mecánica arriba."""
+    from anonimizacion.comandos import procesar as modulo
+
     return modulo
 
 

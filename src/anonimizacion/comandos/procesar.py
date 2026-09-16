@@ -1,14 +1,8 @@
-"""Script de prueba manual: procesa una carpeta de PDFs con el pipeline real.
+"""Composición del subcomando `anonimizacion procesar` (`cli.py` es quien
+resuelve banderas/config y llama a `ejecutar()` con argumentos con nombre --
+ver design.md D3, `punto-entrada-instalable`).
 
-Uso:
-    export ANONIMIZACION_PEPPER="pepper-de-prueba-cambiar-en-produccion"
-    python scripts/procesar_carpeta.py --entrada ./mis_pdfs
-
-Requiere Postgres corriendo (ver docker-compose.yml, puerto 5433 por
-defecto) y la variable ANONIMIZACION_PEPPER seteada (ver
-`pseudonimizacion/almacen_pepper.py`).
-
-Simplificaciones deliberadas de este script (no del pipeline en si):
+Simplificaciones deliberadas de este módulo (no del pipeline en si):
 - Crea el esquema con `Base.metadata.create_all` en vez de correr las
   migraciones de Alembic -- valido para probar rapido, no para produccion
   (ahi corresponde `alembic upgrade head`, ver migrations/).
@@ -58,7 +52,6 @@ patron que `web/servicio_corridas.py::_despachar_y_cerrar`).
 
 from __future__ import annotations
 
-import argparse
 import itertools
 import sys
 from collections import Counter
@@ -67,41 +60,17 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
+from anonimizacion.configuracion import _DB_URL_DEFAULT
 from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError, LanzadorCorrida
 from anonimizacion.ingesta.repositorio_corridas import RepositorioCorridas
 from anonimizacion.pii.motor import MotorPii
-from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesPostgres
 from anonimizacion.salida.cuarentena import EscritorCuarentena
-from anonimizacion.salida.destinos.postgres import EscritorPostgres, construir_engine_postgres
+from anonimizacion.salida.destinos.postgres import EscritorPostgres
 from anonimizacion.salida.modelos_orm import Base
 from anonimizacion.trabajadores import despacho_paralelo, tareas
 
-_DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
-
-
-def _tipo_procesos(valor: str) -> int:
-    """`type=` de argparse para `--procesos`: valida contra el tope duro acá
-    (no en `ejecutar()`) para que un valor inválido falle con un mensaje de
-    `argparse` claro antes de tocar Postgres/spaCy, no a mitad de una corrida."""
-    return despacho_paralelo.validar_grado_concurrencia(int(valor))
-
-
-def _parsear_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--entrada", required=True, type=Path, help="carpeta con los PDFs a procesar")
-    parser.add_argument("--db-url", default=_DB_URL_DEFAULT, help=f"URL de Postgres (default: {_DB_URL_DEFAULT})")
-    parser.add_argument(
-        "--procesos",
-        type=_tipo_procesos,
-        default=despacho_paralelo.grado_de_concurrencia_por_defecto(),
-        help=(
-            "grado de concurrencia (ProcessPoolExecutor); default conservador segun "
-            "nucleos logicos y memoria medida (ver anonimizacion.trabajadores."
-            "despacho_paralelo.grado_de_concurrencia_por_defecto), tope duro 2x nucleos"
-        ),
-    )
-    return parser.parse_args()
+__all__ = ["ejecutar", "_DB_URL_DEFAULT"]
 
 
 def _configurar_ejecutor_secuencial(
@@ -288,8 +257,8 @@ def ejecutar(
 ) -> int:
     """Lanza una corrida sobre `entrada` y procesa su inventario de punta a punta.
 
-    Separado de `main()` para poder ejercitarlo con un motor/engine inyectados
-    en tests (`tests/scripts/test_procesar_carpeta.py`) sin tocar argparse,
+    Separado de la composición de `cli.py` para poder ejercitarlo con un motor/engine inyectados
+    en tests (`tests/comandos/test_procesar.py`) sin tocar argparse,
     variables de entorno, ni Postgres real. `tope_bytes=None` es "usar el
     default de producción" -- mismo convenio que `LanzadorCorrida`/`FuenteLocal`.
 
@@ -427,44 +396,6 @@ def ejecutar(
     return 0
 
 
-def main() -> int:
-    args = _parsear_args()
-
-    print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
-    pepper = obtener_pepper()
-
-    # `motor` solo se carga en el padre para el camino SECUENCIAL
-    # (`procesos<=1`): con `procesos>1` cada hijo del `ProcessPoolExecutor`
-    # arma su PROPIO `MotorPii()` (`despacho_paralelo.inicializar_trabajador`)
-    # -- cargarlo también acá sería una copia de más (~875 MB medidos, ver
-    # docstring de `despacho_paralelo.grado_de_concurrencia_por_defecto`) que
-    # el padre nunca usaría para procesar nada.
-    motor: MotorPii | None = None
-    if args.procesos <= 1:
-        print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
-        motor = MotorPii()
-    else:
-        print(
-            f"Motor de PII: se carga en cada uno de los {args.procesos} procesos hijos, no en este proceso.",
-            file=sys.stderr,
-        )
-
-    print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
-    # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
-    # arma el pool con `pool_pre_ping`/`pool_recycle` contra RDS -- ver el
-    # docstring de esa función para el porqué un `sa.create_engine(url)` pelado
-    # manda documentos válidos a cuarentena por una conexión muerta del pool.
-    engine = construir_engine_postgres(args.db_url)
-
-    return ejecutar(
-        entrada=args.entrada,
-        engine=engine,
-        motor=motor,
-        pepper=pepper,
-        procesos=args.procesos,
-        db_url=args.db_url,
-    )
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+# La composición completa (pepper, decisión de cargar `MotorPii`, engine vía
+# `construir_engine_postgres`) vive ahora en `cli.py::_comando_procesar` --
+# antes vivía en un `main()` propio de este módulo, con su propio `argparse`.

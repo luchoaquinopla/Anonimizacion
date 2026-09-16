@@ -42,13 +42,10 @@ VAR_ENV_RUTA_CONFIG = "ANONIMIZACION_CONFIG"
 
 RUTA_CONFIG_DEFAULT = Path("anonimizacion.toml")
 
-# Mismo default que `scripts/procesar_carpeta.py::_DB_URL_DEFAULT` y
-# `scripts/servir_panel.py::_DB_URL_DEFAULT` -- HOY son literales idénticos
-# en los tres lugares porque nadie los desincronizó todavía, no porque estén
-# atados entre sí. Este módulo es la única fuente de verdad NUEVA: los
-# scripts siguen con la suya propia porque también se pueden invocar solos
-# (ver docstring de `anonimizacion.cli`), pero `anonimizacion diagnosticar`/
-# `procesar`/`servir` -- el camino real -- siempre resuelven desde acá.
+# Única fuente de este valor (auditoria-y-poda, E4): antes estaba
+# triplicado, un literal idéntico en este módulo y en cada uno de los dos
+# scripts sueltos. `comandos/procesar.py` y `comandos/servir.py` lo importan
+# de acá -- ver spec `punto-entrada-instalable`, Requisito 3.
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 _PUERTO_DEFAULT = 8000
 

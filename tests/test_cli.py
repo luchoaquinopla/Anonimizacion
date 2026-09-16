@@ -1,17 +1,17 @@
 """Tests de `anonimizacion.cli` -- punto de entrada único instalable
 (`[project.scripts] anonimizacion`, `arranque-para-el-instituto`).
 
-Reemplaza los dos scripts sueltos (`scripts/procesar_carpeta.py`,
-`scripts/servir_panel.py`) por subcomandos de UN solo comando instalado.
-Este es el camino REAL, no sólo objeto de tests: `pyproject.toml` registra
+Reemplaza los dos scripts sueltos que existían antes de `auditoria-y-poda`
+E4 (`scripts/procesar_carpeta.py`, `scripts/servir_panel.py`) por
+subcomandos de UN solo comando instalado. Este es el camino REAL, no sólo
+objeto de tests: `pyproject.toml` registra
 `anonimizacion = "anonimizacion.cli:main"` -- ver `test_pyproject_registra_el_punto_de_entrada_unico`.
 
-Los scripts viejos siguen existiendo sin tocarlos (hay un PR abierto,
-#40, que también los toca -- ver el docstring de `anonimizacion.cli`):
-este módulo los invoca por ruta, exactamente como ya hacían
-`tests/scripts/test_procesar_carpeta.py`/`test_servir_panel.py`, y traduce
-la configuración resuelta a los mismos argumentos de línea de comandos que
-esos scripts ya entienden.
+Desde E4, `cli.py` ya no carga nada por ruta ni re-parsea `sys.argv`: llama
+`anonimizacion.comandos.procesar.ejecutar(...)`/
+`anonimizacion.comandos.servir.servir(...)` con argumentos con nombre. Los
+tests de este módulo mockean esas funciones de comando (no un cargador) --
+ver `cli.comandos_procesar`/`cli.comandos_servir`.
 """
 
 from __future__ import annotations
@@ -31,9 +31,10 @@ from anonimizacion.diagnostico import Hallazgo
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import CorridaOrm, Estudio
+from anonimizacion.trabajadores.despacho_paralelo import tope_duro_concurrencia
 from anonimizacion.web.secreto_panel import obtener_secreto_panel
 
-from .scripts.test_procesar_carpeta import _CONNECT_REAL, _grupo_completo
+from .comandos.test_procesar import _CONNECT_REAL, _grupo_completo
 
 _URL_POSTGRES_ADMIN = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 _NOMBRE_BASE_SCRATCH_CLI = "cli_scratch_test"
@@ -117,89 +118,69 @@ def test_diagnosticar_con_configuracion_invalida_da_mensaje_claro_sin_traceback(
     assert "Traceback" not in salida
 
 
-def test_procesar_no_delega_al_script_si_el_diagnostico_falla(
+def _permitir_composicion_de_procesar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Composición real de `_comando_procesar` antes de llegar a `ejecutar()`
+    -- pepper/motor/engine -- mockeada para que los tests de este archivo no
+    toquen spaCy/Postgres reales."""
+    monkeypatch.setattr(cli, "obtener_pepper", lambda: b"pepper-test-cli-nunca-real")
+    monkeypatch.setattr(cli, "MotorPii", lambda: object())
+    monkeypatch.setattr(cli, "construir_engine_postgres", lambda url: sa.create_engine("sqlite:///:memory:"))
+
+
+def test_procesar_no_delega_al_comando_si_el_diagnostico_falla(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _con_error("Carpeta a procesar: no existe."))
     llamado = []
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: llamado.append(nombre) or None)
+    monkeypatch.setattr(cli.comandos_procesar, "ejecutar", lambda **kwargs: llamado.append(kwargs) or 0)
 
     codigo = cli.main(["procesar", "--entrada", str(tmp_path)])
 
     assert codigo == 1
-    assert llamado == [], "no debe invocar el script real si el diagnóstico encontró un problema"
+    assert llamado == [], "no debe invocar ejecutar() si el diagnóstico encontró un problema"
 
 
-def test_procesar_arma_el_argv_correcto_y_delega_al_script_real(
+def test_procesar_resuelve_los_argumentos_correctos_y_delega_a_ejecutar(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _todo_ok())
+    _permitir_composicion_de_procesar(monkeypatch)
 
-    argv_capturado: list[str] = []
-
-    class _ScriptFalso:
-        @staticmethod
-        def main():
-            import sys
-
-            argv_capturado.extend(sys.argv)
-            return 0
-
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ScriptFalso())
+    capturado: dict[str, object] = {}
+    monkeypatch.setattr(cli.comandos_procesar, "ejecutar", lambda **kwargs: capturado.update(kwargs) or 0)
 
     entrada = tmp_path / "pdfs"
     entrada.mkdir()
     codigo = cli.main(["procesar", "--entrada", str(entrada), "--db-url", "postgresql+psycopg://x/y", "--procesos", "2"])
 
     assert codigo == 0
-    assert "--entrada" in argv_capturado
-    assert str(entrada) in argv_capturado
-    assert "--db-url" in argv_capturado
-    assert "postgresql+psycopg://x/y" in argv_capturado
-    assert "--procesos" in argv_capturado
-    assert "2" in argv_capturado
+    assert capturado["entrada"] == entrada
+    assert capturado["db_url"] == "postgresql+psycopg://x/y"
+    assert capturado["procesos"] == 2
 
 
 def test_servir_agrega_escuchar_red_solo_si_se_pide(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _todo_ok())
 
-    argv_capturado: list[str] = []
-
-    class _ScriptFalso:
-        @staticmethod
-        def main():
-            import sys
-
-            argv_capturado.extend(sys.argv)
-            return 0
-
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ScriptFalso())
+    capturado: dict[str, object] = {}
+    monkeypatch.setattr(cli.comandos_servir, "servir", lambda **kwargs: capturado.update(kwargs) or 0)
 
     codigo = cli.main(["servir"])
 
     assert codigo == 0
-    assert "--escuchar-red" not in argv_capturado
+    assert capturado["escuchar_red"] is False
 
 
 def test_servir_con_bandera_agrega_escuchar_red(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _todo_ok())
 
-    argv_capturado: list[str] = []
-
-    class _ScriptFalso:
-        @staticmethod
-        def main():
-            import sys
-
-            argv_capturado.extend(sys.argv)
-            return 0
-
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ScriptFalso())
+    capturado: dict[str, object] = {}
+    monkeypatch.setattr(cli.comandos_servir, "servir", lambda **kwargs: capturado.update(kwargs) or 0)
 
     codigo = cli.main(["servir", "--escuchar-red"])
 
     assert codigo == 0
-    assert "--escuchar-red" in argv_capturado
+    assert capturado["escuchar_red"] is True
 
 
 def test_servir_pide_el_secreto_del_panel_cuando_se_pide_escuchar_red(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,6 +202,57 @@ def test_servir_pide_el_secreto_del_panel_cuando_se_pide_escuchar_red(monkeypatc
     assert llamado_con["requiere_red"] is True
 
 
+def test_procesos_rechaza_valores_por_encima_del_tope_duro_en_procesar_y_servir() -> None:
+    """Movido desde `tests/comandos/test_servir.py` (E4, design.md D3):
+    `--procesos` se valida UNA sola vez, en el `argparse` de `cli.py` --
+    antes estaba duplicado en cada script suelto."""
+    tope = tope_duro_concurrencia()
+    parser = cli._construir_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["procesar", "--entrada", "carpeta", "--procesos", str(tope + 1)])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["servir", "--procesos", str(tope + 1)])
+
+
+def test_servir_escuchar_red_es_false_por_defecto() -> None:
+    """Movido desde `tests/comandos/test_servir.py` (E4): el default vive
+    ahora en el `argparse` de `cli.py`."""
+    parser = cli._construir_parser()
+
+    args = parser.parse_args(["servir"])
+
+    assert args.escuchar_red is False
+
+
+def test_procesar_usa_construir_engine_postgres_no_create_engine_pelado(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Movido desde `tests/comandos/test_procesar.py` (E4): la composición
+    del `Engine` -- `construir_engine_postgres`, no `sa.create_engine`
+    pelado -- vive ahora en `cli.py::_comando_procesar`, no en `ejecutar()`
+    (que ya recibe el `Engine` inyectado)."""
+    monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _todo_ok())
+    monkeypatch.setattr(cli, "obtener_pepper", lambda: b"pepper-wiring-pool-nunca-real")
+    monkeypatch.setattr(cli, "MotorPii", lambda: object())
+    monkeypatch.setattr(cli.comandos_procesar, "ejecutar", lambda **kwargs: 0)
+
+    llamadas: list[str] = []
+
+    def _engine_espia(url: str) -> sa.Engine:
+        llamadas.append(url)
+        return sa.create_engine("sqlite:///:memory:")
+
+    monkeypatch.setattr(cli, "construir_engine_postgres", _engine_espia)
+
+    codigo = cli.main(["procesar", "--entrada", str(tmp_path)])
+
+    assert codigo == 0
+    from anonimizacion.configuracion import ConfiguracionOperador
+
+    assert llamadas == [ConfiguracionOperador().db_url]
+
+
 def test_procesar_usa_los_valores_del_archivo_de_configuracion_si_no_hay_bandera(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -232,25 +264,17 @@ def test_procesar_usa_los_valores_del_archivo_de_configuracion_si_no_hay_bandera
         encoding="utf-8",
     )
     monkeypatch.setattr(cli, "diagnosticar", lambda *a, **k: _todo_ok())
+    _permitir_composicion_de_procesar(monkeypatch)
 
-    argv_capturado: list[str] = []
-
-    class _ScriptFalso:
-        @staticmethod
-        def main():
-            import sys
-
-            argv_capturado.extend(sys.argv)
-            return 0
-
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ScriptFalso())
+    capturado: dict[str, object] = {}
+    monkeypatch.setattr(cli.comandos_procesar, "ejecutar", lambda **kwargs: capturado.update(kwargs) or 0)
 
     codigo = cli.main(["procesar", "--config", str(config_toml)])
 
     assert codigo == 0
-    assert str(entrada) in argv_capturado
-    assert "postgresql+psycopg://config/db" in argv_capturado
-    assert "5" in argv_capturado
+    assert capturado["entrada"] == entrada
+    assert capturado["db_url"] == "postgresql+psycopg://config/db"
+    assert capturado["procesos"] == 5
 
 
 # --- revisión adversarial, MAYOR 5: el camino de mayor riesgo no tenía test
