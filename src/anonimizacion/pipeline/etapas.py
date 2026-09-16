@@ -21,9 +21,20 @@ from enum import Enum
 
 
 class Etapa(str, Enum):
-    """Las 7 etapas del pipeline (design.md: ingesta -> ... -> emitir)."""
+    """Vocabulario unificado de etapas (10 miembros, spec `vocabulario-etapas-pipeline`).
+
+    Unión de los nombres antes dispersos en `EtapaDocumento` (`dominio/errores.py`)
+    y en esta misma clase. `dominio/errores.py::EtapaDocumento` NO cambia de
+    forma ni de firma (`ErrorDocumento.etapa` sigue aceptando `str |
+    EtapaDocumento`) -- este enum es la fuente de verdad de los NOMBRES, no un
+    reemplazo del tipo.
+    """
 
     INGESTA = "ingesta"
+    # Capa de gestión de procesos (`trabajadores/despacho_paralelo.py`): un
+    # documento ya inventariado cuyo proceso hijo murió antes de EXTRACCION.
+    # Ver `dominio/errores.py::EtapaDocumento.DESPACHO`, mismo significado.
+    DESPACHO = "despacho"
     EXTRACCION = "extraccion"
     DETECCION = "deteccion"
     PARSEO = "parseo"
