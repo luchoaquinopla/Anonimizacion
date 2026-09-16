@@ -1,12 +1,5 @@
-"""Persistencia de `ErrorDocumento` en cuarentena (tasks.md 7.5, spec `batch-processing`).
-
-`ErrorDocumento` (`dominio/errores.py`) SOLO tiene `id_documento`, `etapa`,
-`codigo` -- por diseño, nunca un mensaje crudo ni contenido del documento
-(ver el docstring de ese módulo, y design.md "Sin PII en cola, logs ni
-DLQ"). `EscritorCuarentena` es una capa de persistencia deliberadamente
-angosta: no acepta nada más que un `ErrorDocumento`, así que no hay forma de
-que se filtre PII por este camino aunque quien lo llame lo intente.
-"""
+"""Persistencia de `ErrorDocumento` en cuarentena. `EscritorCuarentena` es deliberadamente
+angosto (sólo acepta `ErrorDocumento`, nunca mensaje crudo ni contenido): no hay forma de que se filtre PII por este camino."""
 
 from __future__ import annotations
 
@@ -25,52 +18,18 @@ class EscritorCuarentena:
         self._engine = engine
 
     def registrar(self, error: ErrorDocumento) -> None:
-        """Inserta el apartado; reprocesar la misma corrida no duplica.
-
-        Defecto ya mergeado que este método corrige: `cuarentena` no tenía
-        ninguna restricción única (a diferencia de `estudio`, que sí tiene
-        `uq_estudio_clave_documento`), así que reprocesar el mismo grupo
-        duplicaba la fila y el reporte la contaba dos veces
-        (ver `tests/web/test_reporte_cuarentena.py`, el test que reproduce el
-        defecto contra el código sin guarda).
-
-        La guarda es de DOS capas, calcada de
-        `salida/destinos/postgres.py::escribir_registro`, y las dos hacen
-        falta: el `SELECT` evita el trabajo en el caso normal, y la
-        restricción única `(corrida_id, id_documento)` es la autoridad final
-        ante la carrera que ese `SELECT` no cierra -- dos trabajadores pueden
-        consultar antes de que ninguno haya commiteado. La consulta y la
-        inserción van en la MISMA transacción a propósito: `sesion.scalar`
-        abre una transacción implícita, así que separarlas en un
-        `sesion.begin()` posterior explota con
-        `InvalidRequestError: A transaction is already begun`.
-
-        `_a_fallo` envuelve esta llamada en `except Exception: pass`
-        (pipeline/ejecutor.py). Si la duplicación se manifestara como
-        excepción propagada, sería indistinguible de una caída real de
-        infraestructura -- el caso que alimenta la columna "sin desenlace"
-        del embudo. Por eso el `IntegrityError` se resuelve ACÁ, no se deja
-        subir.
-
-        Un `ErrorDocumento` sin `corrida_id` (`None`) conserva el
-        comportamiento anterior e inserta siempre: `NULL` no colisiona con
-        `NULL` en la restricción única, así que sin corrida no hay garantía
-        de idempotencia (design.md, Decisión 4) -- mismo precedente que
-        `clave_documento` en `estudio`.
-        """
+        """Inserta el apartado; reprocesar la misma corrida no duplica (guarda de dos capas:
+        SELECT + restricción única `(corrida_id, id_documento)`, misma transacción).
+        Sin `corrida_id`, inserta siempre -- sin garantía de idempotencia."""
         with Session(self._engine) as sesion:
             try:
-                # Consulta e insercion en LA MISMA transaccion: separarlas
-                # ampliaria la ventana de la carrera sin ganar nada.
+                # Consulta e inserción en la misma transacción: separarlas ampliaría la carrera sin ganar nada.
                 with sesion.begin():
                     if self._ya_registrado(sesion, error):
                         return
                     self._insertar(error, sesion)
             except IntegrityError:
-                # Carrera: otro trabajador registro el mismo (corrida_id,
-                # id_documento) entre nuestra consulta y nuestra insercion.
-                # La restriccion unica es la autoridad final; el apartado ya
-                # esta escrito y no hay nada que hacer.
+                # Carrera resuelta por la restricción única: el apartado ya está escrito.
                 pass
 
     @staticmethod
