@@ -161,21 +161,35 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 
 ## Fase 2 — Entrega 2: vocabulario único de etapas (PR2)
 
-- [ ] 2.1 RED — `tests/pipeline/test_vocabulario_de_etapas.py`: recorrer `src/` con `ast`,
-      afirmar todo `_ETAPA` ∈ enum unificado y `EtapaDocumento ⊆ Etapa`; falla hoy (falta
-      `DESPACHO` en `Etapa`, falta `COORDINACION` en `EtapaDocumento`).
-- [ ] 2.2 GREEN — ampliar `pipeline/etapas.py::Etapa` a 10 miembros (+ `DESPACHO`); NO tocar
-      `dominio/errores.py::EtapaDocumento` (firma y `str | EtapaDocumento` intactos).
-- [ ] 2.3 RED — `tests/web/test_embudo_orden.py`: afirma la tupla `ETAPAS_EMBUDO` literal
-      (reusa fixture del 0.9); falla mientras sea lista de strings independiente.
-- [ ] 2.4 GREEN — `web/embudo_corrida.py`: `ORDEN_EMBUDO` explícito (orden verbatim de D4) y
-      `ETAPAS_EMBUDO = tuple(e.value for e in ORDEN_EMBUDO)`.
-- [ ] 2.5 RED — test de cobertura del desglose: todo miembro de `EtapaDocumento` ∈
-      `ORDEN_EMBUDO` o en lista de exclusión explícita con motivo; falla si falta alguno.
-- [ ] 2.6 GREEN — declarar la lista de exclusión (`DETECCION`, `DETECCION_PII`) con comentario
-      de motivo en `web/embudo_corrida.py`.
-- [ ] 2.7 Verificación PR2: el test 0.9/0.10 de E0 sigue pasando **sin modificarse** (E2 lo
-      aprueba, no lo rompe); `ruff` limpio; suite `-m "not postgres"` verde.
+- [x] 2.1 RED — `tests/pipeline/test_vocabulario_de_etapas.py`: recorre `src/` con `ast`,
+      afirma todo `_ETAPA` ∈ enum unificado y `EtapaDocumento ⊆ Etapa`. RED confirmado en
+      commit `9a349ea` contra `pipeline/etapas.py` sin modificar:
+      `AssertionError: assert {'despacho', ...} <= {'coordinacio...'}` (falta `DESPACHO` en
+      `Etapa`). El test de `_ETAPA` sin correspondencia pasó desde el día 0 porque
+      `"extraccion"`/`"parseo"` ya eran miembros de `Etapa` -- el RED real es el de subconjunto.
+- [x] 2.2 GREEN — commit `25740d1`: `pipeline/etapas.py::Etapa` ampliado a 10 miembros
+      (+ `DESPACHO`); `dominio/errores.py::EtapaDocumento` **no se toca** (confirmado:
+      `git diff feat/auditoria-y-poda -- src/anonimizacion/dominio/errores.py` vacío).
+- [x] 2.3 RED — `tests/web/test_embudo_orden.py`: afirma `ORDEN_EMBUDO`/`ETAPAS_EMBUDO`. RED
+      confirmado en commit `049ad58` contra `web/embudo_corrida.py` sin modificar: `ImportError:
+      cannot import name 'ORDEN_EMBUDO'` (seguía siendo lista de strings independiente).
+- [x] 2.4 GREEN — commit `099be04`: `ORDEN_EMBUDO: tuple[Etapa, ...]` explícito (orden verbatim
+      de D4) y `ETAPAS_EMBUDO = tuple(e.value for e in ORDEN_EMBUDO)`. Corrección propia
+      (commit `dc89d32`): la lista de exclusión de 2.6 se había agregado por adelantado junto
+      con este GREEN; se retiró para respetar el ciclo RED/GREEN separado de 2.5/2.6.
+- [x] 2.5 RED — `tests/web/test_embudo_cobertura_desglose.py`: todo miembro de `EtapaDocumento`
+      ∈ `ORDEN_EMBUDO` o en `ETAPAS_EXCLUIDAS_DEL_EMBUDO` con motivo. RED confirmado en commit
+      `1048e38` contra `web/embudo_corrida.py` sin modificar: `ImportError: cannot import name
+      'ETAPAS_EXCLUIDAS_DEL_EMBUDO'`.
+- [x] 2.6 GREEN — commit `f989277`: `ETAPAS_EXCLUIDAS_DEL_EMBUDO = (Etapa.DETECCION,
+      Etapa.DETECCION_PII)` con comentario de motivo en `web/embudo_corrida.py`.
+- [x] 2.7 Verificación PR2: `tests/caracterizacion/test_embudo.py` (0.9/0.10 de E0) sigue
+      pasando **sin modificarse** -- `git diff feat/auditoria-y-poda --stat --
+      tests/caracterizacion/` vacío, `-m caracterizacion` → 17 passed. `ruff check .` → All
+      checks passed. `uv run pytest -q -m "not postgres"` → 1032 passed, 1 skipped (symlink
+      Windows, preexistente), 1 failed (`test_despachar_en_paralelo_..._distintos`, confirmado
+      EL MISMO fallo preexistente sensible a la carga de E0/E1, no uno nuevo). `-m postgres` →
+      28 passed (sin cambios respecto a E1).
 
 ## Fase 3 — Entrega 3: poder de detección en tests (PR3, split a/b si >400)
 
