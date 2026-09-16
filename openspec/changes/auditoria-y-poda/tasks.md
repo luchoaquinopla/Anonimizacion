@@ -544,10 +544,17 @@ arquitectura, formato del vault existente):
       (`extraccion/senal_ecg.py`, `deteccion/firmas/ecg_mortara.py`, `parseo/ecg_mortara.py`,
       `parseo/eco_doppler.py`, `parseo/laboratorio_general.py`). Commit `58c5b95` en
       `pr6b/poda-de-prosa`.
-- [ ] 6.13 PR6c — grupo 3 (`reconciliacion/`, `pii/`, `pseudonimizacion/`): recortar; insertar
-      puntero del invariante 8 en `dni_ar.py:43`; compuerta AST verde.
-- [ ] 6.14 PR6d — grupo 4 (`salida/`, `pipeline/`): recortar; insertar puntero del invariante 6
-      en `postgres.py:87-135`; compuerta AST verde.
+- [x] 6.13 PR6c — grupo 3 (`reconciliacion/`, `pii/`, `pseudonimizacion/`): recortado; insertado
+      puntero del invariante 8 («Piso de dígitos del DNI») en `pii/reconocedores/dni_ar.py`
+      (constante `_DNI_MINIMO`); punteros a `sdd/pdf-pii-anonymization/apply-progress`
+      preservados en `resolutor_claves.py` y `vinculacion.py`; compuerta AST verde. Prosa:
+      797 → 175 líneas (14 archivos). Commit `702c72a` en `pr6b/poda-de-prosa`.
+- [x] 6.14 PR6d — grupo 4 (`salida/`, `pipeline/`): recortado; insertado puntero del invariante 6
+      («Conexión a la base, verificación y tope de espera») en `salida/destinos/postgres.py`
+      (corregido el sentido: ~366 ms es el costo normal de red por documento sin `pool_pre_ping`,
+      la verificación AGREGA ~124 ms, no lo contrario); puntero a
+      `sdd/pdf-pii-anonymization/apply-progress` preservado en `pipeline/ejecutor.py`; compuerta
+      AST verde. Prosa: 992 → 210 líneas (11 archivos). Commit `f27cac4` en `pr6b/poda-de-prosa`.
 - [ ] 6.15 PR6e — grupo 5 (`web/`, `cli.py`, `docs/pipeline.md`): recortar; corregir
       `cli.py:20-34` (quitar cita a PR #40 abierto) y `docs/pipeline.md:194` (referenciar
       `extraccion/texto_pymupdf.py`); insertar punteros de invariantes 4 y 5; compuerta AST
