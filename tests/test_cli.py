@@ -22,16 +22,46 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.orm import Session
 
 from anonimizacion import cli
 from anonimizacion.diagnostico import Hallazgo
 from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
-from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Estudio
+from anonimizacion.salida.modelos_orm import CorridaOrm, Estudio
 from anonimizacion.web.secreto_panel import obtener_secreto_panel
 
-from .scripts.test_procesar_carpeta import _CONNECT_REAL, _URL_POSTGRES_REAL, _grupo_completo
+from .scripts.test_procesar_carpeta import _CONNECT_REAL, _grupo_completo
+
+_URL_POSTGRES_ADMIN = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+_NOMBRE_BASE_SCRATCH_CLI = "cli_scratch_test"
+_RAIZ_REPO = Path(__file__).resolve().parent.parent
+
+
+def _config_alembic(url: str) -> Config:
+    cfg = Config()
+    cfg.set_main_option("script_location", str(_RAIZ_REPO / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    return cfg
+
+
+def _terminar_conexiones_y_dropear(conexion: sa.Connection, nombre_base: str) -> None:
+    """`DROP DATABASE` falla con `ObjectInUse` si queda alguna sesión abierta.
+    Los procesos hijos de `--procesos 2` (`ProcessPoolExecutor`) abren su
+    propio pool de conexiones contra la base efímera; el final de esos
+    procesos no siempre cierra el socket antes de que este fixture intente
+    borrar la base, así que se terminan explícitamente las conexiones
+    restantes de esa base antes del `DROP`."""
+    conexion.execute(
+        sa.text(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname = :nombre_base AND pid <> pg_backend_pid()"
+        ),
+        {"nombre_base": nombre_base},
+    )
+    conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {nombre_base}"))
 
 
 @pytest.fixture(autouse=True)
@@ -228,24 +258,46 @@ def test_procesar_usa_los_valores_del_archivo_de_configuracion_si_no_hay_bandera
 
 @pytest.fixture()
 def _postgres_real_para_cli(monkeypatch: pytest.MonkeyPatch):
-    """Mismo patrón que `tests/scripts/test_procesar_carpeta.py::_engine_postgres_real_para_script`
-    -- Postgres real de `docker-compose.yml`, o `skip` si no responde."""
-    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
-    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
-    try:
-        with sonda.connect():
-            pass
-    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
-        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
-        return
-    finally:
-        sonda.dispose()
+    """Base Postgres real, EFÍMERA y propia de este test -- NO la base
+    compartida `anonimizacion` de puerto 5433. Migrada con `alembic upgrade
+    head` PROGRAMÁTICO, mismo patrón que
+    `tests/salida/test_migraciones.py::_url_postgres_scratch`.
 
-    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
+    Antes este fixture hacía `Base.metadata.drop_all`/`create_all` sobre la
+    base COMPARTIDA sin tocar `alembic_version`: `cli.main` -> `diagnosticar()`
+    -> `_diagnosticar_migraciones` (`diagnostico.py`) compara los heads del
+    código (`ScriptDirectory.get_heads()`) contra `alembic_version` de esa
+    base real -- un desalineamiento ahí (p. ej. tras agregar una migración
+    nueva en esta rama) hacía que `procesar` fallara el diagnóstico a menos
+    que alguien corriera `alembic upgrade head` A MANO contra la base
+    compartida antes de la corrida, y de paso la dejaba mutada para
+    cualquier otro test/desarrollador que la usara en paralelo. Ahora el
+    test aplica las migraciones él mismo sobre una base descartable propia,
+    sin depender de estado externo. `skip` si Postgres real no responde."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    motor_admin = sa.create_engine(
+        _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+    )
+    try:
+        with motor_admin.connect() as conexion:
+            _terminar_conexiones_y_dropear(conexion, _NOMBRE_BASE_SCRATCH_CLI)
+            conexion.execute(sa.text(f"CREATE DATABASE {_NOMBRE_BASE_SCRATCH_CLI}"))
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_ADMIN}: {excepcion}")
+        return
+
+    url_scratch = _URL_POSTGRES_ADMIN.rsplit("/", 1)[0] + f"/{_NOMBRE_BASE_SCRATCH_CLI}"
+    try:
+        command.upgrade(_config_alembic(url_scratch), "head")
+        engine = construir_engine_postgres(url_scratch)
+        yield engine, url_scratch
+        engine.dispose()
+    finally:
+        motor_admin.dispose()
+        with sa.create_engine(
+            _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+        ).connect() as conexion:
+            _terminar_conexiones_y_dropear(conexion, _NOMBRE_BASE_SCRATCH_CLI)
 
 
 @pytest.mark.postgres
@@ -262,7 +314,7 @@ def test_procesar_delega_de_punta_a_punta_al_script_real_con_procesos_reales(
     `cli.py` alguna vez se rompe (un nombre de bandera cambiado, un tipo mal
     convertido), este test lo detecta antes que un operador con 5 TB."""
     monkeypatch.setenv("ANONIMIZACION_PEPPER", "pepper-test-cli-real-mayor5-nunca-real")
-    engine = _postgres_real_para_cli
+    engine, url_scratch = _postgres_real_para_cli
 
     carpeta_1 = tmp_path / "paciente-1"
     carpeta_2 = tmp_path / "paciente-2"
@@ -275,7 +327,7 @@ def test_procesar_delega_de_punta_a_punta_al_script_real_con_procesos_reales(
     )
 
     codigo = cli.main(
-        ["procesar", "--entrada", str(tmp_path), "--db-url", _URL_POSTGRES_REAL, "--procesos", "2"]
+        ["procesar", "--entrada", str(tmp_path), "--db-url", url_scratch, "--procesos", "2"]
     )
 
     assert codigo == 0

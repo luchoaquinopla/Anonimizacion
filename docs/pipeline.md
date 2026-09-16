@@ -27,6 +27,12 @@ flowchart LR
     PSEUDO --> LINK["Vinculación<br/>±7 días por patient_id"]
 
     LINK --> PG[("Postgres<br/>relacional")]
+
+    E -. "trazos negros del PDF" .-> TRAZOS["Captura de trazos<br/>PyMuPDF get_drawings()"]
+    TRAZOS --> SENAL["Señal vectorial 12+1<br/>calibrada, 500 Hz"]
+    SENAL --> PG
+
+    PG --> EXPORT["Exportación derivada<br/>4 Parquet + manifiesto<br/>(sólo lectura, REPEATABLE READ)"]
 ```
 
 **Lectura del diagrama**: los tres tipos de documento solo se tocan en su parser — todo lo que
@@ -113,6 +119,67 @@ extracción, detección de tipo, parsers, reconciliación, coordinación y const
 adaptadores offline. No mide Presidio-spaCy institucional, HMAC real, Celery/Redis, PostgreSQL ni
 storage productivo. Por eso NO certifica todavía la capacidad del despliegue institucional; 100k
 y la prueba sobre la infraestructura final siguen pendientes.
+
+## Señal de ECG y dataset vinculado exportado
+
+Cambio `senal-ecg-y-dataset-vinculado` (`openspec/changes/senal-ecg-y-dataset-vinculado/`):
+agrega dos piezas nuevas al pipeline descrito arriba, ambas de sólo lectura sobre Postgres,
+sin introducir una segunda ruta de escritura.
+
+- **Extracción de la señal vectorial de ECG**: `extraccion/trazos_pymupdf.py` captura los
+  trazos negros del PDF con `PyMuPDF.get_drawings()`; `extraccion/senal_ecg.py` +
+  `dominio/senal_ecg.py` calibran por los 4 pulsos de referencia, asignan cada trazo a su
+  derivación (12 derivaciones + tira de ritmo) y muestrean a 500 Hz, con validación
+  todo-o-nada (una señal inconsistente se descarta entera, nunca se persiste a medias). El
+  resultado se persiste en la tabla `senal_ecg` (PK/FK 1:1 con `estudio`, `SET STORAGE
+  EXTERNAL` en Postgres), codificada como `int16` µV + máscara de bits, ambos comprimidos
+  con `zlib` (`salida/codec_senal.py`). Si la señal no se puede reconstruir, el documento
+  sigue publicándose igual: `ecg.senal` se agrega a `campos_no_extraidos` (degradación
+  explícita, no cuarentena) — ver `parseo/ecg_mortara.py` y
+  `reconciliacion/ecg_mortara.py`.
+- **Exportación derivada** (`salida/exportacion.py`, subcomando `anonimizacion exportar`):
+  proyecta Postgres a 4 archivos Parquet (`episodios`, `ecg`, `laboratorio`, `eco`) +
+  `manifiesto.json`, dentro de una única transacción `REPEATABLE READ`, paginando por clave
+  (nunca `OFFSET`). Postgres sigue siendo la única fuente de verdad — exportar no muta nada,
+  es regenerable en cualquier momento, y agrupa por `estudio.id_episodio` (la vinculación por
+  paciente + ventana de 7 días ya está resuelta al escribir cada `estudio`, no se recalcula
+  acá). Lista blanca de columnas explícita y falsable por tabla: `clave_documento`,
+  `corrida_id`, cualquier `id_medico*` y el texto libre del eco quedan afuera; `adicionales_json`
+  vuelve a filtrarse contra `_CLAVES_PERSONAL` como defensa en profundidad, sin confiar
+  ciegamente en que la escritura ya lo hizo. El manifiesto declara versión de esquema,
+  frecuencia (500 Hz), unidad (µV), orden de derivaciones, ventanas por columna y hash de
+  cada archivo, pensado como contrato para el consumidor externo (`modelo_hvi`) sin que este
+  repo importe ese proyecto.
+
+**Esto no revierte la decisión de eliminar la primera versión de la exportación Parquet**
+(ver "Alternativas descartadas" de PostgreSQL más abajo) — la satisface: aquella advertía que
+si en el futuro hacía falta exportar a Parquet para entrenamiento, debía ser una consulta de
+lectura sobre Postgres, no una segunda ruta de escritura paralela. Esta vez, además, sí tiene
+consumidor real: el investigador y `modelo_hvi`.
+
+### Auditoría de PII sobre el dataset exportado
+
+`tests/pii/test_auditoria_exportacion_sin_pii.py` (tasks.md 4.3, cierra la tarea 5.2 de
+`operacion-segura-y-escalable`): genera un corpus sintético con PII conocida (nombre, DNI,
+fecha de nacimiento, número de petición/estudio), lo procesa de punta a punta por el pipeline
+real contra una base real, exporta el dataset resultante y pasa el verificador lineal de PII
+(`tests/pii/verificador_lineal.py`, Aho-Corasick) sobre el contenido completo de los 4 Parquet
+(todas las columnas, incluidos `adicionales_json` y las listas de la señal de ECG) y
+`manifiesto.json`. Corrida del 15/09/2026: **0 coincidencias** contra los valores de PII
+sintéticos conocidos. La auditoría se demuestra falsable en el mismo archivo: un segundo test
+inyecta a propósito uno de esos valores en una fila real ya exportada y confirma que el mismo
+verificador la detecta (`coincidencias > 0`) — sin ese test, un verificador roto que siempre
+devolviera 0 pasaría la auditoría igual.
+
+Esta auditoría encontró además un defecto real en `salida/exportacion.py`: pyarrow 25.0.1 no
+hace un round-trip correcto a través de Parquet de una columna `FixedSizeListArray` cuando
+TODAS las filas de una página son `None` (`ArrowInvalid: Expected all lists to be of size=N
+but index K had size=0`, reproducido también con `FixedSizeListArray.from_arrays` directo) —
+exactamente el caso de cualquier página cuyos ECG todavía no tengan señal capturada, nada
+hipotético dado el estado actual de cobertura del extractor. Corregido cambiando
+`muestras_uv`/`mascara` de lista de tamaño fijo a lista de tamaño variable en el esquema
+Parquet; el invariante de largo exacto (60000 = 12×5000 muestras) lo sigue garantizando
+`SenalEcg.__post_init__` para toda fila no nula, sólo cambió el tipo de columna.
 
 ## Librerías principales
 
@@ -224,17 +291,44 @@ El detalle completo de la comparación está en Engram
   - Base NoSQL documental (MongoDB) — absorbe la forma variable del laboratorio, pero sin
     validación de esquema, con los joins de vinculación resueltos en la aplicación (no en la base)
     y con lecturas más lentas a 100k documentos.
-  - **Parquet vía PyArrow (eliminado en `chore/resolver-codigo-desconectado`)**: existió una
-    proyección columnar exportada desde Postgres (`salida/destinos/parquet.py`,
+  - **Primera versión de Parquet vía PyArrow (eliminada en `chore/resolver-codigo-desconectado`)**:
+    existió una proyección columnar exportada desde Postgres (`salida/destinos/parquet.py`,
     `salida/publicador_bundles.py`) pensada como capa de consumo para entrenamiento de un modelo de
     deep learning. Nunca tuvo llamador de producción — ningún script ni el ejecutor del pipeline la
-    invocaba, solo sus propios tests — así que se retiró junto con `pyarrow` como dependencia. Si en
-    el futuro hace falta exportar a Parquet para entrenamiento, es una consulta de lectura sobre
-    Postgres (`pg_dump`, `COPY TO`, o un job de export batch), no una segunda ruta de escritura
-    paralela al pipeline: mantener una salida sin consumidor es superficie donde los defectos viven
-    sin que nadie los vea (ver el defecto de idempotencia documentado en
-    `openspec/changes/escritura-idempotente/`, que nunca importó en producción precisamente porque
-    nadie usaba esta salida).
+    invocaba, solo sus propios tests — así que se retiró junto con `pyarrow` como dependencia,
+    dejando escrito que una futura exportación debía ser una consulta de lectura sobre Postgres, no
+    una segunda ruta de escritura paralela al pipeline: mantener una salida sin consumidor es
+    superficie donde los defectos viven sin que nadie los vea (ver el defecto de idempotencia
+    documentado en `openspec/changes/escritura-idempotente/`, que nunca importó en producción
+    precisamente porque nadie usaba esta salida). **Reintroducido en `senal-ecg-y-dataset-vinculado`**
+    (`salida/exportacion.py`, subcomando `anonimizacion exportar`, ver la sección "Señal de ECG y
+    dataset vinculado exportado" más arriba) respetando esa misma regla: es una proyección de sólo
+    lectura sobre Postgres, regenerable, dentro de una transacción `REPEATABLE READ` — y esta vez sí
+    tiene consumidor real (el investigador y `modelo_hvi`), que es precisamente lo que faltaba la
+    primera vez. `pyarrow` y `numpy` volvieron a ser dependencias BASE de `pyproject.toml` (no
+    `dev`, no extra opcional) por ese mismo motivo.
+
+### numpy + PyArrow (señal de ECG y exportación derivada)
+
+- **Qué son**: `numpy` para el álgebra vectorial de la reconstrucción de la señal de ECG a
+  partir de los trazos capturados; `pyarrow` para escribir/leer los 4 archivos Parquet de la
+  exportación derivada (ver "Señal de ECG y dataset vinculado exportado" más arriba).
+- **Cómo las usamos**: `extraccion/senal_ecg.py` y `dominio/senal_ecg.py` usan `numpy` puro
+  (sin dependencias de señal/DSP externas) para calibración, asignación por banda de amplitud
+  y muestreo a 500 Hz. `salida/exportacion.py` define un `pa.schema` explícito por tabla (lista
+  blanca de columnas) y usa `pq.ParquetWriter` con un row group por página.
+- **Por qué**: son la dupla estándar del ecosistema Python para álgebra vectorial y formato
+  columnar respectivamente; no había razón para reimplementar ninguna de las dos partes a
+  mano, y `modelo_hvi` (el consumidor) ya espera Parquet.
+- **Alternativas descartadas**: ver la entrada de PostgreSQL más abajo para el historial de la
+  primera versión de la exportación Parquet (eliminada y luego reintroducida con consumidor
+  real).
+- **Nota de esquema (hallazgo de la auditoría de PII, 15/09/2026)**: `muestras_uv`/`mascara`
+  en `ESQUEMA_ECG` usan lista de tamaño **variable** (`pa.list_(tipo)`), no de tamaño fijo
+  (`pa.list_(tipo, N)`) — pyarrow 25.0.1 no hace un round-trip correcto a través de Parquet de
+  una columna de tamaño fijo cuando TODAS las filas de una página son `None` (caso real:
+  cualquier página cuyos ECG todavía no tengan señal capturada). El invariante de largo exacto
+  (60000 = 12×5000) lo sigue garantizando `SenalEcg.__post_init__`.
 
 ### Pydantic
 
