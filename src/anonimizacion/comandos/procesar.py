@@ -25,10 +25,9 @@ Fix `panel-de-operacion` (tasks.md 6.8-6.9, PR 2.5): este script armaba
 directo, sin ningun `corrida_id` -- ni la corrida ni el inventario quedaban
 registrados en ningun lado. Ahora usa `LanzadorCorrida` (crea la `Corrida`,
 inventaria via `RepositorioCorridas.registrar_documentos`) y
-`trabajadores.tareas.procesar_grupo` -- la MISMA tarea Celery que despachara
-produccion, llamada en directo (no `.delay()`: este script corre sincronico,
-sin broker, y llamar la tarea como funcion ejercita exactamente el mismo
-codigo que corre en el worker) -- para que `corrida_id` viaje hasta
+`trabajadores.tareas.procesar_grupo` -- la MISMA función que invoca el
+despacho paralelo en producción, llamada en directo (este script corre
+sincrónico) -- para que `corrida_id` viaje hasta
 `estudio`/`cuarentena` (design.md, "Recorrido"). Es tambien el primer
 llamador de produccion real de `LanzadorCorrida`/`CuarentenaDeCorrida`
 (Fase 6.4-6.7): sin este cambio quedaban con tests pero sin ningun camino
@@ -136,9 +135,9 @@ def _despachar_grupos(
     if procesos <= 1:
         print(f"Corrida {corrida_id}: procesando por grupo (secuencial)...", file=sys.stderr)
         # Despacho SECUENCIAL por grupo (openspec `paralelismo-de-procesamiento`
-        # PR 2). `procesar_grupo` es la MISMA tarea Celery real que despachara
-        # producción (llamada en directo, no `.delay()`: este script corre
-        # sincrónico, sin broker). Antes se le pasaba `lanzamiento.referencias`
+        # PR 2). `procesar_grupo` es la MISMA función que invoca el despacho
+        # paralelo en producción, llamada en directo (este script corre
+        # sincrónico). Antes se le pasaba `lanzamiento.referencias`
         # ENTERO en una sola llamada -- la carpeta completa como un solo lote --
         # y `procesar_lote` acumulaba en RAM los resueltos de la corrida entera
         # (con el corpus real, ~400.000 documentos de una sola vez). Llamarla una

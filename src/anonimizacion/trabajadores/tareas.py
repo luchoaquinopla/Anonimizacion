@@ -1,4 +1,4 @@
-"""Tarea Celery por documento (tasks.md 9.2).
+"""Procesamiento de un grupo de documentos (tasks.md 9.2).
 
 Requisito crítico (spec `batch-processing`, design.md "Sin PII en cola, logs
 ni DLQ"): el mensaje de cola transporta SOLO `{id_documento, uri, sha256}` --
@@ -23,21 +23,16 @@ dependencias por default silenciosamente.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria, RegistroDeHuellas
 from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
-from anonimizacion.observabilidad.metricas import ColectorMetricas, MetricasEnMemoria
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.coordinador_episodios import coordinar_episodios
 from anonimizacion.pipeline.ejecutor import DestinoCuarentena, DestinoEscritura, EjecutorPipeline, ItemLote
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClavesProtocol
-from anonimizacion.trabajadores.app import aplicar_configuracion_cola, app
-
-aplicar_configuracion_cola(os.environ)
 
 FabricaEjecutor = Callable[[], EjecutorPipeline]
 
@@ -78,13 +73,12 @@ def construir_fabrica_ejecutor(
     # validacion de episodio (ver `tests/carga/test_cableado_del_banco.py`).
     dormir: Callable[[float], None] | None = None,
     resolver_claves: Callable[..., object] | None = None,
-    # `metricas`/`bitacora` (design.md, Decisión 7): misma semántica que
+    # `bitacora` (design.md, Decisión 7): misma semántica que
     # `dormir`/`resolver_claves` de acá arriba -- `None` significa "usar el
-    # valor de producción" (`MetricasEnMemoria()`/`BitacoraSegura()`), nunca
-    # "desactivar la observabilidad". El punto de inyección existe para que
-    # los tests puedan espiar sin duplicar esta fábrica -- ver
+    # valor de producción" (`BitacoraSegura()`), nunca "desactivar la
+    # observabilidad". El punto de inyección existe para que los tests puedan
+    # espiar sin duplicar esta fábrica -- ver
     # `tests/pipeline/test_observabilidad_cableada.py`.
-    metricas: ColectorMetricas | None = None,
     bitacora: BitacoraSegura | None = None,
 ) -> FabricaEjecutor:
     """Arma la `FabricaEjecutor` real para registrar con `configurar_ejecutor`.
@@ -127,12 +121,6 @@ def construir_fabrica_ejecutor(
             # se publica sin aviso -- ver
             # `tests/pipeline/test_modo_sin_validacion_de_episodio.py`.
             coordinar_episodios=coordinar_episodios,
-            # `None` = produccion (design.md, Decision 7): a diferencia de
-            # `dormir`/`resolver_claves`, acá SIEMPRE se pasa una instancia --
-            # el default de `EjecutorPipeline` es "sin observabilidad", y esa
-            # semántica es correcta para sus tests unitarios pero NO para esta
-            # raíz de composición real.
-            metricas=metricas if metricas is not None else MetricasEnMemoria(),
             # `motor_pii=motor` (revisión fresca post-Tramo 3): sin esto, la
             # capa 2 de redacción de `BitacoraSegura` queda en modo degradado
             # (solo regex de DNI, ver docstring de `bitacora_segura.py`). El
@@ -147,7 +135,6 @@ def construir_fabrica_ejecutor(
     return _fabrica
 
 
-@app.task(name="anonimizacion.procesar_grupo")
 def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) -> list[dict[str, object]]:
     """Procesa como un solo lote los documentos de un grupo (un paciente, un episodio).
 
@@ -198,11 +185,11 @@ def procesar_grupo(corrida_id: str, referencias: Sequence[Mapping[str, str]]) ->
 
 
 # Nota (`chore/resolver-codigo-desconectado`): este módulo tuvo `configurar_extractor`
-# y dos tareas Celery (`procesar_extraccion_minima`, `procesar_extraccion_completa`)
+# y dos funciones (`procesar_extraccion_minima`, `procesar_extraccion_completa`)
 # que modelaban una extracción por etapas con persistencia durable vía
 # `EstadoDocumentoCorrida` (CLASIFICADO -> EXTRAIDO_MINIMO -> ASOCIADO ->
-# EXTRAIDO_COMPLETO). Se eliminaron: nadie las invocaba (ni `.delay()` ni
-# `.apply_async()` en `src/`, solo `tests/trabajadores/test_tareas.py`), y
+# EXTRAIDO_COMPLETO). Se eliminaron: nadie las invocaba en `src/`, solo
+# `tests/trabajadores/test_tareas.py`, y
 # `openspec/changes/procesamiento-por-grupo/exploration.md` documenta por qué
 # quedaron desconectadas -- "viven en una pista paralela que no se comunica
 # con `EjecutorPipeline`". La unidad de trabajo real es el GRUPO

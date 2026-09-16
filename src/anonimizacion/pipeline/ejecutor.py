@@ -51,7 +51,6 @@ from anonimizacion.extraccion.trazos_pymupdf import CapturadorDePagina
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo
 from anonimizacion.ingesta.fuente import FuenteDeArtefactos
 from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
-from anonimizacion.observabilidad.metricas import ColectorMetricas
 from anonimizacion.parseo.base import ParseadorDocumento
 from anonimizacion.parseo.registro import obtener_parseador as _obtener_parseador_real
 from anonimizacion.pii.motor import MotorPii
@@ -75,8 +74,6 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 
 # Backoff exponencial fijo (design.md, tasks.md 9.1): 3 reintentos tras el
 # intento inicial -- 4 intentos totales como máximo por documento/etapa.
-# `trabajadores/politica_reintentos.py` reusa estas mismas constantes (no se
-# duplica el número en dos lugares).
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
 # El grupo ES la unidad completa de trabajo (design.md, Decisión 6): no hay un
@@ -152,10 +149,10 @@ def _observar_sin_romper(accion: Callable[[], None]) -> None:
     """Ejecuta una llamada de observabilidad sin dejar que tumbe el pipeline.
 
     design.md, Decisión 7, invariante 3: la observabilidad es accesoria --
-    un `ColectorMetricas`/`BitacoraSegura` roto no puede perder un documento
-    ni un grupo. Cualquier excepción que lance `accion` se descarta acá,
-    igual que `_a_fallo` ya descarta el fallo de `self._cuarentena.registrar`
-    por el mismo motivo.
+    una `BitacoraSegura` rota no puede perder un documento ni un grupo.
+    Cualquier excepción que lance `accion` se descarta acá, igual que
+    `_a_fallo` ya descarta el fallo de `self._cuarentena.registrar` por el
+    mismo motivo.
     """
     try:
         accion()
@@ -168,7 +165,6 @@ def _ejecutar_con_reintentos(
     *,
     etapa: str,
     dormir: Callable[[float], None],
-    observar: Callable[[str, float], None] | None = None,
 ) -> object:
     """Ejecuta `funcion`, reintentando solo si lanza algo que NO sea `ErrorParseo`.
 
@@ -177,16 +173,9 @@ def _ejecutar_con_reintentos(
     nunca se propaga el mensaje crudo (podría contener detalle de
     infraestructura sensible, y en cualquier caso viola "Sin PII en cola,
     logs ni DLQ" si en algún punto se serializa).
-
-    `observar` (design.md, Decisión 7): opcional -- mide la duración del
-    intento que efectivamente tuvo éxito y la reporta a
-    `ColectorMetricas.observar_duracion_ms`, envuelta en
-    `_observar_sin_romper`. `None` es el caso de los tests que no necesitan
-    métricas; la fábrica de producción siempre pasa un observador real.
     """
     intento = 0
     while True:
-        inicio = time.monotonic()
         try:
             resultado = funcion()
         except ErrorParseo:
@@ -197,9 +186,6 @@ def _ejecutar_con_reintentos(
             dormir(BACKOFF_SEGUNDOS[intento])
             intento += 1
             continue
-        if observar is not None:
-            duracion_ms = (time.monotonic() - inicio) * 1000
-            _observar_sin_romper(lambda: observar(etapa, duracion_ms))
         return resultado
 
 
@@ -268,9 +254,8 @@ class EjecutorPipeline:
         # `None` = sin observabilidad (la mayoría de los tests de este módulo
         # no la necesitan). La raíz de composición de producción
         # (`trabajadores/tareas.py::construir_fabrica_ejecutor`) siempre pasa
-        # instancias reales -- ver design.md, Decisión 7. Es accesoria por
+        # una instancia real -- ver design.md, Decisión 7. Es accesoria por
         # construcción: ver `_observar_sin_romper`.
-        metricas: ColectorMetricas | None = None,
         bitacora: BitacoraSegura | None = None,
     ) -> None:
         self._resolutor = resolutor
@@ -280,7 +265,6 @@ class EjecutorPipeline:
         self._cuarentena = cuarentena
         self._fuente = fuente
         self._dormir = dormir
-        self._metricas = metricas
         self._bitacora = bitacora
         if extraer is not None:
             self._extraer = extraer
@@ -327,11 +311,6 @@ class EjecutorPipeline:
 
         with self._fuente.abrir(artefacto) as flujo:
             return extraer_texto_de_flujo(flujo, capturador_para=_capturador_para)
-
-    def _observar_duracion(self, etapa: str, duracion_ms: float) -> None:
-        """`observar` que se pasa a `_ejecutar_con_reintentos`; no-op si no hay `metricas`."""
-        if self._metricas is not None:
-            self._metricas.observar_duracion_ms(etapa, duracion_ms)
 
     def procesar_lote(
         self, items: Sequence[ItemLote], *, corrida_id: str | None = None
@@ -403,7 +382,6 @@ class EjecutorPipeline:
             lambda: self._extraer(item.artefacto),
             etapa=Etapa.EXTRACCION.value,
             dormir=self._dormir,
-            observar=self._observar_duracion,
         )
         tipo = self._detectar_tipo(texto)  # pura, nunca lanza (Fase 3): TIPO_NO_RECONOCIDO en vez de excepción
         try:
@@ -412,7 +390,6 @@ class EjecutorPipeline:
                 lambda: parseador.parsear(texto),
                 etapa=Etapa.PARSEO.value,
                 dormir=self._dormir,
-                observar=self._observar_duracion,
             )
             reconciliador = self._obtener_reconciliador(tipo)
             # `reconciliar` devuelve los `id_campo` que el PDF trae y el
@@ -427,7 +404,6 @@ class EjecutorPipeline:
                     lambda: reconciliador.reconciliar(documento, texto),
                     etapa=Etapa.RECONCILIACION.value,
                     dormir=self._dormir,
-                    observar=self._observar_duracion,
                 ),
             )
             # Detección de PII sobre texto libre (design.md, "corre también sobre texto
@@ -448,7 +424,6 @@ class EjecutorPipeline:
                 ),
                 etapa=Etapa.PSEUDONIMIZACION.value,
                 dormir=self._dormir,
-                observar=self._observar_duracion,
             )
             clave_documento = generar_clave_documento(self._pepper, item.artefacto.sha256)
             return _DocumentoResuelto(
@@ -583,7 +558,6 @@ class EjecutorPipeline:
                 ),
                 etapa=Etapa.SALIDA.value,
                 dormir=self._dormir,
-                observar=self._observar_duracion,
             )
             episodios_escritos.add(id_episodio)
 
@@ -603,12 +577,7 @@ class EjecutorPipeline:
             lambda: self._destino.escribir_registro(registro),
             etapa=Etapa.SALIDA.value,
             dormir=self._dormir,
-            observar=self._observar_duracion,
         )
-        if self._metricas is not None:
-            _observar_sin_romper(
-                lambda: self._metricas.incrementar_documento_procesado(resuelto.documento.tipo_documento)
-            )
         return ExitoDocumento(
             id_documento=resuelto.id_documento,
             tipo_documento=resuelto.documento.tipo_documento,
@@ -643,6 +612,4 @@ class EjecutorPipeline:
             # que este documento no se pierda en silencio, aunque no haya
             # quedado persistido en la tabla de cuarentena.
             pass
-        if self._metricas is not None:
-            _observar_sin_romper(lambda: self._metricas.incrementar_fallo(error.codigo))
         return FalloDocumento(id_documento=id_documento, error=error, timestamp=_ahora())

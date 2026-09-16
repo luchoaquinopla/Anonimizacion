@@ -63,7 +63,7 @@ class CodigoErrorDocumento(str, Enum):
     # reprocesar no lo arregla.
     CLAVE_PII_AMBIGUA = "clave_pii_ambigua"
     # Ver docstring de la clase: terminal tras agotar reintentos de un error
-    # transitorio (`pipeline/ejecutor.py`, `trabajadores/politica_reintentos.py`).
+    # transitorio (`pipeline/ejecutor.py`).
     ERROR_TRANSITORIO_AGOTADO = "error_transitorio_agotado"
     EVIDENCIA_AUSENTE = "evidencia_ausente"
     EVIDENCIA_AMBIGUA = "evidencia_ambigua"

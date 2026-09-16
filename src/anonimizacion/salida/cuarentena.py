@@ -29,8 +29,8 @@ class EscritorCuarentena:
 
         Defecto ya mergeado que este método corrige: `cuarentena` no tenía
         ninguna restricción única (a diferencia de `estudio`, que sí tiene
-        `uq_estudio_clave_documento`), así que un reintento de Celery sobre
-        el mismo grupo duplicaba la fila y el reporte la contaba dos veces
+        `uq_estudio_clave_documento`), así que reprocesar el mismo grupo
+        duplicaba la fila y el reporte la contaba dos veces
         (ver `tests/web/test_reporte_cuarentena.py`, el test que reproduce el
         defecto contra el código sin guarda).
 

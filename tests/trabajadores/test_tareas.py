@@ -5,21 +5,18 @@ el mensaje de cola transporta SOLO referencias `{id_documento, uri, sha256}`,
 una por documento del grupo. La unidad de trabajo es el GRUPO y no el documento
 (spec `procesamiento-por-grupo`): la validación de episodio necesita ver juntos
 todos los estudios del paciente, y un lote de uno nunca contiene los tres tipos
-requeridos. `CELERY_TASK_ALWAYS_EAGER=1` evita necesitar un broker Redis real (ver
-`trabajadores/app.py`).
+requeridos. `procesar_grupo` es una función invocada en directo por todo
+llamador de producción (auditoria-y-poda E5 retiró Celery/Redis: era cáscara
+decorativa sin llamador real -- ver `design.md`).
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-os.environ["CELERY_TASK_ALWAYS_EAGER"] = "1"
-
-from anonimizacion.pipeline.ejecutor import ItemLote  # noqa: E402
-from anonimizacion.pipeline.resultado import ExitoDocumento  # noqa: E402
-from anonimizacion.trabajadores import tareas  # noqa: E402
+from anonimizacion.pipeline.ejecutor import ItemLote
+from anonimizacion.pipeline.resultado import ExitoDocumento
+from anonimizacion.trabajadores import tareas
 
 
 class _EjecutorFake:
@@ -75,7 +72,7 @@ def test_procesar_grupo_recibe_exactamente_corrida_id_y_referencias() -> None:
     referencia por documento -- eso es lo que se verifica más abajo."""
     import inspect
 
-    parametros = list(inspect.signature(tareas.procesar_grupo.run).parameters)
+    parametros = list(inspect.signature(tareas.procesar_grupo).parameters)
     assert parametros == ["corrida_id", "referencias"]
 
 
@@ -136,13 +133,16 @@ def test_procesar_grupo_vacio_falla_explicito() -> None:
         tareas.procesar_grupo("corrida-1", [])
 
 
-def test_procesar_grupo_via_delay_no_requiere_broker_real() -> None:
+def test_procesar_grupo_invocado_en_directo_devuelve_el_resumen_trazable() -> None:
+    """Reemplaza el test de `.delay()` (auditoria-y-poda E5): `procesar_grupo`
+    es una función común, invocada en directo por todo llamador de
+    producción -- no hay broker que la despache."""
     fake = _EjecutorFake()
     tareas.configurar_ejecutor(lambda: fake)
 
-    async_result = tareas.procesar_grupo.delay("corrida-1", [_referencia("doc-2", "b" * 64)])
+    resultados = tareas.procesar_grupo("corrida-1", [_referencia("doc-2", "b" * 64)])
 
-    assert async_result.get()[0]["id_documento"] == "doc-2"
+    assert resultados[0]["id_documento"] == "doc-2"
 
 
 # Nota (`chore/resolver-codigo-desconectado`): este archivo tenía tests para

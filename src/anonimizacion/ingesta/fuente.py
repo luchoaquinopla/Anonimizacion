@@ -332,8 +332,8 @@ class FuenteLocal:
         independiente; el LLAMADOR lo cierra con `with` -- un objeto de
         archivo ya es context manager, no hace falta un envoltorio.
 
-        La `uri` llega desde la cola de Celery, potencialmente manipulada:
-        revalidarla acá (no solo en `listar()`) cierra un agujero real, no
+        La `uri` llega desde la referencia del grupo (`tareas.procesar_grupo`),
+        potencialmente manipulada: revalidarla acá (no solo en `listar()`) cierra un agujero real, no
         una formalidad. La verificación de sha256 se hace sobre los mismos
         bytes que se le van a entregar a PyMuPDF, que de todos modos necesita
         el buffer completo -- el segundo pase de hash es despreciable frente

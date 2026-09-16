@@ -3,8 +3,8 @@ auditoria-y-poda E4).
 
 Confirma que el script ya no arma `FuenteLocal`/`ItemLote` a mano ni llama
 `ejecutor.procesar_lote(items)` sin corrida: usa `LanzadorCorrida` para
-inventariar y `trabajadores.tareas.procesar_grupo` -- la misma tarea Celery
-real que despachara producción (design.md, "Recorrido":
+inventariar y `trabajadores.tareas.procesar_grupo` -- la misma función que
+invoca el despacho paralelo en producción (design.md, "Recorrido":
 `LanzadorCorrida.lanzar` -> `procesar_grupo(corrida_id, referencias)` ->
 `procesar_lote(items, corrida_id=...)`) -- para procesar. Sin este cambio
 `LanzadorCorrida`/`CuarentenaDeCorrida` (Fase 6.4-6.7, ya mergeadas) no
