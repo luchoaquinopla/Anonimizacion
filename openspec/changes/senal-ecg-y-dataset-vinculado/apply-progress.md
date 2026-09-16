@@ -759,10 +759,41 @@ Verificación tras esta corrección: `uv run pytest -q` → **1026 passed, 1
 skipped** (mismo skip ambiental de symlink Windows). Una corrida completa
 anterior mostró `tests/integracion/test_reintentar_no_duplica.py::
 test_reintentar_dos_veces_no_duplica_cuarentena_ni_estudio` fallando con
-`UndefinedTable: relation "corrida" does not exist` (warning de excepción no
-manejada en un hilo de fondo) -- reproducido aislado DOS veces, ambas
-pasaron; una segunda corrida completa también pasó sin ese fallo. Se
-documenta como flake preexistente de aislamiento entre tests (no relacionado
-con este cambio), no como hallazgo nuevo. `uv run pytest -q -m postgres` →
-**26 passed**, sin tocar la base compartida. `uv run --extra dev ruff check
-.` → limpio.
+`UndefinedTable: relation "corrida" does not exist`, calificado en ese
+momento (incorrectamente) como "flake preexistente no reproducible" sólo
+porque no reprodujo aislado dos veces. **Corrección**: no era un flake sin
+causa -- tenía causa estructural concreta, señalada por revisión adversarial
+y confirmada leyendo el código: `tests/test_diagnostico.py::
+_postgres_real_al_dia` corría contra la base COMPARTIDA (`anonimizacion`,
+puerto 5433) y hacía `Base.metadata.drop_all` + `DROP TABLE alembic_version`
+antes de `command.upgrade(cfg, "head")` -- entre el borrado y el upgrade
+había una ventana real sin tablas; cualquier otro test/hilo de fondo tocando
+esa base en ese instante (como el de `test_reintentar_no_duplica.py`, que
+efectivamente corre antes en el orden de recolección) fallaba con
+`UndefinedTable`. La propia línea final del fixture
+(`command.upgrade(cfg, "head")  # deja la base al día para no romper otros
+tests/marks`) ya delataba que sabía que estaba ensuciando un recurso ajeno.
+Corregido con el mismo tratamiento que `test_cli.py` (commit `d20e94a`):
+base ESCRATCH propia (`diagnostico_scratch_test`), creada/destruida por el
+fixture, migrada con `alembic upgrade head` programático -- la ventana de
+borrado desaparece y el `upgrade head` final al terminar deja de hacer
+falta (nadie más usa esa base). Reproducido el escenario típico corriendo la
+suite completa DOS veces más tras el fix: sin el fallo, en ambas.
+`uv run pytest -q -m postgres` → **26 passed**, sin tocar la base
+compartida (verificado `pg_database` sin bases escratch huérfanas antes y
+después). `uv run --extra dev ruff check .` → limpio.
+
+**Otros fixtures que SÍ tocan la base compartida (`_URL_POSTGRES_REAL`,
+puerto 5433) con `Base.metadata.drop_all`/`create_all`, encontrados en esta
+revisión y NO corregidos (fuera del alcance de este cierre, quedan
+reportados)**: `tests/web/test_despacho_real_desde_el_panel.py`,
+`tests/ingesta/test_lanzador_corrida.py`,
+`tests/integracion/test_reintentar_no_duplica.py`,
+`tests/scripts/test_procesar_carpeta.py`,
+`tests/integracion/test_postgres_carrera_real.py`,
+`tests/salida/destinos/test_postgres.py`. Ninguno de estos borra
+`alembic_version`, así que no disparan el mismatch específico de
+`diagnosticar()` que causó este hallazgo -- pero siguen siendo la misma
+familia de riesgo (mutación de una base compartida durante la suite) si
+algún test futuro corre en un hilo de fondo o si la suite pasara a
+ejecutarse con paralelismo real (`xdist`).
