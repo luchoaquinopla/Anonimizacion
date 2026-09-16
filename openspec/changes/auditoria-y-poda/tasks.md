@@ -555,16 +555,44 @@ arquitectura, formato del vault existente):
       la verificación AGREGA ~124 ms, no lo contrario); puntero a
       `sdd/pdf-pii-anonymization/apply-progress` preservado en `pipeline/ejecutor.py`; compuerta
       AST verde. Prosa: 992 → 210 líneas (11 archivos). Commit `f27cac4` en `pr6b/poda-de-prosa`.
-- [ ] 6.15 PR6e — grupo 5 (`web/`, `cli.py`, `docs/pipeline.md`): recortar; corregir
-      `cli.py:20-34` (quitar cita a PR #40 abierto) y `docs/pipeline.md:194` (referenciar
-      `extraccion/texto_pymupdf.py`); insertar punteros de invariantes 4 y 5; compuerta AST
-      verde (`docs/pipeline.md` queda fuera de la compuerta, revisión humana).
-- [ ] 6.16 PR6f — grupo 6, solo y último (`despacho_paralelo.py` + `ingesta/lanzador_corrida.py`):
-      insertar punteros de invariantes 1, 2 y 3; recortar; compuerta AST verde. `size:exception`
-      (borrado puro de prosa ~800 líneas, respaldado por la compuerta AST).
-- [ ] 6.17 Verificación final E6: los 8 invariantes tienen línea+puntero en código Y nota en
-      Obsidian; ningún docstring de `src/` supera 2 líneas salvo excepción justificada; `cli.py`
-      y `docs/pipeline.md` sin prosa falsa; suite verde sin cambios de comportamiento.
+- [x] 6.15 PR6e — grupo 5 (`web/`, `cli.py`, `comandos/`): recortado; `cli.py:20-34` ya
+      no citaba "PR #40 abierto" (resuelto en E4, confirmado sin cambios necesarios);
+      `docs/pipeline.md:194` corregido a `extraccion/texto_pymupdf.py` (y `pii/engine.py`
+      → `pii/motor.py`, `pii/recognizers/dni_ar.py` → `pii/reconocedores/dni_ar.py`,
+      mismo defecto de prosa falsa); compuerta AST verde. Prosa `.py` de G5: 1155 → 303
+      líneas (13 archivos). Commit `96bd1e0`. Punteros de invariantes 4 y 5
+      («Prueba anti-espejo del esquema Parquet»/«...del codec de señal») insertados en
+      `tests/salida/` junto con el puntero 3 («Funciones exentas de complejidad» en
+      `pyproject.toml`) y la corrección de la vinculación (`docs/pipeline.md:27`, ancla +
+      hasta 7 días, no "±7 días") y las prosas falsas de `migrations/0008` y
+      `tests/pipeline/test_modo_sin_validacion_de_episodio.py` (Celery), en un commit
+      propio (`50f8e4e`, bloque "invariantes fuera de src/ + prosa falsa").
+- [x] 6.16 PR6f — grupo 6, solo y último (`despacho_paralelo.py`, `ingesta/lanzador_corrida.py`,
+      `observabilidad/bitacora_segura.py`, `trabajadores/tareas.py`): insertados los
+      punteros de invariantes 1 («Memoria por proceso del detector») y 2 («Cantidad de
+      procesos y reintentos») en `despacho_paralelo.py`; recortado sin tocar la lógica de
+      concurrencia (verificado con la compuerta AST, que detectó y corrigió un reordenamiento
+      accidental de constantes antes de commitear); TRAMPAS conservadas: pickling por
+      referencia de módulo con `spawn`, `>=` vs `>` en `MAX_REINTENTOS_POR_GRUPO` (2 cargas,
+      no 3), atribución causal del culpable (reprocesar solo, nunca con un colateral sano),
+      reposición de la ventana a ancho completo tras un pool roto. Prosa: 845 → 230 líneas
+      (4 archivos). Commit `876785a`. `size:exception` (borrado puro de prosa, compuerta AST
+      verde en ambas direcciones).
+- [x] 6.17 Verificación final E6: los 8 invariantes tienen línea+puntero en código
+      (confirmado con `rg`, los 8 títulos exactos aparecen); prosa de `src/` 6.421 → 1.359
+      líneas (932 docstring + 427 comentario), por debajo del objetivo informativo de
+      ~1.500 (no es compuerta, Requisito 5); `cli.py` y `docs/pipeline.md` sin prosa falsa
+      restante (verificado módulo por módulo contra el árbol real); suite verde sin cambios
+      de comportamiento (`not postgres` 1031 passed/1 skipped/1 failed -- el mismo flake
+      preexistente y documentado, `postgres` 28 passed, `caracterizacion` 17 passed).
+      Excepciones de docstring >2 líneas en `src/` (mayoría 3-4 por wrapping o protección de
+      datos/concurrencia no-obvia; ver detalle completo en apply-progress) más una notable:
+      `despachar_en_paralelo` en `despacho_paralelo.py` (35 líneas) -- la función de mayor
+      riesgo del cambio, con 5 trampas de concurrencia independientes que `design.md`
+      exige conservar explícitamente; comprimir más arriesgaba perder alguna. Migración a
+      Obsidian de los 8 invariantes (tarea 6.9) sigue sin completarse: los borradores están
+      listos y verificados, pendientes de aprobación humana antes de escribir en el vault
+      (AGENTS.md), fuera del alcance de `sdd-apply`.
 
 ## Fase 7 — Higiene (fuera de la cadena)
 
