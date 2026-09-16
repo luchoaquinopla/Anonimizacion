@@ -36,8 +36,30 @@ _CARPETAS_ALCANCE = ("src", "tests", "migrations", "scripts", ":(exclude)tests/p
 _REF_POR_DEFECTO = "feat/auditoria-y-poda"
 
 
-def _ref_compuerta() -> str:
-    return os.environ.get("COMPUERTA_AST_REF", _REF_POR_DEFECTO)
+class RefCompuertaInvalida(Exception):
+    """`COMPUERTA_AST_REF` fue definida a mano y no existe en este checkout."""
+
+
+def _resolver_ref(
+    ref_explicita: str | None = None, raiz_repo: Path = _RAIZ_REPO
+) -> str:
+    """Política de ciclo de vida: ref explícita inválida FALLA (alguien la pidió a
+    mano); sin ref explícita, sin la base por defecto se SALTEA (no aplica todavía)."""
+    if ref_explicita is None:
+        ref_explicita = os.environ.get("COMPUERTA_AST_REF")
+    if ref_explicita is not None:
+        if not _ref_existe(ref_explicita, raiz_repo):
+            raise RefCompuertaInvalida(
+                f"COMPUERTA_AST_REF='{ref_explicita}' no existe en este checkout."
+            )
+        return ref_explicita
+    if not _ref_existe(_REF_POR_DEFECTO, raiz_repo):
+        pytest.skip(
+            f"Referencia por defecto '{_REF_POR_DEFECTO}' no existe -- la compuerta AST "
+            "sólo aplica durante una poda de prosa activa contra su rama base. Para "
+            "forzarla, definí COMPUERTA_AST_REF=<rama base>."
+        )
+    return _REF_POR_DEFECTO
 
 
 def _ref_existe(ref: str, raiz_repo: Path = _RAIZ_REPO) -> bool:
@@ -133,10 +155,10 @@ def verificar_compuerta(ref: str, raiz_repo: Path = _RAIZ_REPO) -> ResultadoComp
 
 @pytest.fixture(scope="module")
 def ref_compuerta() -> str:
-    ref = _ref_compuerta()
-    if not _ref_existe(ref):
-        pytest.skip(f"Referencia '{ref}' no existe en este checkout (falta fetch)")
-    return ref
+    try:
+        return _resolver_ref()
+    except RefCompuertaInvalida as error:
+        pytest.fail(str(error))
 
 
 @pytest.fixture(scope="module")
