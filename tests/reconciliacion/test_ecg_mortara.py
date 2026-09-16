@@ -36,7 +36,9 @@ def test_reconciliar_no_agrega_ecg_senal_cuando_la_senal_es_valida() -> None:
     from anonimizacion.dominio.senal_ecg import SenalEcg
 
     senal = SenalEcg(
-        muestras_uv=np.zeros((12, 5000), dtype=np.int16), mascara=np.zeros((12, 5000), dtype=bool)
+        muestras_uv=np.zeros((12, 5000), dtype=np.int16),
+        mascara=np.zeros((12, 5000), dtype=bool),
+        version_extractor=2,
     )
     documento = DocumentoParseado(
         TipoDocumento.ECG,

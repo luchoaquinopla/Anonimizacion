@@ -8,13 +8,15 @@ incompleto (`reconciliacion/ecg_mortara.py` agrega `ecg.senal` a
 `campos_no_extraidos`), nunca una señal parcial o dudosa.
 
 Geometría esperada (17 trazos negros, medida contra el ECG real): 12
-derivaciones de ~1238 puntos en una grilla de 4 columnas (ventana temporal,
-por Y de inicio: 0/2,5/5/7,5 s) x 3 filas (banda de amplitud, por X
-promedio) -- orden `ORDEN_DERIVACIONES`; 1 tira de ritmo V1 de ~5000 puntos
-(los 10 s completos, remplaza el segmento de V1 en la grilla); 4 pulsos de
+derivaciones de ~1238 puntos en una grilla de 4 columnas (ventana temporal
+de 2,5 s cada una, agrupadas por centroide de Y y ordenadas por distancia
+real a los pulsos de calibración -- ver más abajo, "Dirección del
+tiempo") x 3 filas (banda de amplitud, por X promedio) -- orden
+`ORDEN_DERIVACIONES`; 1 tira de ritmo V1 de ~5000 puntos (los 10 s
+completos, remplaza el segmento de V1 en la grilla); 4 pulsos de
 calibración de ~60 puntos, uno por banda de amplitud (las 3 filas de la
-grilla + la propia banda de la tira), medidos justo después de la última
-columna.
+grilla + la propia banda de la tira), medidos en el extremo de Y que marca
+el INICIO del registro.
 
 Signo y línea base (hallazgo contra el ECG real, no un supuesto de texto):
 cada pulso es un cuadrado pie -> meseta -> pie; +1 mV se mide, en el PDF
@@ -26,6 +28,27 @@ ni del promedio del propio trazo de la derivación (que no es un cero
 confiable: una derivación puede tener ST elevado, por ejemplo). Si los 4
 pulsos no apuntan en la misma dirección, la calibración es inconsistente y
 la señal se descarta.
+
+Dirección del tiempo (CORRECCIÓN CRÍTICA, verificado contra el ECG real):
+el eje vertical corre por Y, pero el SENTIDO en que avanza el tiempo NO es
+un supuesto fijo del código -- se deriva de la posición de los pulsos de
+calibración, que siempre marcan el INICIO del registro (medido: en el PDF
+real quedan en el extremo de Y ALTA, más allá de toda derivación). El
+tiempo avanza ALEJÁNDOSE de los pulsos. Asumir "Y creciente = tiempo
+creciente" sin verificarlo (el bug original) invierte cada derivación en
+el tiempo Y cruza las columnas entre sí (la primera columna en el tiempo
+es la más CERCANA a los pulsos, no la de Y más chica) -- ver
+`_direccion_y_referencia_pulsos` y `_asignar_derivaciones`. Si los pulsos no
+quedan claramente más allá de un extremo de las derivaciones, la dirección
+es ambigua y la señal se descarta (`None`), nunca se asume una por defecto.
+
+Validación fisiológica (obligatoria, ver `_validar_fisiologia`): una
+columna o fila mal asignada puede calibrar perfectamente banda por banda y
+seguir siendo una señal cruzada. Antes de aceptar, se verifica Einthoven
+(II = I + III) sobre la columna de miembros, Goldberger (aVR+aVL+aVF = 0)
+sobre la columna aumentada, y que la V1 de la grilla (que se descarta,
+reemplazada por la tira) correlacione con el segmento equivalente de la
+tira -- cualquier violación descarta la señal completa.
 """
 
 from __future__ import annotations
@@ -50,16 +73,35 @@ AMPLITUD_MAXIMA_UV = 32767  # tope representable en int16 (µV); ver `_muestrear
 ORDEN_DERIVACIONES = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 INDICE_TIRA_RITMO = ORDEN_DERIVACIONES.index("V1")
 _INDICE_REFERENCIA_TIRA = 3  # dentro de `referencias_x`: 0..2 = filas de la grilla, 3 = tira
+VERSION_EXTRACTOR = 2  # v1 tenía la orientación del tiempo invertida -- ver docstring del módulo
+
+# Umbrales de validación fisiológica (`_validar_fisiologia`): residuo de
+# Einthoven/Goldberger medido contra el ECG real ~4-5% del RMS de referencia;
+# se deja margen amplio (20%) porque el objetivo es detectar una asignación
+# de columna/fila cruzada (residuo grande), no exigir una señal de calidad
+# de laboratorio.
+UMBRAL_RESIDUO_EINTHOVEN = 0.20
+UMBRAL_RESIDUO_GOLDBERGER = 0.20
+# Correlación V1-grilla vs V1-tira medida en el ECG real: r=1,000 (misma
+# derivación, dos trazos independientes) -- 0.8 deja margen amplio y sigue
+# rechazando cualquier desalineación temporal o cruce de columna.
+UMBRAL_CORRELACION_V1 = 0.8
 
 
 def construir_senal(trazos: tuple[Trazo, ...]) -> SenalEcg | None:
-    """`None` si el layout no valida contra la geometría esperada."""
+    """`None` si el layout no valida contra la geometría esperada, la
+    dirección del tiempo es ambigua, o la señal no pasa la validación
+    fisiológica (`_validar_fisiologia`)."""
     clasificacion = _clasificar(trazos)
     if clasificacion is None:
         return None
     pulsos, derivaciones, tira = clasificacion
 
-    asignacion_grilla, centroides_fila = _asignar_derivaciones(derivaciones)
+    direccion, y_pulsos_promedio = _direccion_y_referencia_pulsos(pulsos, derivaciones, tira)
+    if direccion is None:
+        return None
+
+    asignacion_grilla, centroides_fila = _asignar_derivaciones(derivaciones, direccion, y_pulsos_promedio)
     if asignacion_grilla is None:
         return None
 
@@ -72,26 +114,58 @@ def construir_senal(trazos: tuple[Trazo, ...]) -> SenalEcg | None:
 
     matriz = np.zeros((12, MUESTRAS_TIRA), dtype=np.int16)
     mascara = np.zeros((12, MUESTRAS_TIRA), dtype=bool)
+    muestras_grilla_v1: tuple[int, np.ndarray] | None = None
 
     for indice_lead, trazo in asignacion_grilla.items():
         fila = indice_lead % 3
         x_pie, escala_mm = calibracion_por_referencia[fila]
-        muestras = _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=x_pie, escala_mm=escala_mm)
+        muestras = _muestrear(trazo, MUESTRAS_DERIVACION, x_pie=x_pie, escala_mm=escala_mm, direccion=direccion)
         if muestras is None:
             return None
         columna = indice_lead // 3
         inicio = OFFSETS_COLUMNA[columna]
         matriz[indice_lead, inicio : inicio + MUESTRAS_DERIVACION] = muestras
         mascara[indice_lead, inicio : inicio + MUESTRAS_DERIVACION] = True
+        if indice_lead == INDICE_TIRA_RITMO:
+            # se sobrescribe más abajo con la tira -- se guarda para validar
+            # contra ella ANTES de descartarla (ver `_validar_fisiologia`)
+            muestras_grilla_v1 = (inicio, muestras)
 
     x_pie_tira, escala_tira = calibracion_por_referencia[_INDICE_REFERENCIA_TIRA]
-    muestras_tira = _muestrear(tira, MUESTRAS_TIRA, x_pie=x_pie_tira, escala_mm=escala_tira)
+    muestras_tira = _muestrear(tira, MUESTRAS_TIRA, x_pie=x_pie_tira, escala_mm=escala_tira, direccion=direccion)
     if muestras_tira is None:
         return None
+
+    if not _validar_fisiologia(matriz, muestras_grilla_v1, muestras_tira):
+        return None
+
     matriz[INDICE_TIRA_RITMO, :] = muestras_tira
     mascara[INDICE_TIRA_RITMO, :] = True
 
-    return SenalEcg(muestras_uv=matriz, mascara=mascara)
+    return SenalEcg(muestras_uv=matriz, mascara=mascara, version_extractor=VERSION_EXTRACTOR)
+
+
+def _direccion_y_referencia_pulsos(
+    pulsos: list[Trazo], derivaciones: list[Trazo], tira: Trazo
+) -> tuple[int | None, float]:
+    """Deriva el sentido en que avanza el tiempo a partir de la posición de
+    los pulsos: SIEMPRE marcan el inicio del registro (medido), así que el
+    tiempo avanza alejándose de ellos. `+1` si el tiempo avanza con Y
+    creciente (pulsos más allá del Y mínimo de las derivaciones), `-1` si
+    avanza con Y decreciente (pulsos más allá del Y máximo). `None` si los
+    pulsos no quedan claramente más allá de un extremo (ambiguo -- nunca se
+    asume una dirección por defecto)."""
+    y_pulsos = [y for pulso in pulsos for _x, y in pulso]
+    y_pulsos_promedio = sum(y_pulsos) / len(y_pulsos)
+
+    y_trazas = [y for trazo in (*derivaciones, tira) for _x, y in trazo]
+    y_minimo, y_maximo = min(y_trazas), max(y_trazas)
+
+    if y_pulsos_promedio > y_maximo:
+        return -1, y_pulsos_promedio
+    if y_pulsos_promedio < y_minimo:
+        return 1, y_pulsos_promedio
+    return None, y_pulsos_promedio
 
 
 def _clasificar(
@@ -121,27 +195,52 @@ def _clasificar(
 
 
 def _asignar_derivaciones(
-    derivaciones: list[Trazo],
+    derivaciones: list[Trazo], direccion: int, y_pulsos_promedio: float
 ) -> tuple[dict[int, Trazo], tuple[float, float, float]] | tuple[None, None]:
-    """Agrupa por columna (Y de inicio -> ventana temporal) y por fila (X
-    promedio -> banda de amplitud), design.md paso "Asignación". Devuelve
-    también el centroide de X de cada fila -- lo necesita `_calibrar_pulsos`
-    para emparejar cada pulso con su banda. `(None, None)` si no quedan
-    exactamente 4x3 celdas disjuntas (violación de layout)."""
-    inicios_y = [trazo[0][1] for trazo in derivaciones]
+    """Agrupa por columna (ventana temporal) y por fila (X promedio -> banda
+    de amplitud), design.md paso "Asignación". El agrupamiento por columna
+    usa el CENTROIDE de Y (robusto al orden en que `get_drawings()` entrega
+    los puntos); el ORDEN temporal real de esas columnas (cuál es la 0,
+    ventana 0-2,5s, etc.) se deriva de la distancia de cada columna a los
+    pulsos -- SIEMPRE la más cercana es la columna 0 (los pulsos marcan el
+    inicio del registro, `direccion` ya viene resuelto por
+    `_direccion_y_referencia_pulsos`). Devuelve también el centroide de X de
+    cada fila -- lo necesita `_calibrar_pulsos` para emparejar cada pulso con
+    su banda. `(None, None)` si no quedan exactamente 4x3 celdas disjuntas
+    (violación de layout)."""
+    centros_y = [sum(y for _x, y in trazo) / len(trazo) for trazo in derivaciones]
     centros_x = [sum(x for x, _y in trazo) / len(trazo) for trazo in derivaciones]
 
-    columnas = _particionar(inicios_y, 4)
+    grupos_y = _particionar(centros_y, 4)
     filas = _particionar(centros_x, 3)
-    if columnas is None or filas is None:
+    if grupos_y is None or filas is None:
         return None, None
+
+    # extremo de cada trazo más cercano a los pulsos (arranque temporal real
+    # de esa derivación): Y máximo si el tiempo avanza hacia Y decreciente,
+    # Y mínimo si avanza hacia Y creciente.
+    extremos_por_grupo: dict[int, list[float]] = {}
+    for grupo, trazo in zip(grupos_y, derivaciones):
+        ys = [y for _x, y in trazo]
+        extremo = max(ys) if direccion == -1 else min(ys)
+        extremos_por_grupo.setdefault(grupo, []).append(extremo)
+
+    distancia_por_grupo = {
+        grupo: abs(y_pulsos_promedio - sum(valores) / len(valores))
+        for grupo, valores in extremos_por_grupo.items()
+    }
+    orden_columnas = sorted(distancia_por_grupo, key=lambda grupo: distancia_por_grupo[grupo])
+    if len(orden_columnas) != 4:
+        return None, None
+    columna_real = {grupo_arbitrario: indice for indice, grupo_arbitrario in enumerate(orden_columnas)}
 
     asignacion: dict[int, Trazo] = {}
     suma_por_fila = [0.0, 0.0, 0.0]
     cuenta_por_fila = [0, 0, 0]
     for indice_derivacion, trazo in enumerate(derivaciones):
         fila = filas[indice_derivacion]
-        indice_lead = columnas[indice_derivacion] * 3 + fila
+        columna = columna_real[grupos_y[indice_derivacion]]
+        indice_lead = columna * 3 + fila
         if indice_lead in asignacion:
             return None, None  # dos derivaciones en la misma celda: filas no disjuntas
         asignacion[indice_lead] = trazo
@@ -246,20 +345,26 @@ def _emparejar_por_proximidad(valores: list[float], referencias: list[float]) ->
     return asignacion
 
 
-def _muestrear(trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float) -> np.ndarray | None:
+def _muestrear(
+    trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float, direccion: int = 1
+) -> np.ndarray | None:
     """Reconstruye `cantidad` muestras uniformes a `FRECUENCIA_HZ` en µV a
     partir de los puntos (mm) del trazo, calibrado con `(x_pie, escala_mm)`
     del pulso de su banda de amplitud (nunca con una constante de signo ni
     con el promedio del propio trazo). Siempre interpola (idempotente si ya
     estaban equiespaciados, design.md: desvío > 1% dispara interpolar) para
-    no bifurcar el código por ese caso."""
-    ordenados = sorted(trazo, key=lambda punto: punto[1])
+    no bifurcar el código por ese caso.
+
+    `direccion` (`+1`/`-1`, ver `_direccion_y_referencia_pulsos`): el primer
+    punto en el tiempo es el de Y mínima si `direccion=1`, el de Y máxima si
+    `direccion=-1` -- nunca se asume Y creciente = tiempo creciente."""
+    ordenados = sorted(trazo, key=lambda punto: direccion * punto[1])
     ys = np.array([y for _x, y in ordenados], dtype=float)
     xs = np.array([x for x, _y in ordenados], dtype=float)
     if len(set(ys)) < 2:
         return None
 
-    tiempos_s = (ys - ys[0]) / MM_POR_S
+    tiempos_s = direccion * (ys - ys[0]) / MM_POR_S
     mv = (xs - x_pie) / escala_mm
 
     duracion_objetivo = (cantidad - 1) / FRECUENCIA_HZ
@@ -295,3 +400,50 @@ def _muestrear(trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float) -
     if np.any(np.abs(muestras_uv) > AMPLITUD_MAXIMA_UV):
         return None
     return muestras_uv.astype(np.int16)
+
+
+def _validar_fisiologia(
+    matriz: np.ndarray, muestras_grilla_v1: tuple[int, np.ndarray] | None, muestras_tira: np.ndarray
+) -> bool:
+    """Última barrera antes de aceptar la señal: cada banda de amplitud
+    puede haber calibrado perfectamente y la señal seguir cruzada (columna o
+    fila mal asignada). Verifica las identidades de Einthoven y Goldberger
+    -- válidas en todo instante, no sólo en reposo -- sobre las derivaciones
+    YA ubicadas en `matriz`, y que la V1 de la grilla (a punto de
+    descartarse) coincide con el segmento equivalente de la tira. Cualquier
+    residuo por fuera de umbral -- `False`, la señal se descarta completa."""
+    indice = {derivacion: i for i, derivacion in enumerate(ORDEN_DERIVACIONES)}
+
+    ventana_miembros = slice(OFFSETS_COLUMNA[0], OFFSETS_COLUMNA[0] + MUESTRAS_DERIVACION)
+    i = matriz[indice["I"], ventana_miembros].astype(float)
+    ii = matriz[indice["II"], ventana_miembros].astype(float)
+    iii = matriz[indice["III"], ventana_miembros].astype(float)
+    rms_ii = np.sqrt(np.mean(ii**2))
+    if rms_ii == 0:
+        return False
+    residuo_einthoven = np.sqrt(np.mean((ii - (i + iii)) ** 2))
+    if residuo_einthoven / rms_ii > UMBRAL_RESIDUO_EINTHOVEN:
+        return False
+
+    ventana_aumentada = slice(OFFSETS_COLUMNA[1], OFFSETS_COLUMNA[1] + MUESTRAS_DERIVACION)
+    avr = matriz[indice["aVR"], ventana_aumentada].astype(float)
+    avl = matriz[indice["aVL"], ventana_aumentada].astype(float)
+    avf = matriz[indice["aVF"], ventana_aumentada].astype(float)
+    rms_aumentadas = np.sqrt(np.mean(np.concatenate([avr, avl, avf]) ** 2))
+    if rms_aumentadas == 0:
+        return False
+    residuo_goldberger = np.sqrt(np.mean((avr + avl + avf) ** 2))
+    if residuo_goldberger / rms_aumentadas > UMBRAL_RESIDUO_GOLDBERGER:
+        return False
+
+    if muestras_grilla_v1 is not None:
+        inicio, grilla_v1 = muestras_grilla_v1
+        grilla_v1 = grilla_v1.astype(float)
+        ventana_tira = muestras_tira[inicio : inicio + MUESTRAS_DERIVACION].astype(float)
+        if np.std(grilla_v1) == 0 or np.std(ventana_tira) == 0:
+            return False
+        correlacion = np.corrcoef(grilla_v1, ventana_tira)[0, 1]
+        if correlacion < UMBRAL_CORRELACION_V1:
+            return False
+
+    return True
