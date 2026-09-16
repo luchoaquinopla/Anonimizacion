@@ -61,6 +61,8 @@ dominio (ver `destinos/postgres.py`).
 
 from __future__ import annotations
 
+from typing import Callable
+
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.pii.redaccion import DetectorEntidades, redactar_texto
@@ -212,6 +214,41 @@ def _contenido_eco_salida(
     )
 
 
+def _construir_contenido_laboratorio(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoLaboratorioSalida:
+    id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
+    return _contenido_laboratorio_salida(documento, id_medico)
+
+
+def _construir_contenido_ecg(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoEcgSalida:
+    id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
+    return _contenido_ecg_salida(documento, id_medico)
+
+
+def _construir_contenido_eco(
+    documento: DocumentoParseado, adicionales: dict, pepper: bytes, motor_pii: DetectorEntidades | None
+) -> ContenidoEcoSalida:
+    id_medico_solicitante = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE)
+    nombres_conocidos = _nombres_conocidos_documento(documento)
+    return _contenido_eco_salida(documento, pepper, id_medico_solicitante, motor_pii, nombres_conocidos)
+
+
+# Registry por tipo (Requisito 3, extensibilidad-tipo-documento): mismo idioma
+# que `parseo/registro.py` y `reconciliacion/registro.py`, ya no una cadena
+# if/elif/else. `construir_registro` preserva `ValueError` si el tipo falta
+# -- no se convierte en `KeyError` crudo (no es el mismo contrato de error).
+_CONSTRUCTORES_POR_TIPO: dict[
+    TipoDocumento, Callable[[DocumentoParseado, dict, bytes, "DetectorEntidades | None"], object]
+] = {
+    TipoDocumento.LABORATORIO: _construir_contenido_laboratorio,
+    TipoDocumento.ECG: _construir_contenido_ecg,
+    TipoDocumento.ECOCARDIOGRAMA: _construir_contenido_eco,
+}
+
+
 def construir_registro(
     documento: DocumentoParseado,
     claves: ClavesPaciente,
@@ -228,22 +265,10 @@ def construir_registro(
 
     adicionales = dict(documento.adicionales)
 
-    if documento.tipo_documento is TipoDocumento.LABORATORIO:
-        id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
-        contenido = _contenido_laboratorio_salida(documento, id_medico)
-    elif documento.tipo_documento is TipoDocumento.ECG:
-        id_medico = _pseudonimizar_medico_de_adicionales(adicionales, pepper, _CLAVE_MEDICO_DERIVANTE)
-        contenido = _contenido_ecg_salida(documento, id_medico)
-    elif documento.tipo_documento is TipoDocumento.ECOCARDIOGRAMA:
-        id_medico_solicitante = _pseudonimizar_medico_de_adicionales(
-            adicionales, pepper, _CLAVE_MEDICO_SOLICITANTE
-        )
-        nombres_conocidos = _nombres_conocidos_documento(documento)
-        contenido = _contenido_eco_salida(
-            documento, pepper, id_medico_solicitante, motor_pii, nombres_conocidos
-        )
-    else:
+    constructor = _CONSTRUCTORES_POR_TIPO.get(documento.tipo_documento)
+    if constructor is None:
         raise ValueError(f"tipo_documento no soportado por construir_registro: {documento.tipo_documento!r}")
+    contenido = constructor(documento, adicionales, pepper, motor_pii)
 
     return RegistroAnonimizado(
         id_paciente=claves.id_paciente,
