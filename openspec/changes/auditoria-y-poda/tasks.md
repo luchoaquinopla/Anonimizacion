@@ -352,19 +352,56 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 
 ## Fase 5 — Entrega 5: retiro de Celery/Redis y métricas muertas (PR5)
 
-- [ ] 5.1 Confirmar por grep que ningún llamador de producción usa `.delay()`; sólo
-      `tests/trabajadores/test_tareas.py:143`.
-- [ ] 5.2 Eliminar `trabajadores/app.py` y el decorador `@app.task` en `tareas.py:150`; dejar
-      invocación directa de `procesar_grupo`.
-- [ ] 5.3 Eliminar o adaptar `tests/trabajadores/test_tareas.py:143` a invocación directa.
-- [ ] 5.4 Eliminar `observabilidad/metricas.py`; eliminar sus usos en `ejecutor.py:334,610,647`
-      y la instancia `MetricasEnMemoria()` de `tareas.py:135`.
-- [ ] 5.5 Eliminar `CODIGOS_SEGUROS` en `observabilidad/bitacora_segura.py:56`.
-- [ ] 5.6 Quitar `celery`/`redis` de `pyproject.toml:18-19`.
-- [ ] 5.7 Editar `deploy/operacion-institucional.md:48-51`: quitar las 4 variables `CELERY_*`.
-- [ ] 5.8 Verificación: `grep -r "import celery" src/` sin resultados; el test de reporte de
-      corrida de E0 (0.11) sigue pasando **sin modificarse**; `MetricasDespacho` intacta.
-- [ ] 5.9 `uv run pytest -q -m "not postgres"` y `-m postgres` verdes.
+- [x] 5.1 Confirmado por `rg -n "\.delay\("`: único resultado en `src/`+`tests/` es
+      `tests/trabajadores/test_tareas.py:143` (ahora reemplazado, ver 5.3). Todo llamador de
+      producción (`comandos/procesar.py:155`, `despacho_paralelo.py:283`, y los tests de
+      integración/wiring) invoca `tareas.procesar_grupo(...)` en directo.
+- [x] 5.2 Eliminado `trabajadores/app.py` (y su test dedicado `tests/trabajadores/test_app.py`,
+      que sólo probaba ese módulo); quitado el decorador `@app.task(name=...)` y el import de
+      `app`/`aplicar_configuracion_cola` en `tareas.py`. `procesar_grupo` queda como función
+      común, invocada en directo por todo llamador de producción (confirmado en 5.1).
+- [x] 5.3 Reemplazado `test_procesar_grupo_via_delay_no_requiere_broker_real` por
+      `test_procesar_grupo_invocado_en_directo_devuelve_el_resumen_trazable` (invocación directa,
+      mismo assert sobre el resumen trazable devuelto). También corregido
+      `test_procesar_grupo_recibe_exactamente_corrida_id_y_referencias`: usaba
+      `tareas.procesar_grupo.run` (atributo de Celery, ya no existe sin el decorador) ->
+      `inspect.signature(tareas.procesar_grupo)` directo.
+- [x] 5.4 Eliminado `observabilidad/metricas.py` (`ColectorMetricas`/`MetricasEnMemoria`) y su
+      test dedicado `tests/observabilidad/test_metricas.py`. En `ejecutor.py`: quitado el
+      parámetro `metricas`/`self._metricas`, el método `_observar_duracion`, los 3 usos de
+      escritura (`incrementar_documento_procesado`, `incrementar_fallo`, `observar_duracion_ms`
+      vía `observar=` en `_ejecutar_con_reintentos`) y el parámetro `observar` de
+      `_ejecutar_con_reintentos` (sin consumidor una vez retirada la métrica de duración). En
+      `tareas.py`: quitado el parámetro `metricas` de `construir_fabrica_ejecutor` y la
+      instancia `MetricasEnMemoria()` por grupo en `_fabrica()`. Adaptado
+      `tests/pipeline/test_observabilidad_cableada.py`: retirados `_ColectorEspia`/
+      `_ColectorQueExplota` y las aserciones sobre `espia_metricas`; el test de resiliencia
+      (invariante 3, "la observabilidad es accesoria") se conserva pero ahora ejercita una
+      `_BitacoraQueExplota` en vez de un colector de métricas roto, preservando la cobertura de
+      la propiedad sin el sistema retirado.
+- [x] 5.5 Eliminado `CODIGOS_SEGUROS` en `observabilidad/bitacora_segura.py:56` (sin llamador,
+      confirmado por `rg -n "CODIGOS_SEGUROS"` -> sólo su propia declaración antes del borrado);
+      retirado el import ahora sin uso de `CodigoErrorDocumento` en ese módulo.
+- [x] 5.6 Quitado `celery>=5.3`/`redis>=5.0` de `pyproject.toml`. `uv lock` retiró las 14
+      transitivas (`amqp`, `billiard`, `kombu`, `vine`, etc.) sin tocarlas a mano.
+- [x] 5.7 Editado `deploy/operacion-institucional.md`: quitadas las 4 filas `CELERY_*` de la
+      tabla de variables protegidas, "PostgreSQL/Redis" -> "PostgreSQL" en permisos y en la
+      lista de salida a producción, y reescrita la mención de línea 5 ("el camino de
+      Celery/Redis... modo de despliegue aparte") para que ya no implique que existe una
+      cáscara semi-lista -- ahora dice explícitamente que se retiró en esta entrega y que el
+      paralelismo real es `ProcessPoolExecutor`. También limpiado `deploy/variables-entorno.example`
+      (mismas 4 variables) y actualizado `tests/deploy/test_documentacion_despliegue.py` para
+      afirmar la AUSENCIA de `CELERY_` en ambos archivos en vez de su presencia.
+- [x] 5.8 Verificación: `rg -n "celery|Celery" src/ pyproject.toml docker-compose.yml deploy/`
+      -> sin resultados de import ni de variable `CELERY_*` (sólo prosa histórica en
+      `despacho_paralelo.py`/`politica_reintentos.py` explicando por qué se descartó Celery+Redis
+      como mecanismo de concurrencia, ninguna importa el paquete). `test_reporte_corrida.py`
+      (E0, Requisito 5) sigue pasando **sin modificarse** (`git diff feat/auditoria-y-poda --stat
+      -- tests/caracterizacion/` vacío). `MetricasDespacho` (`despacho_paralelo.py:330`) intacta:
+      `tests/trabajadores/test_despacho_paralelo.py` 15/15 verde.
+- [x] 5.9 `uv run pytest -q -m "not postgres"` -> 1026 passed, 1 skipped (symlink Windows,
+      preexistente), 0 failed. `uv run pytest -q -m postgres` -> 28 passed. `uv run pytest -q -m
+      caracterizacion` -> 17 passed. `ruff check .` -> All checks passed.
 
 ## Fase 6 — Entrega 6: migración a Obsidian + poda (PR6a–PR6f)
 
