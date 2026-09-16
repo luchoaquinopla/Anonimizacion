@@ -73,6 +73,15 @@ ORDEN_EMBUDO: tuple[Etapa, ...] = (
     Etapa.SALIDA,
 )
 
+#: Miembros del enum unificado que a propósito no aparecen en `ORDEN_EMBUDO`,
+#: con su motivo (spec Requisito 4, "cobertura del desglose"). Ninguna de las
+#: dos produce cuarentena, así que sumarlas al desglose sólo agregaría filas
+#: con `llegaron = apartados = 0`.
+ETAPAS_EXCLUIDAS_DEL_EMBUDO: tuple[Etapa, ...] = (
+    Etapa.DETECCION,
+    Etapa.DETECCION_PII,
+)
+
 ETAPAS_EMBUDO: tuple[str, ...] = tuple(etapa.value for etapa in ORDEN_EMBUDO)
 
 _CODIGO_SOBRETAMANO = "artefacto_sobretamano"
