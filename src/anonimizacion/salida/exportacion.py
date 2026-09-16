@@ -116,8 +116,21 @@ ESQUEMA_ECG = pa.schema(
         ("frecuencia_hz", pa.int32()),
         ("version_extractor", pa.int32()),
         ("version_formato", pa.int32()),
-        ("muestras_uv", pa.list_(pa.int16(), _MUESTRAS_SENAL_APLANADA)),
-        ("mascara", pa.list_(pa.bool_(), _MUESTRAS_SENAL_APLANADA)),
+        # Lista de largo VARIABLE (no `pa.list_(tipo, _MUESTRAS_SENAL_APLANADA)`
+        # fijo), a propósito: pyarrow 25.0.1 (repo pinneado) no hace un
+        # round-trip correcto a través de Parquet de un `FixedSizeListArray`
+        # cuando TODAS las filas de una página son `None` (bug confirmado por
+        # auditoría, reproducido con `pa.Table.from_pylist`/`FixedSizeListArray.
+        # from_arrays` directo, ambos fallan igual al releer con
+        # `ArrowInvalid: Expected all lists to be of size=N but index K had
+        # size=0`) -- escenario nada hipotético: cualquier página cuyos ECG
+        # todavía no tengan señal capturada (grado de cobertura real del
+        # extractor) lo dispara. El invariante de largo exacto (60000 =
+        # 12×5000) sigue garantizado por `SenalEcg.__post_init__` para toda
+        # fila no nula; sólo cambia el tipo de columna Parquet, no el
+        # contenido ni el criterio de validez.
+        ("muestras_uv", pa.list_(pa.int16())),
+        ("mascara", pa.list_(pa.bool_())),
     ]
 )
 
