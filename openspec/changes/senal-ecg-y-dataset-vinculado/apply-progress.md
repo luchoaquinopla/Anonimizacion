@@ -730,3 +730,39 @@ contract del turno (commits, tamaño del cambio, riesgos). Resumen:
   cierre: la tarea 4.6 lo exige con aprobación de un integrante antes de
   cargarlo (AGENTS.md), y este agente no tiene acceso al vault -- queda
   explícitamente pendiente, no tildado por descuido.
+
+### Corrección de revisión adversarial (commit `be5a919`, misma rama)
+
+El orquestador señaló, con razón, que ningún test fijaba TIPO ni ORDEN del
+esquema Arrow de los 4 Parquet -- sólo nombres de columna (lista blanca de
+PII). Eso es exactamente lo que dejó pasar el cambio de `pa.list_(tipo, N)`
+a `pa.list_(tipo)` sin que nada lo detectara. Agregado
+`tests/salida/test_esquema_arrow_de_exportacion.py`:
+
+1. **Esquema exacto por tabla** (4 tests): tipos escritos como literales en
+   el propio test, nunca importados de `ESQUEMA_EPISODIOS`/`ESQUEMA_ECG`/
+   `ESQUEMA_LABORATORIO`/`ESQUEMA_ECO` -- importar esos esquemas habría hecho
+   del test un espejo, no un oráculo (mismo error ya cometido y corregido dos
+   veces antes en esta cadena: el fixture de amplitud de la entrega 1 y el
+   test de PII vacuo de la entrega 2b). `muestras_uv`/`mascara` fijados
+   explícitamente como `list<int16>`/`list<bool>` de largo VARIABLE, con un
+   comentario de una línea explicando por qué no son de largo fijo.
+2. **Test de regresión del bug de pyarrow**: puebla DOS episodios con ECG sin
+   ninguna fila de `SenalEcgOrm` (ambas filas de la página con
+   `muestras_uv`/`mascara` en `None`), exporta, relee desde el `.parquet`
+   escrito en disco, y confirma que no lanza `ArrowInvalid` y que ambas
+   columnas siguen siendo `None` -- exactamente el escenario que rompía antes
+   de la corrección (`ArrowInvalid: Expected all lists to be of size=N but
+   index K had size=0`, pyarrow 25.0.1).
+
+Verificación tras esta corrección: `uv run pytest -q` → **1026 passed, 1
+skipped** (mismo skip ambiental de symlink Windows). Una corrida completa
+anterior mostró `tests/integracion/test_reintentar_no_duplica.py::
+test_reintentar_dos_veces_no_duplica_cuarentena_ni_estudio` fallando con
+`UndefinedTable: relation "corrida" does not exist` (warning de excepción no
+manejada en un hilo de fondo) -- reproducido aislado DOS veces, ambas
+pasaron; una segunda corrida completa también pasó sin ese fallo. Se
+documenta como flake preexistente de aislamiento entre tests (no relacionado
+con este cambio), no como hallazgo nuevo. `uv run pytest -q -m postgres` →
+**26 passed**, sin tocar la base compartida. `uv run --extra dev ruff check
+.` → limpio.
