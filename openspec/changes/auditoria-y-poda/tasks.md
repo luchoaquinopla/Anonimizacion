@@ -49,9 +49,16 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 - [x] 0.3 Escribir `test_pipeline_punta_a_punta.py` (Requisito 1): corpus sintético con
       episodio completo/incompleto/ambiguo/cuarentena, fija filas y registro de salida. Verde.
 - [x] 0.4 Romper a propósito la reconciliación (aprobar campo sin evidencia); confirmar rojo;
-      pegar evidencia en el PR; restaurar el código. Evidencia: 4 tests preexistentes de
-      `tests/reconciliacion/` en rojo (ver apply-progress); el test punta a punta de E0 queda
-      verde -- caracteriza la superficie, no la estructura interna (design.md, D1).
+      pegar evidencia en el PR; restaurar el código. Evidencia (corregida tras revisión del
+      orquestador -- ver apply-progress "Corrección post-revisión"): nuevo test
+      `test_un_vent_rate_publicado_sin_evidencia_real_hoy_se_aparta_por_valor_discrepante`
+      en `test_pipeline_punta_a_punta.py`. Corpus: laboratorio (puente de identidad) + ECG en
+      el mismo lote, con un `obtener_parseador` que corrompe `vent_rate` a `"160"` (el valor
+      real de `PR interval`, sin evidencia real de ser `Vent. rate`) DESPUÉS de parsear, sin
+      tocar `fuentes`. Hoy: el ECG se aparta con `VALOR_DISCREPANTE`/`reconciliacion`, ninguna
+      fila en `medicion_ecg`. Mutando `_comun.py` (deshabilitando el chequeo de
+      `validador_asociacion`): el ECG pasa a `ExitoDocumento` y `medicion_ecg` publica
+      `vent_rate="160"` -- el propio test punta a punta se pone en ROJO. Revertido.
 - [x] 0.5 Escribir `test_contrato_cli.py` (Requisito 2): banderas, defaults efectivos y
       códigos de salida por subcomando. Verde.
 - [x] 0.6 Romper a propósito un código de salida de un subcomando; confirmar rojo; evidencia;
