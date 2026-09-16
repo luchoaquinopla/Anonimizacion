@@ -402,6 +402,24 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 - [x] 5.9 `uv run pytest -q -m "not postgres"` -> 1026 passed, 1 skipped (symlink Windows,
       preexistente), 0 failed. `uv run pytest -q -m postgres` -> 28 passed. `uv run pytest -q -m
       caracterizacion` -> 17 passed. `ruff check .` -> All checks passed.
+- [x] 5.10 (no en el plan original, residuo encontrado en revisión del orquestador) — retirado
+      `trabajadores/politica_reintentos.py` completo (módulo huérfano de Celery: su docstring
+      declaraba explícitamente el "formato que espera un `@app.task(...)` de Celery" -- el
+      decorador que 5.2 ya había borrado) y su test dedicado
+      `tests/trabajadores/test_politica_reintentos.py`. Confirmado por `rg -n
+      "politica_reintentos" --glob '!**/politica_reintentos.py' .` -> cero importadores de
+      producción, único importador el propio test. Confirmado que `BACKOFF_SEGUNDOS`/
+      `MAX_REINTENTOS` (mismo nombre, trampa señalada por el orquestador) que SÍ usa producción
+      viven y se importan de `pipeline/ejecutor.py:79-80`, no del módulo retirado -- ese import
+      no se tocó. Limpiadas las 2 referencias por nombre que quedaban en comentarios
+      (`dominio/errores.py:66`, `pipeline/ejecutor.py:77`); conservadas las de
+      `despacho_paralelo.py:96,231` (documentan la decisión de arquitectura de descartar
+      Celery+Redis, no un módulo inexistente). Verificación tras el borrado: `uv run pytest -q
+      -m "not postgres"` -> 1024 passed, 1 skipped, 0 failed (el flake preexistente
+      `test_despachar_en_paralelo_..._distintos` apareció en una corrida bajo carga y confirmó
+      15/15 aislado, mismo patrón ya documentado, no es regresión); `-m postgres` -> 28 passed;
+      `-m caracterizacion` -> 17 passed, `git diff feat/auditoria-y-poda --stat --
+      tests/caracterizacion/` vacío; `ruff check .` -> All checks passed.
 
 ## Fase 6 — Entrega 6: migración a Obsidian + poda (PR6a–PR6f)
 
