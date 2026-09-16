@@ -531,10 +531,19 @@ arquitectura, formato del vault existente):
       `tests/prosa/` → 8/8 passed en el estado actual (árbol idéntico a la base, sin
       violaciones). `git diff feat/auditoria-y-poda --stat` sigue acotado a
       `tests/prosa/` + `tasks.md` -- nada de Obsidian, nada de poda real todavía.
-- [ ] 6.11 PR6a — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
-      `configuracion.py`): docstrings ≤2 líneas; compuerta AST verde.
-- [ ] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortar; insertar puntero
-      del invariante 7 en `trazos_pymupdf.py:22`/`senal_ecg.py`; compuerta AST verde.
+- [x] 6.11 PR6b — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
+      `configuracion.py`, más `esqueleto.py`/`diagnostico.py` asignados por el orquestador):
+      docstrings ≤2 líneas; compuerta AST verde. Prosa: 1110 → 191 líneas (16 archivos).
+      Commit `dcc0e77` en `pr6b/poda-de-prosa` (desde `feat/auditoria-y-poda`@`0655e8d`).
+- [x] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortado; insertado puntero
+      del invariante 7 en `extraccion/trazos_pymupdf.py` (constante `_ANCHO_TRAZO_PT`) y
+      `extraccion/senal_ecg.py` (docstring del módulo + umbrales de validación fisiológica);
+      compuerta AST verde. Prosa: 927 → 243 líneas (19 archivos). Docstrings de más de 2 líneas
+      conservados como excepción justificada en 5 módulos que llevan punteros protegidos a
+      `sdd/pdf-pii-anonymization/apply-progress` o el invariante de calibración del ECG
+      (`extraccion/senal_ecg.py`, `deteccion/firmas/ecg_mortara.py`, `parseo/ecg_mortara.py`,
+      `parseo/eco_doppler.py`, `parseo/laboratorio_general.py`). Commit `58c5b95` en
+      `pr6b/poda-de-prosa`.
 - [ ] 6.13 PR6c — grupo 3 (`reconciliacion/`, `pii/`, `pseudonimizacion/`): recortar; insertar
       puntero del invariante 8 en `dni_ar.py:43`; compuerta AST verde.
 - [ ] 6.14 PR6d — grupo 4 (`salida/`, `pipeline/`): recortar; insertar puntero del invariante 6
