@@ -43,7 +43,6 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from anonimizacion.dominio.errores import CodigoErrorDocumento
 from anonimizacion.pii.redaccion import DetectorEntidades, redactar_texto
 
 #: Defensa primaria (capa 1). Ver design.md, decisión "Sin PII en cola, logs
@@ -53,7 +52,6 @@ from anonimizacion.pii.redaccion import DetectorEntidades, redactar_texto
 CAMPOS_PERMITIDOS: frozenset[str] = frozenset(
     {"id_documento", "tipo_documento", "etapa", "codigo", "duracion_ms"}
 )
-CODIGOS_SEGUROS: frozenset[str] = frozenset(codigo.value for codigo in CodigoErrorDocumento)
 
 
 def _redactar(valor: Any, motor_pii: DetectorEntidades | None) -> Any:
