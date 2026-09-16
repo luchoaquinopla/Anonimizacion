@@ -53,7 +53,10 @@ import pyarrow.parquet as pq
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from typing import Callable
+
 from ..dominio.senal_ecg import FORMA as FORMA_SENAL
+from ..dominio.tipos_documento import TipoDocumento
 from .codec_senal import VERSION_FORMATO_ACTUAL, decodificar_mascara, decodificar_muestras
 from .constructor_registro import _CLAVES_PERSONAL
 from .modelos_orm import Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio, SenalEcgOrm
@@ -322,6 +325,61 @@ class _EscritoresPagina:
     eco: pq.ParquetWriter
 
 
+@dataclass
+class _ContextoTipos:
+    """Acumuladores por tipo, mutados por cada `_procesar_*` (Requisito 1,
+    extensibilidad-tipo-documento: mismo patrón que `postgres.py` --
+    whitelist y despacho son la MISMA estructura, `_PROCESADORES_POR_TIPO`)."""
+
+    mediciones_ecg: dict
+    senales: dict
+    mediciones_eco: dict
+    resultados_por_estudio: dict
+    filas_ecg: list[dict]
+    filas_laboratorio: list[dict]
+    filas_eco: list[dict]
+
+
+def _procesar_ecg(estudio: Estudio, ctx: _ContextoTipos) -> bool:
+    ctx.filas_ecg.append(_fila_ecg(estudio, ctx.mediciones_ecg.get(estudio.id_estudio), ctx.senales.get(estudio.id_estudio)))
+    return True
+
+
+def _procesar_laboratorio(estudio: Estudio, ctx: _ContextoTipos) -> bool:
+    resultados = ctx.resultados_por_estudio.get(estudio.id_estudio, [])
+    if not resultados:
+        return False
+    ctx.filas_laboratorio.extend(_filas_laboratorio(estudio, resultados))
+    return True
+
+
+def _procesar_eco(estudio: Estudio, ctx: _ContextoTipos) -> bool:
+    ctx.filas_eco.append(_fila_eco(estudio, ctx.mediciones_eco.get(estudio.id_estudio)))
+    return True
+
+
+# `Estudio.tipo_documento` es `String`, no un enum de SQLAlchemy -- se
+# compara contra `TipoDocumento.X.value` (fuente única del vocabulario de
+# tipos, `dominio/tipos_documento.py`), nunca contra literales sueltos como
+# antes ("ecg"/"laboratorio"). Whitelist == despacho: un tipo sin entrada
+# levanta `ValueError` explícito, nunca cae en un `else`.
+_PROCESADORES_POR_TIPO: dict[str, Callable[[Estudio, _ContextoTipos], bool]] = {
+    TipoDocumento.ECG.value: _procesar_ecg,
+    TipoDocumento.LABORATORIO.value: _procesar_laboratorio,
+    TipoDocumento.ECOCARDIOGRAMA.value: _procesar_eco,
+}
+
+# Claves cortas de `tiene_tipo`/columnas `tiene_*` del episodio -- NO son
+# idénticas a `TipoDocumento.value` ("eco" vs "ecocardiograma"): se
+# mantienen así porque son el nombre de columna Parquet ya publicado
+# (`ESQUEMA_EPISODIOS`), no un vocabulario a unificar en esta entrega.
+_CLAVE_TIENE_TIPO_POR_TIPO: dict[str, str] = {
+    TipoDocumento.ECG.value: "ecg",
+    TipoDocumento.LABORATORIO.value: "laboratorio",
+    TipoDocumento.ECOCARDIOGRAMA.value: "eco",
+}
+
+
 def _procesar_pagina(sesion: Session, pagina_ids: list[str], escritores: _EscritoresPagina) -> tuple[int, int, int, int]:
     """Arma y escribe las 4 tablas de UNA página de episodios. Extraído de
     `exportar_dataset` para bajar su complejidad ciclomática bajo el límite
@@ -352,22 +410,26 @@ def _procesar_pagina(sesion: Session, pagina_ids: list[str], escritores: _Escrit
     tiene_tipo: dict[str, dict[str, bool]] = {
         id_ep: {"ecg": False, "laboratorio": False, "eco": False} for id_ep in pagina_ids
     }
-    filas_ecg: list[dict] = []
-    filas_laboratorio: list[dict] = []
-    filas_eco: list[dict] = []
+    contexto = _ContextoTipos(
+        mediciones_ecg=mediciones_ecg,
+        senales=senales,
+        mediciones_eco=mediciones_eco,
+        resultados_por_estudio=resultados_por_estudio,
+        filas_ecg=[],
+        filas_laboratorio=[],
+        filas_eco=[],
+    )
 
     for estudio in estudios_pagina:
-        if estudio.tipo_documento == "ecg":
-            tiene_tipo[estudio.id_episodio]["ecg"] = True
-            filas_ecg.append(_fila_ecg(estudio, mediciones_ecg.get(estudio.id_estudio), senales.get(estudio.id_estudio)))
-        elif estudio.tipo_documento == "laboratorio":
-            resultados = resultados_por_estudio.get(estudio.id_estudio, [])
-            if resultados:
-                tiene_tipo[estudio.id_episodio]["laboratorio"] = True
-                filas_laboratorio.extend(_filas_laboratorio(estudio, resultados))
-        else:  # ecocardiograma
-            tiene_tipo[estudio.id_episodio]["eco"] = True
-            filas_eco.append(_fila_eco(estudio, mediciones_eco.get(estudio.id_estudio)))
+        procesador = _PROCESADORES_POR_TIPO.get(estudio.tipo_documento)
+        if procesador is None:
+            raise ValueError(f"tipo_documento no soportado por _procesar_pagina: {estudio.tipo_documento!r}")
+        if procesador(estudio, contexto):
+            tiene_tipo[estudio.id_episodio][_CLAVE_TIENE_TIPO_POR_TIPO[estudio.tipo_documento]] = True
+
+    filas_ecg = contexto.filas_ecg
+    filas_laboratorio = contexto.filas_laboratorio
+    filas_eco = contexto.filas_eco
 
     filas_episodios = [
         {

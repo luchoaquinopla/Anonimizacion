@@ -23,7 +23,10 @@ from typing import Sequence
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.pseudonimizacion.vinculacion import DocumentoParaVincular, vincular_episodios
 
-_TIPOS_REQUERIDOS = frozenset({
+# Default de `CoordinadorEpisodios.__init__` (Requisito 2, extensibilidad-tipo-documento):
+# antes constante de módulo usada directo en la comparación; ahora sólo el valor
+# por omisión de un parámetro inyectable, para no romper a los llamadores actuales.
+_TIPOS_REQUERIDOS_DEFAULT = frozenset({
     TipoDocumento.ECG,
     TipoDocumento.LABORATORIO,
     TipoDocumento.ECOCARDIOGRAMA,
@@ -61,8 +64,11 @@ class ResultadoCoordinacion:
 class CoordinadorEpisodios:
     """Agrupa estudios por ancla de siete días y decide sólo al cerrar la corrida."""
 
-    def __init__(self, pepper: bytes) -> None:
+    def __init__(
+        self, pepper: bytes, tipos_requeridos: frozenset[TipoDocumento] = _TIPOS_REQUERIDOS_DEFAULT
+    ) -> None:
         self._pepper = pepper
+        self._tipos_requeridos = tipos_requeridos
 
     def coordinar(
         self,
@@ -120,12 +126,14 @@ class CoordinadorEpisodios:
             for id_episodio, documentos_episodio in agrupados.items()
         ]
 
-    @staticmethod
-    def _motivo_cuarentena(episodio: EpisodioCoordinado) -> MotivoCuarentenaEpisodio | None:
+    def _motivo_cuarentena(self, episodio: EpisodioCoordinado) -> MotivoCuarentenaEpisodio | None:
         tipos = [documento.tipo_documento for documento in episodio.documentos]
         if len(tipos) != len(set(tipos)):
             return MotivoCuarentenaEpisodio.ASOCIACION_AMBIGUA
-        if set(tipos) != _TIPOS_REQUERIDOS:
+        # Diferencia de conjuntos, no igualdad exacta (Requisito 2): un 4to
+        # tipo no requerido presente ADEMÁS de los requeridos ya no cuarentena
+        # el episodio -- sólo lo hace la AUSENCIA de alguno de los requeridos.
+        if self._tipos_requeridos - set(tipos):
             return MotivoCuarentenaEpisodio.ESTUDIOS_FALTANTES
         return None
 
@@ -135,5 +143,6 @@ def coordinar_episodios(
     *,
     pepper: bytes,
     corrida_cerrada: bool,
+    tipos_requeridos: frozenset[TipoDocumento] = _TIPOS_REQUERIDOS_DEFAULT,
 ) -> ResultadoCoordinacion:
-    return CoordinadorEpisodios(pepper).coordinar(documentos, corrida_cerrada=corrida_cerrada)
+    return CoordinadorEpisodios(pepper, tipos_requeridos).coordinar(documentos, corrida_cerrada=corrida_cerrada)

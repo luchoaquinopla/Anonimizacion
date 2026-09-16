@@ -80,22 +80,84 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 
 ## Fase 1 — Entrega 1: trampas de extensión (PR1)
 
-- [ ] 1.1 RED — `tests/salida/test_destinos_postgres.py`: 4to tipo simulado en whitelist sin
-      escritor; hoy despacha silenciosamente a `_escribir_eco` (o similar) en vez de fallar.
-- [ ] 1.2 GREEN — `postgres.py:320-391`: `_ESCRITORES_POR_TIPO` dict único (whitelist=despacho);
-      `KeyError` explícito si falta el tipo.
-- [ ] 1.3 RED — `tests/pipeline/test_coordinador_episodios.py`: episodio con los 3 tipos
-      requeridos + un 4to tipo no requerido; hoy cae en `ESTUDIOS_FALTANTES` por `set() !=`.
-- [ ] 1.4 GREEN — `CoordinadorEpisodios.__init__(tipos_requeridos)`; comparación
-      `tipos_requeridos - set(tipos)` en `coordinador_episodios.py:128`; actualizar callers.
-- [ ] 1.5 RED — `tests/salida/test_constructor_registro.py`: 4to tipo sin constructor
-      registrado; afirma excepción explícita que nombra el tipo faltante.
-- [ ] 1.6 GREEN — `constructor_registro.py:231-246`: registry dict `_CONSTRUCTORES_POR_TIPO`,
-      `raise ValueError(...)` si falta (se preserva `ValueError`, no `KeyError` crudo).
-- [ ] 1.7 Redactar en el PR1 el acta de una línea: "episodio con 3 tipos requeridos + 4to tipo
-      deja de caer en ESTUDIOS_FALTANTES" (única divergencia semántica declarada).
-- [ ] 1.8 Verificación PR1: confirmar que 1.1/1.3/1.5 fallaban en el commit previo al arreglo
-      respectivo; `uv run pytest -q -m "not postgres"` y `-m postgres` verdes.
+- [x] 1.1 RED — `tests/salida/destinos/test_postgres.py` (el archivo real es
+      `destinos/test_postgres.py`, no `test_destinos_postgres.py`): 4to tipo simulado
+      (`_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA`, `str, Enum` propio -- ver 1.1-nota más
+      abajo) llamando a `_insertar` directo (bypasea la whitelist de `escribir_registro`, que
+      hoy sí rechaza tipos desconocidos). RED confirmado en commit `cafaf51` contra
+      `postgres.py` sin modificar: `Failed: DID NOT RAISE Exception` (cae al `else` mudo y
+      escribe en `medicion_eco`) y `AttributeError: 'EscritorPostgres' object has no attribute
+      '_escritores_por_tipo'` (Escenario 2).
+- [x] 1.2 GREEN — commit `962fd0d`: `_escritores_por_tipo` (dict de instancia, no de módulo)
+      único para whitelist y despacho en `postgres.py`; `ValueError` explícito en
+      `escribir_registro` (mismo mensaje de siempre) o `KeyError` si se llega a `_insertar` sin
+      pasar esa guarda.
+- [x] 1.3 RED — `tests/pipeline/test_coordinador_episodios.py`: episodio con los 3 tipos
+      requeridos + un 4to tipo simulado no requerido. RED confirmado en commit `a1ffed5` contra
+      `coordinador_episodios.py` sin modificar: `AssertionError: assert 0 == 1` (cae en
+      `ESTUDIOS_FALTANTES` por `set() !=`) y `TypeError: ...__init__() got an unexpected
+      keyword argument 'tipos_requeridos'`.
+- [x] 1.4 GREEN — commit `18011f7`: `CoordinadorEpisodios.__init__(pepper, tipos_requeridos=
+      _TIPOS_REQUERIDOS_DEFAULT)`; comparación `self._tipos_requeridos - set(tipos)` en
+      `coordinador_episodios.py`; `coordinar_episodios(...)` (función módulo) gana el mismo
+      parámetro con idéntico default, sin romper a `pipeline/ejecutor.py` ni a los tests
+      preexistentes que no lo pasan.
+- [x] 1.5 RED — `tests/salida/test_constructor_registro.py`: 4to tipo sin constructor
+      registrado. **Hallazgo de diseño (no es RED)**: el Escenario 1 ("sin constructor ->
+      excepción explícita") YA pasa hoy -- `construir_registro` ya termina en `else: raise
+      ValueError(...)` nombrando el tipo (design.md D1 lo documenta: este defecto es de
+      idioma/consistencia, no de falla silenciosa). El RED real es el Escenario 2 ("con
+      constructor registrado construye su registro"): hoy no existe ningún punto de extensión
+      para registrar un constructor sin editar la cadena `if/elif`. RED confirmado en commit
+      `ba3db52` contra `constructor_registro.py` sin modificar: `AttributeError: module
+      '...constructor_registro' has no attribute '_CONSTRUCTORES_POR_TIPO'`.
+- [x] 1.6 GREEN — commit `4d4cf18`: registry `_CONSTRUCTORES_POR_TIPO` (mismo idioma que
+      `parseo/registro.py` y `reconciliacion/registro.py`); `construir_registro` preserva
+      `ValueError` (no `KeyError` crudo) si el tipo no tiene constructor.
+- [x] 1.7 Acta de una línea (única divergencia semántica declarada de toda la cadena,
+      design.md D1): **"un episodio con los 3 tipos requeridos más un 4to tipo deja de caer en
+      ESTUDIOS_FALTANTES"**. Ningún otro comportamiento observable cambió -- confirmado por
+      `tests/caracterizacion/` sin modificar y en verde (1.8).
+- [x] 1.8 Verificación PR1: 1.1/1.3/1.5 confirmados en rojo en su commit respectivo (ver
+      evidencia arriba, y el reporte de `sdd-apply` para el detalle completo);
+      `uv run pytest -q -m "not postgres"` → 1026 passed, 1 skipped (symlink no soportado en
+      Windows, preexistente), 1 failed (`test_despachar_en_paralelo_..._distintos`,
+      PRE-EXISTENTE y sensible a la carga, confirmado en E0 -- no es de esta entrega);
+      `uv run pytest -q -m postgres` → 28 passed (sin cambios respecto a E0, ninguna prueba
+      nueva de esta entrega toca Postgres real); `tests/caracterizacion/` → 17 passed sin
+      modificarse (`git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío);
+      `ruff check .` → All checks passed. Tamaño real (a la fecha de esta verificación, antes
+      de 1.9/1.10): `git diff feat/auditoria-y-poda --numstat` → 274 líneas insertadas, 32
+      borradas.
+- [x] 1.9 RED — 4to defecto de la misma clase, encontrado en revisión adversarial y verificado
+      por el orquestador (fuera del alcance original de `tasks.md`, incorporado a esta entrega
+      porque `proposal.md` excluyó `exportacion.py` sólo para lógica NUEVA por tipo, no para
+      este patrón de despacho): `salida/exportacion.py::_procesar_pagina:359-370` despachaba
+      por `if/elif/else` -- cualquier `tipo_documento` que no fuera "ecg"/"laboratorio" caía en
+      el `else` mudo y se exportaba como fila de `eco.parquet`, con `mediciones_eco.get()`
+      devolviendo `None` -- más grave que en `postgres.py`: contamina en silencio el DATASET
+      que consume el modelo, no una tabla intermedia. `tests/salida/test_exportacion.py`: 4to
+      tipo simulado (`_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA.value`, mismo mecanismo
+      `str, Enum` ya validado -- acá basta el `.value` porque `Estudio.tipo_documento` es
+      `String`, no un enum de SQLAlchemy). RED confirmado en commit `78f29dc` contra
+      `exportacion.py` sin modificar: `Failed: DID NOT RAISE Exception` (la fila se exportó
+      silenciosamente a `eco.parquet`).
+- [x] 1.10 GREEN — commit `61deb90`: `_PROCESADORES_POR_TIPO` (dict `TipoDocumento.value ->
+      función`) unifica whitelist y despacho, mismo patrón que `postgres.py`; tipo sin entrada
+      levanta `ValueError` explícito. Se compara contra `TipoDocumento.X.value` (fuente única
+      del vocabulario, `dominio/tipos_documento.py`), no contra literales sueltos como antes
+      ("ecg"/"laboratorio"). `tiene_tipo`/columnas `tiene_*` conservan sus claves cortas
+      ("eco", no "ecocardiograma") vía `_CLAVE_TIENE_TIPO_POR_TIPO` -- son nombres de columna
+      Parquet ya publicados (`ESQUEMA_EPISODIOS`), no vocabulario a unificar en esta entrega
+      (eso es E2). Verificado sin regresión: `tests/salida/test_esquema_arrow_de_exportacion.py`
+      y `tests/pii/test_auditoria_exportacion_sin_pii.py` siguen en verde sin modificarse.
+      Tamaño final real (incluye 1.9/1.10): `git diff feat/auditoria-y-poda --numstat` → 443
+      líneas insertadas, 62 borradas, 9 archivos. `uv run pytest -q -m "not postgres"` → 1027
+      passed, 1 skipped (mismo symlink preexistente), 1 failed (mismo
+      `test_despachar_en_paralelo_..._distintos`, confirmado ES el mismo fallo sensible a la
+      carga, no uno nuevo); `-m postgres` → 28 passed (sin cambios); `-m caracterizacion` → 17
+      passed, `git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío; `ruff
+      check .` → All checks passed.
 
 ## Fase 2 — Entrega 2: vocabulario único de etapas (PR2)
 
