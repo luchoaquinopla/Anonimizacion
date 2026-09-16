@@ -1,93 +1,24 @@
-"""Parser de laboratorio general (spec `document-parsing`).
+"""Parser de laboratorio general.
+PDFs multipágina con header repetido; reconcilia por Nº de Petición y falla si cambia entre
+páginas en vez de mezclar resultados de dos pacientes.
 
-Los PDFs reales son multipágina con el header repetido en cada página y las
-secciones de resultados (HEMATOLOGIA, HEMOSTASIA, QUÍMICA CLÍNICA, IONOGRAMA)
-repartidas entre ellas. El parser reconcilia todas las páginas en un único
-`DocumentoParseado` por Nº de Petición: toma el header de la primera página
-que lo trae completo, valida que el Nº de Petición no cambie entre páginas
-(si cambia, son dos estudios mezclados por error de escaneo/orden — falla
-explícito en vez de mezclar resultados de dos pacientes) y concatena las
-filas de resultado de TODAS las páginas en un único `ContenidoLaboratorio`.
+Fix (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: extracción con sort=True +
+firmas ECG reales"): lee `texto.paginas_ordenadas` (orden geométrico), no `texto.paginas`;
+cada campo se trunca en el primer separador de 2+ espacios (`_primer_segmento`).
 
-Nota de formato: el layout real de columnas (Resultado Actual/Unidades/
-Valores de Referencia) todavía no está calibrado contra el corpus real (ver
-design.md, "Pendientes"). Estos parsers asumen un separador `|` explícito
-por fila de resultado como formato de trabajo estable y sin ambigüedad de
-espacios; se recalibra contra PDFs reales sin cambiar la forma pública del
-parser (misma entrada `TextoExtraido`, misma salida `DocumentoParseado`).
+Fix #4 (recalibración lab/eco contra 3 documentos reales, misma sección de apply-progress):
+tres variantes de etiqueta no contempladas (`F.Nacimiento :`, `Médico:`, `Hora de
+Extracción:`); `_CAMPOS_HEADER` tolera espacio opcional y palabras intermedias, backward
+compatible. Calibrado contra una sola muestra.
 
-Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
-extracción con sort=True + firmas ECG reales"): este parser lee
-`texto.paginas_ordenadas` (orden geométrico, `sort=True`), no `texto.paginas`
-(orden de dibujado) -- el PDF real dibuja etiquetas y valores en pasadas
-separadas del content stream, y solo el orden geométrico los deja adyacentes
-como espera el regex "Etiqueta: valor". Como dos campos pueden compartir la
-misma fila visual (columna izquierda + columna derecha, p. ej. "Apellido y
-Nombre: X      Fecha: Y" en una sola línea), cada campo capturado se trunca
-en el primer separador de 2+ espacios (`_primer_segmento`, misma convención
-que `parseo/ecg_mortara.py`) para no arrastrar el campo siguiente como parte
-del valor.
+Fix #6 (cuerpo real de resultados, misma sección): el fix #4 sólo calibró el header; el
+cuerpo seguía asumiendo el formato `|` sintético (0 filas reales). `_extraer_resultados`
+reconoce también columnas por 2+ espacios, clasificando unidad/rango por forma del token.
 
-Fix post-PR9 #4 (recalibración lab/eco contra 3 documentos reales, ver
-`sdd/pdf-pii-anonymization/apply-progress`): calibrado contra un único
-documento real de laboratorio, tres variantes de etiqueta no contempladas
-por los regex anteriores: `F.Nacimiento :` (espacio antes de los dos
-puntos), `Médico:` (sin la palabra "derivante") y `Hora de Extracción:`
-(con "de" en el medio). `_CAMPOS_HEADER` se ajustó para tolerar espacio
-opcional antes de `:` y palabras intermedias opcionales, sin dejar de
-matchear las variantes originales (los cambios son estrictamente más
-permisivos, backward compatible). Calibrado contra una sola muestra —
-podría no generalizar a otras variantes de formato no vistas.
-
-Fix post-PR9 #6 (cuerpo real de resultados, ver
-`sdd/pdf-pii-anonymization/apply-progress`): el fix #4 solo calibró el
-HEADER contra el documento real; el CUERPO (filas de resultado) seguía
-asumiendo el formato `|` sintético y nunca matcheaba nada contra un
-documento real (0 filas extraídas). `_extraer_resultados` ahora reconoce
-también el formato real: columnas separadas por 2+ espacios (`\\s{2,}`,
-misma convención que `_primer_segmento`), fila válida cuando el segundo
-token tiene forma numérica (entero o decimal, con signo opcional) — el
-resto de columnas (unidad / rango de referencia) se clasifican por forma:
-un token con forma `"min - max"` es rango, cualquier otro token no-rango es
-unidad. El formato `|` legado se preserva sin cambios para no romper las
-fixtures sintéticas existentes (se intenta primero). Además:
-- La sección puede aparecer en dos formas en el mismo documento real
-  (`-NOMBRE-` con guiones en línea propia, seguido inmediatamente de
-  `NOMBRE` sin guiones como aparente duplicado) — ambas se normalizan
-  (guiones + acentos removidos) antes de comparar contra `_SECCIONES`.
-- Hay sub-bloques dentro de una sección conocida (p. ej. "HEMOGRAMA" dentro
-  de "HEMATOLOGIA") que el modelo `ResultadoLaboratorio` no distingue de la
-  sección padre (campo `seccion` plano) — se usa el nombre de
-  sección/sub-bloque MÁS RECIENTE visto como `seccion` de cada fila
-  siguiente. Heurística de detección de sub-bloque (`_es_subencabezado_seccion`):
-  línea sin dígitos, sin `:`, íntegramente en mayúsculas y solo
-  letras/espacios/puntos — filtra la enorme mayoría del ruido real (notas
-  metodológicas, párrafos legales, líneas de firma, que vienen en
-  minúsculas o mixto), pero podría no generalizar a un sub-encabezado real
-  con dígitos o símbolos no vistos en la muestra calibrada.
-- Ruido explícito filtrado sin romper el parseo: encabezado de columna
-  repetido por página (`_es_encabezado_tabla_repetido`, detecta "RESULTADO"
-  + "UNIDADES"/"REFERENCIA" en la misma línea), número de página, notas con
-  `:`.
-
-Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
-"Fix: persistencia del puente id_alt_paciente en Postgres entre corridas"):
-resuelve el gap anterior de "nombre de prueba partido en dos líneas" (p. ej.
-`"Filtrado Glomerular Estimado (CKD-EPI    102 ... mL/min/1.73m²"` seguido
-de una línea de continuación `" 2021)"`). `_extraer_resultados` ahora recorre
-las líneas por índice (no con un `for` simple) para poder mirar la línea
-SIGUIENTE cuando reconoce una fila válida: si la columna de nombre
-(`tokens[0]`) trae un paréntesis sin cerrar (`_completar_nombre_partido`), y
-la línea siguiente (a) NO es en sí misma otra fila válida (no tiene un
-segundo token numérico tras separar por 2+ espacios, `_es_linea_continuacion_de_nombre`)
-y (b) al concatenarla balancea los paréntesis, se fusiona como el resto del
-nombre y esa línea se consume (no se vuelve a procesar como ruido). Si no se
-cumplen esas condiciones, el nombre queda como estaba (sin forzar una fusión
-insegura) — heurística deliberadamente conservadora: solo actúa cuando hay
-un paréntesis desbalanceado de por medio, así que no puede afectar ninguna
-fila de una sola línea (la gran mayoría) que no tenga ese patrón. Calibrado
-contra una sola muestra real — igual que el resto de heurísticas de este
-módulo, podría no generalizar a una variante de formato no vista.
+Fix post-merge (sección "Fix: persistencia del puente id_alt_paciente en Postgres entre
+corridas"): reconstruye un nombre de prueba partido en dos líneas por un paréntesis sin
+cerrar (`_completar_nombre_partido`), heurística conservadora que sólo actúa con paréntesis
+desbalanceado. Calibrado contra una sola muestra real.
 """
 
 from __future__ import annotations
@@ -151,13 +82,7 @@ class ContenidoLaboratorio:
 
 
 def _primer_segmento(texto: str) -> str:
-    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte).
-
-    Con `sort=True`, dos campos que comparten la misma fila visual (columna
-    izquierda + columna derecha) pueden quedar en la misma línea del texto
-    extraído; 2+ espacios es el separador que el propio documento usa para
-    alinearlas. Misma convención que `parseo/ecg_mortara.py::_primer_segmento`.
-    """
+    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte)."""
     return re.split(r"\s{2,}", texto, maxsplit=1)[0].strip()
 
 
@@ -171,14 +96,8 @@ def _extraer_campos_header(pagina: str) -> dict[str, str]:
 
 
 def _validar_header_completo(header: dict[str, str] | None) -> dict[str, str]:
-    """Distingue, en un vocabulario cerrado, las tres causas de un header
-    incompleto que antes compartían un único `PARSEO_INCOMPLETO`
-    indistinguible (ver `dominio/errores.py::DetalleParseoIncompleto`):
-    ninguna página trajo un Nº de Petición reconocible (`header is None`),
-    o lo trajo pero falta el nombre o la fecha adentro. Extraída de
-    `parsear` para no empujar su complejidad ciclomática por encima del
-    límite del proyecto (`pyproject.toml`, `max-complexity`).
-    """
+    """Distingue las tres causas de un header incompleto (sin Nº de Petición, sin nombre, sin fecha).
+    Extraída de `parsear` para no superar el límite de complejidad ciclomática (`pyproject.toml`)."""
     if header is None:
         raise ErrorParseo(
             codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
@@ -205,32 +124,17 @@ def _parsear_fecha(texto: str) -> date:
 
 
 def _parsear_hora_extraccion(texto: str) -> tuple[time, PrecisionHora]:
-    """Normaliza `Hora de Extracción:` con `normalizar_hora_iso` (Fase 2).
-
-    Cero inferencia: si el valor no matchea ningún formato de hora soportado,
-    el `ValueError` propaga hasta el llamador, que lo convierte en cuarentena
-    (Fase 8: "hora ilegible va a cuarentena, no a ausencia silenciosa") —
-    nunca se publica como `precision_hora = AUSENTE`.
-    """
+    """Normaliza `Hora de Extracción:` con `normalizar_hora_iso`.
+    Cero inferencia: si no matchea ningún formato, el `ValueError` propaga hasta cuarentena."""
     hora_normalizada, precision = normalizar_hora_iso(texto.strip())
     formato = "%H:%M:%S" if precision is PrecisionHora.SEGUNDO else "%H:%M"
     return datetime.strptime(hora_normalizada, formato).time(), precision
 
 
 def _parsear_fecha_nacimiento(texto: str) -> str | None:
-    """Normaliza `F.Nacimiento` a ISO 8601 (`YYYY-MM-DD`).
-
-    Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección
-    "Fix: recalibración parser ECG contra layout real Mortara"): el puente
-    `id_alt_paciente -> id_paciente` (`pseudonimizacion/claves.py`,
-    `generar_id_alt_paciente`) usa el string de fecha de nacimiento tal cual
-    dentro del mensaje HMAC. El laboratorio trae `DD/MM/YYYY` pero el ECG
-    (`parseo/ecg_mortara.py`) trae `DD-MON-YYYY` — sin normalizar ambos a la
-    misma representación canónica, el mismo paciente real produciría dos
-    `id_alt_paciente` distintos y el puente nunca resolvería. Si no se puede
-    parsear, se descarta (no participa del puente) en vez de propagar un
-    formato crudo inconsistente.
-    """
+    """Normaliza `F.Nacimiento` a ISO 8601 para que el puente `id_alt_paciente` sea canónico
+    entre laboratorio (`DD/MM/YYYY`) y ECG (`DD-MON-YYYY`, ver `sdd/pdf-pii-anonymization/
+    apply-progress`, sección "Fix: recalibración parser ECG contra layout real Mortara")."""
     try:
         return datetime.strptime(texto.strip(), "%d/%m/%Y").date().isoformat()
     except ValueError:
@@ -238,26 +142,18 @@ def _parsear_fecha_nacimiento(texto: str) -> str | None:
 
 
 def _normalizar_encabezado_seccion(linea_limpia: str) -> str:
-    """Normaliza una línea candidata a nombre de sección: quita acentos,
-    guiones (el documento real trae `-NOMBRE-`) y mayusculiza, para poder
-    compararla contra `_SECCIONES` sin importar la variante exacta."""
+    """Normaliza una línea candidata a nombre de sección: quita acentos, guiones y mayusculiza."""
     return normalizar_seccion_laboratorio(linea_limpia)
 
 
 def _es_encabezado_tabla_repetido(candidata: str) -> bool:
-    """Encabezado de columnas repetido en cada página del documento real
-    (`"Pruebas   Resultado   ...   Unidades   Valores de Referencia"`) —
-    ruido a ignorar, no un nombre de sección ni una fila de resultado."""
+    """Encabezado de columnas repetido por página; ruido a ignorar, no sección ni resultado."""
     return "RESULTADO" in candidata and ("UNIDADES" in candidata or "REFERENCIA" in candidata)
 
 
 def _es_subencabezado_seccion(linea_limpia: str, candidata: str) -> bool:
-    """Heurística para sub-bloques dentro de una sección conocida (ver
-    docstring del módulo, Fix post-PR9 #6): línea sin dígitos, sin `:`,
-    íntegramente en mayúsculas y compuesta solo de letras/espacios/puntos.
-    Filtra la enorme mayoría del ruido real (notas, párrafos legales,
-    firmas), que viene en minúsculas o mixto — podría no generalizar a un
-    sub-encabezado con dígitos o símbolos no vistos en la muestra."""
+    """Heurística para sub-bloques (ver Fix #6 en el docstring del módulo): línea sin dígitos,
+    sin `:`, íntegramente en mayúsculas y sólo letras/espacios/puntos."""
     if ":" in linea_limpia or any(caracter.isdigit() for caracter in linea_limpia):
         return False
     if linea_limpia != linea_limpia.upper():
@@ -266,9 +162,7 @@ def _es_subencabezado_seccion(linea_limpia: str, candidata: str) -> bool:
 
 
 def _clasificar_columnas_extra(tokens: list[str]) -> tuple[str | None, str | None]:
-    """Clasifica las columnas después de nombre+valor: un token con forma
-    `"min - max"` es rango de referencia, cualquier otro es unidad (se
-    conserva el primero no-rango encontrado)."""
+    """Clasifica columnas después de nombre+valor: `"min - max"` es rango, el resto es unidad."""
     unidades: str | None = None
     valores_referencia: str | None = None
     for token in tokens:
@@ -280,11 +174,7 @@ def _clasificar_columnas_extra(tokens: list[str]) -> tuple[str | None, str | Non
 
 
 def _es_linea_continuacion_de_nombre(linea_limpia: str) -> bool:
-    """True si `linea_limpia` es candidata a ser el CIERRE de un nombre de
-    prueba partido en dos líneas: trae un paréntesis de cierre y NO es, en sí
-    misma, otra fila válida (no tiene un segundo token numérico tras separar
-    por 2+ espacios) -- evita confundir la línea siguiente REAL de una fila
-    con el cierre de un nombre partido."""
+    """True si es candidata a ser el cierre de un nombre partido: paréntesis de cierre, no es otra fila válida."""
     if ")" not in linea_limpia:
         return False
     tokens = [token for token in re.split(r"\s{2,}", linea_limpia) if token]
@@ -292,17 +182,8 @@ def _es_linea_continuacion_de_nombre(linea_limpia: str) -> bool:
 
 
 def _completar_nombre_partido(nombre_prueba: str, lineas: list[str], indice: int) -> tuple[str, int]:
-    """Reconstruye un nombre de prueba partido en dos líneas por un paréntesis sin cerrar.
-
-    Si `nombre_prueba` (la columna de nombre de la fila en `lineas[indice]`)
-    trae un paréntesis SIN cerrar y la línea siguiente lo balancea, devuelve
-    `(nombre_completo, 1)` -- el `1` le indica al llamador que consuma esa
-    línea siguiente en vez de procesarla de nuevo. Si no aplica el patrón
-    (paréntesis ya balanceado, no hay línea siguiente, la siguiente es en sí
-    misma otra fila, o concatenar no balancea los paréntesis), devuelve
-    `(nombre_prueba, 0)` sin cambios -- deliberadamente conservador, prefiere
-    dejar el nombre truncado (comportamiento anterior) antes que fusionar de
-    forma insegura."""
+    """Reconstruye un nombre partido en dos líneas por un paréntesis sin cerrar.
+    `(nombre_completo, 1)` si balancea; `(nombre_prueba, 0)` sin cambios si no aplica (conservador)."""
     if nombre_prueba.count("(") <= nombre_prueba.count(")"):
         return nombre_prueba, 0
     if indice + 1 >= len(lineas):
@@ -447,9 +328,7 @@ class ParseadorLaboratorioGeneral:
             try:
                 hora_estudio, precision_hora = _parsear_hora_extraccion(header["hora_extraccion"])
             except ValueError as _exc:
-                # Hora presente pero ilegible: cuarentena, no ausencia
-                # silenciosa (Fase 8, Requirement: "Hora ilegible va a
-                # cuarentena, no a ausencia silenciosa").
+                # Hora presente pero ilegible: cuarentena, no ausencia silenciosa.
                 raise ErrorParseo(
                     codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
                     etapa=_ETAPA,

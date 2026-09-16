@@ -1,53 +1,16 @@
-"""Parser de ecocardiograma Doppler (spec `document-parsing`).
+"""Parser de ecocardiograma Doppler.
+Separa medidas estructuradas y texto libre por sección en campos distintos de `ContenidoEco`,
+más la firma del médico informante.
 
-Mezcla dos tipos de contenido en el mismo documento: medidas estructuradas
-(AO, AI, DDVI, DSVI, FA, Septum, P. Posterior, con su unidad) y texto libre
-por sección (motilidad segmentaria, válvulas, pericardio, flujos Doppler,
-conclusiones), más la firma del médico informante. El parser separa ambas
-partes en campos distintos de `ContenidoEco` en vez de dejar todo como texto
-plano, porque alimentan tablas distintas aguas abajo (Fase 7): las medidas
-van a `medicion_eco` (tabla ancha), el texto libre a `texto_seccion_eco`.
+Fix (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix: extracción con sort=True +
+firmas ECG reales"): el header se busca sobre `texto.texto_completo_ordenado` (orden
+geométrico), no `texto.texto_completo`.
 
-Mismo formato de trabajo que `laboratorio_general.py`: filas de medida con
-separador `|` (`nombre | valor | unidad`), pendiente de calibrar contra el
-corpus real (ver design.md, "Pendientes").
-
-Fix post-PR9 (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
-extracción con sort=True + firmas ECG reales"): mismo fix que
-`laboratorio_general.py` -- el header se busca sobre
-`texto.texto_completo_ordenado` (orden geométrico, `sort=True`), no
-`texto.texto_completo` (orden de dibujado), y cada campo capturado se trunca
-en el primer separador de 2+ espacios (`_primer_segmento`) para no arrastrar
-un campo vecino que comparta la misma fila visual. El cuerpo (medidas +
-texto libre + firma) se sigue parseando línea por línea sobre
-`texto.paginas_ordenadas`, no `texto.paginas`, por la misma razón.
-
-Fix post-PR9 #4 (recalibración lab/eco contra 3 documentos reales, ver
-`sdd/pdf-pii-anonymization/apply-progress`): el header real usa `PACIENTE:`
-(mayúsculas) y `Fecha Estudio:` (nunca `Fecha:` a secas); el cuerpo real
-trae las medidas en una tabla de dos sub-columnas separadas por 2+ espacios
-(no `|`, ver `_parsear_fila_medidas_dos_columnas`) y secciones de texto
-anidadas en dos niveles (ver `_SUBSECCIONES`); la firma del médico
-informante no trae la etiqueta "Firma:" -- se detecta con una heurística de
-"última línea nombre-like antes de la línea de Matrícula" (ver
-`_PATRON_MATRICULA`/`_PATRON_NOMBRE_FIRMA`). Todo esto calibrado contra una
-sola muestra real de cada tipo de documento -- ver comentarios puntuales en
-cada función para el detalle de qué podría no generalizar.
-
-Fix (tarea "invertir la dirección del corpus sintético", ver
-`tests/fixtures/plantilla_documento.py`): `es_boilerplate_eco` comparaba el
-prefijo `"informe no valido"` (sin tilde) contra la línea normalizada sólo
-con `casefold()`, que NO le quita los acentos -- contra el PDF real, la
-línea trae "Informe no válido..." (con tilde) y nunca matcheaba. El aviso
-quedaba como texto libre en vez de pie de página, y si la sección vecina
-continúa justo debajo (p. ej. "FLUJO PULMONAR" cruzando a la página
-siguiente) ese aviso se cuela en `SeccionTextoEco.texto` -- la
-reconciliación (`reconciliacion/eco_doppler.py::_seccion_anclada`) rechaza
-esa sección con `evidencia_ausente` porque ya no puede reconstruir el mismo
-span cruzando la página. `es_boilerplate_eco` ahora le saca los acentos a la
-línea antes de comparar (mismo criterio que ya usa
-`parseo/contrato_laboratorio.py`), sin tocar `_PREFIJOS_BOILERPLATE` (siguen
-siendo prefijos sin tilde).
+Fix #4 (recalibración lab/eco contra 3 documentos reales, misma sección de apply-progress):
+header real usa `PACIENTE:`/`Fecha Estudio:`; medidas en tabla de dos sub-columnas por 2+
+espacios; secciones anidadas en dos niveles; firma sin etiqueta "Firma:", detectada por
+heurística de última línea nombre-like antes de la línea de Matrícula. Calibrado contra una
+sola muestra real de cada tipo.
 """
 
 from __future__ import annotations
@@ -79,16 +42,10 @@ _SECCIONES_TEXTO = (
 )
 _SECCION_MEDIDAS = "MEDIDAS"
 
-# Fix post-PR9 #4 (recalibración lab/eco contra 3 documentos reales, ver
-# `sdd/pdf-pii-anonymization/apply-progress`): el documento real anida
-# subsecciones dentro de algunas secciones de texto libre (p. ej. "AORTICA"
-# dentro de "VALVULAS CARDIACAS"). `SeccionTextoEco` es un modelo plano
-# (nombre + texto), sin jerarquía nativa -- en vez de cambiar ese modelo
-# (rompería el contrato ya consumido por `salida/constructor_registro.py`),
-# cada subsección se representa como su propia `SeccionTextoEco` con nombre
-# compuesto `"padre - hija"`. Calibrado contra una sola muestra: la lista de
-# subsecciones esperadas por sección padre podría no cubrir variantes no
-# vistas (otro orden, subsecciones adicionales, etc.).
+# Fix #4 (recalibración lab/eco contra 3 documentos reales, ver
+# `sdd/pdf-pii-anonymization/apply-progress`): el documento real anida subsecciones dentro
+# de secciones de texto libre; cada subsección se representa como su propia `SeccionTextoEco`
+# con nombre compuesto "padre - hija" (sin cambiar el modelo plano). Calibrado contra una muestra.
 _SUBSECCIONES: dict[str, tuple[str, ...]] = {
     "VALVULAS CARDIACAS": ("AORTICA", "MITRAL", "PULMONAR", "TRICUSPIDEA"),
     "AURICULAS": ("IZQUIERDA", "DERECHA"),
@@ -104,11 +61,7 @@ _CAMPOS_HEADER = {
     "nombre": r"(?i)Paciente:\s*(.+)",
     "dni": r"Documento:\s*(.+)",
     "numero_estudio": r"(?i)N[ºo°]\s*Estudio:\s*(.+)",
-    # Capturado como fecha estricta (no `.+`): en el documento real, "Fecha
-    # Estudio:" comparte fila con el campo "PACIENTE:" separado por un solo
-    # espacio (no el separador de 2+ espacios que `_primer_segmento` asume
-    # para columnas), así que un `.+` genérico arrastraría el nombre del
-    # paciente como parte de la fecha. Calibrado contra una sola muestra.
+    # Fecha estricta (no `.+`): comparte fila con "PACIENTE:" separado por un solo espacio.
     "fecha": r"Fecha Estudio:\s*(\d{1,2}/\d{1,2}/\d{4})",
     "edad": r"Edad:\s*(.+)",
     "medico_solicitante": r"M[eé]dico Solicitante:\s*(.+)",
@@ -119,20 +72,10 @@ _CAMPOS_HEADER = {
 
 _PATRON_FIRMA = re.compile(r"Firma:\s*(?P<nombre>.+?)\s*-\s*MP\s*(?P<matricula>\S+)")
 
-# Fix post-PR9 #4: el documento real NO trae la etiqueta "Firma:" en ningún
-# lado. El nombre del médico informante aparece en una línea propia (todo
-# en mayúsculas, sin etiqueta) y, en una línea posterior no necesariamente
-# adyacente, aparece "Matrícula <letra> <número>" (p. ej. "Matrícula W
-# 9999", con una letra de prefijo en vez de "MP"). Heurística: se recuerda
-# la última línea "nombre-like" vista (todo mayúsculas, 2+ palabras, solo
-# letras/espacios/puntos) y, al encontrar la línea de matrícula, se arma la
-# firma con ese candidato. Si nunca hubo un candidato antes de la línea de
-# matrícula, `firma` queda en `None` -- una firma mal parseada podría
-# pseudonimizar al médico equivocado, así que se prioriza "no encontrar"
-# sobre "encontrar mal". Calibrado contra una sola muestra real; podría no
-# generalizar si el nombre y la matrícula aparecen en otro orden, o si hay
-# líneas nombre-like intermedias no relacionadas (p. ej. el título del
-# estudio) que pisen el candidato correcto.
+# Fix #4: el documento real no trae "Firma:"; el nombre va en línea propia (mayúsculas) y
+# "Matrícula <letra> <número>" en una línea posterior. Heurística: última línea nombre-like
+# antes de la matrícula; sin candidato previo, `firma` queda en `None` (prioriza no encontrar
+# sobre encontrar mal). Calibrado contra una sola muestra real.
 _PATRON_MATRICULA = re.compile(r"Matr[ií]cula\s+([A-Za-z])\s*(\d+)", re.IGNORECASE)
 _PATRON_NOMBRE_FIRMA = re.compile(r"^[A-ZÁÉÍÓÚÑ.]+(?:\s+[A-ZÁÉÍÓÚÑ.]+)+$")
 _TEXTO_FIRMA_EXCLUIDO = {"DIAGNOSTICO POR IMAGENES"}
@@ -212,23 +155,13 @@ def _sin_acentos(texto: str) -> str:
 
 def es_boilerplate_eco(linea: str) -> bool:
     """Reconoce cabecera/pie repetidos sin aceptar texto clínico libre.
-
-    Le saca los acentos a `linea` antes de comparar -- ver fix en el
-    docstring del módulo: el aviso real trae tilde ("válido") pero
-    `_PREFIJOS_BOILERPLATE` no, y `casefold()` sólo normaliza mayúsculas.
-    """
+    Le saca los acentos a `linea` antes de comparar: `casefold()` sólo normaliza mayúsculas."""
     normalizada = " ".join(_sin_acentos(linea.strip()).casefold().split())
     return normalizada.startswith(_PREFIJOS_BOILERPLATE)
 
 
 def _primer_segmento(texto: str) -> str:
-    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte).
-
-    Misma convención que `parseo/ecg_mortara.py::_primer_segmento` y
-    `parseo/laboratorio_general.py::_primer_segmento`: con `sort=True`, dos
-    campos que comparten la misma fila visual pueden quedar en la misma
-    línea del texto extraído.
-    """
+    """Trunca en el primer salto de 2+ espacios (separador de columnas del reporte)."""
     return re.split(r"\s{2,}", texto, maxsplit=1)[0].strip()
 
 
@@ -246,13 +179,8 @@ def _parsear_fecha(texto: str) -> date:
 
 
 def _es_nombre_de_medida(token: str) -> bool:
-    """Un token de la tabla de medidas real que parece nombre de medida.
-
-    Solo letras/puntos (p. ej. "SEPTUM", "P.POSTERIOR"), sin dígitos. Excluye
-    explícitamente "NORMAL"/"VARIABLE": son valores/rangos de referencia
-    reales del documento, no nombres de medida, aunque también sean
-    alfabéticos en mayúsculas.
-    """
+    """Un token de la tabla de medidas que parece nombre (letras/puntos, sin dígitos).
+    Excluye "NORMAL"/"VARIABLE": son valores/rangos de referencia, no nombres de medida."""
     token_norm = token.strip().upper()
     if token_norm in {"NORMAL", "VARIABLE"}:
         return False
@@ -270,16 +198,8 @@ def _separar_valor_unidad(token: str) -> tuple[str, str | None]:
 
 
 def _parsear_fila_medidas_dos_columnas(linea: str) -> list[MedidaEco]:
-    """Parsea una fila de la tabla real de medidas: dos sub-columnas
-    (izquierda/derecha) separadas por 2+ espacios, cada una con
-    nombre + valor + rango de referencia opcional. El rango de referencia
-    (p. ej. "< 41 mm", "VARIABLE") se descarta explícitamente: no hay campo
-    en `MedidaEco` para guardarlo y no participa de ningún cálculo aguas
-    abajo. Calibrado contra una sola muestra real -- el separador de columna
-    (`\\s{2,}`, misma convención que `_primer_segmento`) y la heurística
-    nombre/valor/rango podrían no generalizar a layouts con más sub-columnas
-    o un orden distinto de campos.
-    """
+    """Parsea una fila de la tabla real: dos sub-columnas separadas por 2+ espacios.
+    El rango de referencia (p. ej. "< 41 mm") se descarta explícitamente, sin campo para guardarlo."""
     tokens = [token for token in re.split(r"\s{2,}", linea.strip()) if token]
     medidas: list[MedidaEco] = []
     indice = 0
@@ -331,8 +251,7 @@ def _parsear_cuerpo(  # noqa: C901 -- deuda conocida, ver pyproject.toml
             if es_boilerplate_eco(linea_limpia):
                 continue
 
-            # Formato legado (fixtures sintéticas anteriores a la
-            # recalibración): etiqueta explícita "Firma: Nombre - MP123".
+            # Formato legado: etiqueta explícita "Firma: Nombre - MP123".
             coincidencia_firma = _PATRON_FIRMA.search(linea_limpia)
             if coincidencia_firma:
                 cerrar_seccion_texto()
@@ -349,15 +268,9 @@ def _parsear_cuerpo(  # noqa: C901 -- deuda conocida, ver pyproject.toml
             candidata = linea_limpia.upper()
             candidata_normalizada = candidata.rstrip(":").strip()
 
-            # Fix post-PR9 #6 (trigger de MEDIDAS, ver
-            # `sdd/pdf-pii-anonymization/apply-progress`): el documento real
-            # NUNCA trae una línea igual a "MEDIDAS" a secas -- la única
-            # línea que marca el inicio de la tabla es el encabezado
-            # repetido "MEDIDAS VALOR VALOR NORMAL MEDIDAS VALOR VALOR
-            # NORMAL". Se reconoce como trigger cualquier línea cuyo primer
-            # token sea "MEDIDAS" (no solo la igualdad exacta), sin afectar
-            # el resto del manejo de estado (`_SECCION_MEDIDAS` sigue siendo
-            # el nombre de la sección una vez identificada).
+            # Fix #6 (trigger de MEDIDAS, ver `sdd/pdf-pii-anonymization/apply-progress`): el
+            # documento real nunca trae "MEDIDAS" a secas, sólo el encabezado repetido
+            # "MEDIDAS VALOR VALOR NORMAL ...". Trigger: cualquier línea cuyo primer token sea "MEDIDAS".
             es_trigger_medidas = candidata_normalizada == _SECCION_MEDIDAS or (
                 candidata_normalizada.startswith(f"{_SECCION_MEDIDAS} ")
             )
@@ -376,11 +289,7 @@ def _parsear_cuerpo(  # noqa: C901 -- deuda conocida, ver pyproject.toml
                 pagina_inicio_seccion = pagina_actual
                 continue
 
-            # Formato real (sin etiqueta "Firma:"): línea de matrícula, en
-            # cualquier punto del documento -- se chequea antes de decidir
-            # si la línea es texto de sección para no arrastrar el nombre
-            # del médico ni la línea de matrícula al buffer de la última
-            # sección de texto conocida.
+            # Formato real: línea de matrícula, chequeada antes de decidir si es texto de sección.
             coincidencia_matricula = _PATRON_MATRICULA.search(linea_limpia)
             if coincidencia_matricula:
                 cerrar_seccion_texto()
@@ -396,10 +305,8 @@ def _parsear_cuerpo(  # noqa: C901 -- deuda conocida, ver pyproject.toml
                 candidato_nombre_firma = None
                 continue
 
-            # Guardado explícito por `seccion_actual != _SECCION_MEDIDAS`: una
-            # fila de medidas real puede no tener dígitos (p. ej. "VD
-            # NORMAL"), lo que la haría matchear como línea "nombre-like" si
-            # se chequeara acá dentro de la tabla de medidas.
+            # Guardado explícito: una fila de medidas sin dígitos (p. ej. "VD NORMAL")
+            # matchearía como línea "nombre-like" si se chequeara dentro de la tabla de medidas.
             if (
                 seccion_actual != _SECCION_MEDIDAS
                 and candidata not in _TEXTO_FIRMA_EXCLUIDO
@@ -440,8 +347,7 @@ class ParseadorEcoDoppler:
         texto_completo = texto.texto_completo_ordenado
         header = _buscar_campos(texto_completo, _CAMPOS_HEADER)
 
-        # Separados en dos chequeos (antes uno solo, indistinguible): ver
-        # `dominio/errores.py::DetalleParseoIncompleto`.
+        # Dos chequeos separados: ver `dominio/errores.py::DetalleParseoIncompleto`.
         if "nombre" not in header:
             raise ErrorParseo(
                 codigo=CodigoErrorDocumento.PARSEO_INCOMPLETO,
@@ -484,14 +390,8 @@ class ParseadorEcoDoppler:
         cuerpo = _parsear_cuerpo(texto.paginas_ordenadas)
         medidas, secciones_texto, firma = cuerpo.medidas, cuerpo.secciones, cuerpo.firma
 
-        # Requirement: "Ausencia explícita cuando el documento no trae hora"
-        # (spec `momento-del-estudio`) -- el layout del eco nunca trae un
-        # campo de hora. `hora_estudio`/`precision_hora` quedan en los
-        # defaults de `DocumentoParseado` (`None`/`AUSENTE`, Fase 1): NUNCA
-        # se completa con un default de medianoche ni se declara un
-        # `id_campo`/`ReferenciaCampo` de hora -- sin referencia y sin
-        # hallazgo, el 1:1 de cobertura de reconciliación se sostiene solo
-        # (design.md, decisión 4).
+        # El eco nunca trae hora: hora_estudio/precision_hora quedan en sus defaults
+        # (None/AUSENTE), sin declarar ReferenciaCampo de hora.
         contenido = ContenidoEco(medidas=medidas, secciones_texto=secciones_texto, firma=firma)
         fuentes = (
             ReferenciaCampo("eco.nombre", 1, "eco.nombre"),
