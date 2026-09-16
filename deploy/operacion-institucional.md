@@ -37,7 +37,7 @@ La instalación debe ser un servicio administrado por IT: Windows Service en ser
 El servicio debe cargar variables protegidas del gestor institucional o de un archivo con ACL restringida. Debe ejecutarse con una cuenta dedicada; no con una cuenta personal ni con administrador/root.
 
 > [!warning]
-> `anonimizacion servir` (WSGI, `wsgiref` + hilos -- ver el docstring de `scripts/servir_panel.py`) es el comando real, pero el repositorio todavía NO empaqueta un instalador ni una unidad de servicio (`ExecStart`/nombre de servicio de Windows) lista para pegar: eso sigue siendo tarea de IT, fuera del alcance de este cambio (evaluado y descartado deliberadamente -- ver la justificación en `sdd/arranque-para-el-instituto/apply-progress`). Esta guía define los controles requeridos; IT decide el nombre de servicio y la unidad concreta de su plataforma.
+> `anonimizacion servir` (WSGI, `wsgiref` + hilos -- ver el docstring de `anonimizacion.comandos.servir`) es el comando real, pero el repositorio todavía NO empaqueta un instalador ni una unidad de servicio (`ExecStart`/nombre de servicio de Windows) lista para pegar: eso sigue siendo tarea de IT, fuera del alcance de este cambio (evaluado y descartado deliberadamente -- ver la justificación en `sdd/arranque-para-el-instituto/apply-progress`). Esta guía define los controles requeridos; IT decide el nombre de servicio y la unidad concreta de su plataforma.
 
 ## Variables protegidas
 
