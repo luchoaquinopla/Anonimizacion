@@ -5,9 +5,9 @@ conocida, para que deje de ser silenciosa.
 
 `EjecutorPipeline` recibe `coordinar_episodios=None` por defecto y, en ese modo,
 `_coordinar_resueltos` devuelve una lista de fallos vacía: ningún documento se
-aparta por episodio incompleto o por asociación ambigua. La tarea Celery
-`procesar_documento` arma `procesar_lote([item])` -- un lote de UN documento --
-así que ese es el modo en que corre el worker hoy.
+aparta por episodio incompleto o por asociación ambigua. `procesar_grupo`
+arma `procesar_lote([item])` -- un lote de UN documento -- así que ese es el
+modo en que corre el worker hoy.
 
 Y no puede ser de otra forma con ese diseño: un lote de un documento nunca tiene
 los tres tipos requeridos, de modo que activar el coordinador ahí mandaría el

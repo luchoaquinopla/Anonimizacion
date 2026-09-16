@@ -1,17 +1,6 @@
-"""Fija el esquema Arrow EXACTO (nombres, tipos y orden) de los 4 Parquet
-exportados, leído desde disco -- y prueba de regresión del bug de pyarrow
-que motivó el esquema de `muestras_uv`/`mascara`.
-
-Los tipos esperados están escritos como LITERALES en este archivo, nunca
-importados de `ESQUEMA_EPISODIOS`/`ESQUEMA_ECG`/`ESQUEMA_LABORATORIO`/
-`ESQUEMA_ECO` (`salida/exportacion.py`) -- un test que compara el esquema
-contra sí mismo es un espejo, no un oráculo (ya pasó tres veces en esta
-cadena: ver `apply-progress.md`, entregas 1 y 3). `tests/salida/
-test_exportacion.py` sólo fija los NOMBRES de columna (lista blanca de PII);
-este archivo fija también el TIPO y el ORDEN, que es el contrato real con
-`modelo_hvi` -- un cambio silencioso de `int16` a `int32`, o de lista
-variable a lista fija, rompe al consumidor sin que ningún test lo note.
-"""
+"""Fija el esquema Arrow exacto (nombres, tipos y orden) de los 4 Parquet exportados,
+con tipos escritos como literales, nunca importados del esquema bajo prueba.
+Invariante: «Prueba anti-espejo del esquema Parquet» (Obsidian, Invariantes medidos)."""
 
 from __future__ import annotations
 
