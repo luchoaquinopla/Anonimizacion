@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -36,33 +37,39 @@ def _ref_compuerta() -> str:
     return os.environ.get("COMPUERTA_AST_REF", _REF_POR_DEFECTO)
 
 
-def _ref_existe(ref: str) -> bool:
+def _ref_existe(ref: str, raiz_repo: Path = _RAIZ_REPO) -> bool:
     resultado = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", ref],
-        cwd=_RAIZ_REPO,
+        cwd=raiz_repo,
         capture_output=True,
     )
     return resultado.returncode == 0
 
 
-def _archivos_python_modificados(ref: str) -> list[str]:
-    """Rutas (relativas al repo) de .py bajo _CARPETA_FUENTE que difieren de `ref` a HEAD."""
+def _estado_archivos_python(ref: str, raiz_repo: Path = _RAIZ_REPO) -> list[tuple[str, str]]:
+    """(estado, ruta) de cada .py bajo _CARPETA_FUENTE que difiere entre `ref` y el working
+    tree. `--no-renames`: un `git mv` con --no-renames aparece como D (viejo) + A (nuevo),
+    nunca como R -- así un renombre no puede colarse como 'sin cambios'."""
     resultado = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=M", ref, "--", _CARPETA_FUENTE],
-        cwd=_RAIZ_REPO,
+        ["git", "diff", "--name-status", "--no-renames", ref, "--", _CARPETA_FUENTE],
+        cwd=raiz_repo,
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=True,
     )
-    rutas = resultado.stdout.splitlines()
-    return [r for r in rutas if r.endswith(".py")]
+    salida: list[tuple[str, str]] = []
+    for linea in resultado.stdout.splitlines():
+        estado, _, ruta = linea.partition("\t")
+        if ruta.endswith(".py"):
+            salida.append((estado, ruta))
+    return salida
 
 
-def _contenido_en_ref(ref: str, ruta_relativa: str) -> str:
+def _contenido_en_ref(ref: str, ruta_relativa: str, raiz_repo: Path = _RAIZ_REPO) -> str:
     resultado = subprocess.run(
         ["git", "show", f"{ref}:{ruta_relativa}"],
-        cwd=_RAIZ_REPO,
+        cwd=raiz_repo,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -71,8 +78,8 @@ def _contenido_en_ref(ref: str, ruta_relativa: str) -> str:
     return resultado.stdout
 
 
-def _contenido_actual(ruta_relativa: str) -> str:
-    return (_RAIZ_REPO / ruta_relativa).read_text(encoding="utf-8")
+def _contenido_actual(ruta_relativa: str, raiz_repo: Path = _RAIZ_REPO) -> str:
+    return (raiz_repo / ruta_relativa).read_text(encoding="utf-8")
 
 
 def _es_docstring(nodo: ast.stmt) -> bool:
@@ -99,14 +106,26 @@ def normalizar(codigo_fuente: str) -> str:
     return ast.dump(arbol, include_attributes=False)
 
 
-def verificar_ast_intacto(ref: str) -> dict[str, bool]:
-    """Devuelve, por archivo modificado, si su AST (sin docstrings) es idéntico contra `ref`."""
-    resultado: dict[str, bool] = {}
-    for ruta in _archivos_python_modificados(ref):
-        antes = normalizar(_contenido_en_ref(ref, ruta))
-        despues = normalizar(_contenido_actual(ruta))
-        resultado[ruta] = antes == despues
-    return resultado
+@dataclass(frozen=True)
+class ResultadoCompuerta:
+    violaciones_estructurales: tuple[tuple[str, str], ...]  # (estado, ruta), estado != "M"
+    fallos_ast: dict[str, tuple[str, str]]  # ruta -> (ast_antes, ast_despues), sólo estado "M"
+
+
+def verificar_compuerta(ref: str, raiz_repo: Path = _RAIZ_REPO) -> ResultadoCompuerta:
+    """Evalúa la compuerta completa: violaciones estructurales (archivos .py agregados,
+    borrados o renombrados) y, sobre los modificados, si su AST sin docstrings cambió."""
+    estados = _estado_archivos_python(ref, raiz_repo)
+    violaciones = tuple((estado, ruta) for estado, ruta in estados if estado != "M")
+    fallos: dict[str, tuple[str, str]] = {}
+    for estado, ruta in estados:
+        if estado != "M":
+            continue
+        antes = normalizar(_contenido_en_ref(ref, ruta, raiz_repo))
+        despues = normalizar(_contenido_actual(ruta, raiz_repo))
+        if antes != despues:
+            fallos[ruta] = (antes, despues)
+    return ResultadoCompuerta(violaciones, fallos)
 
 
 @pytest.fixture(scope="module")
@@ -118,30 +137,25 @@ def ref_compuerta() -> str:
 
 
 @pytest.fixture(scope="module")
-def archivos_modificados(ref_compuerta: str) -> list[str]:
-    return _archivos_python_modificados(ref_compuerta)
+def resultado_compuerta(ref_compuerta: str) -> ResultadoCompuerta:
+    return verificar_compuerta(ref_compuerta)
 
 
-def test_hay_archivos_para_comparar_o_no_hay_diff(archivos_modificados: list[str]) -> None:
-    """Documenta el universo: sin esto, una lista vacía haría pasar la compuerta por default."""
-    # No es un assert de negocio -- sólo deja constancia en el reporte de qué se comparó.
-    assert isinstance(archivos_modificados, list)
+def test_poda_no_agrega_ni_borra_ni_renombra_archivos_python(
+    resultado_compuerta: ResultadoCompuerta,
+) -> None:
+    assert not resultado_compuerta.violaciones_estructurales, (
+        "Una poda de prosa no agrega, borra ni renombra archivos .py -- violaciones: "
+        f"{resultado_compuerta.violaciones_estructurales}"
+    )
 
 
 def test_poda_no_cambia_el_ast_de_ningun_modulo_tocado(
-    ref_compuerta: str, archivos_modificados: list[str]
+    resultado_compuerta: ResultadoCompuerta,
 ) -> None:
-    fallos = {
-        ruta: (
-            normalizar(_contenido_en_ref(ref_compuerta, ruta)),
-            normalizar(_contenido_actual(ruta)),
-        )
-        for ruta in archivos_modificados
-    }
-    fallos = {ruta: v for ruta, v in fallos.items() if v[0] != v[1]}
-    assert not fallos, (
+    assert not resultado_compuerta.fallos_ast, (
         "El AST (sin docstrings) cambió en módulos que la poda de prosa no debía tocar: "
-        f"{sorted(fallos)}"
+        f"{sorted(resultado_compuerta.fallos_ast)}"
     )
 
 
@@ -163,16 +177,18 @@ def test_detecta_archivo_py_renombrado_como_violacion(tmp_path: Path) -> None:
     que su AST nunca se comparaba contra nada."""
     raiz = tmp_path
     _crear_repo_git(raiz)
-    (raiz / "src").mkdir()
-    (raiz / "src" / "modulo.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    (raiz / "src" / "anonimizacion").mkdir(parents=True)
+    (raiz / "src" / "anonimizacion" / "modulo.py").write_text("def f():\n    return 1\n", encoding="utf-8")
     base = _commit_todo(raiz, "base")
 
-    subprocess.run(["git", "mv", "src/modulo.py", "src/otro.py"], cwd=raiz, check=True)
-    (raiz / "src" / "otro.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "mv", "src/anonimizacion/modulo.py", "src/anonimizacion/otro.py"], cwd=raiz, check=True
+    )
+    (raiz / "src" / "anonimizacion" / "otro.py").write_text("def f():\n    return 2\n", encoding="utf-8")
 
     resultado = verificar_compuerta(base, raiz_repo=raiz)
     rutas_violadas = {ruta for _, ruta in resultado.violaciones_estructurales}
-    assert rutas_violadas & {"src/modulo.py", "src/otro.py"}, (
+    assert rutas_violadas & {"src/anonimizacion/modulo.py", "src/anonimizacion/otro.py"}, (
         "un renombre + edicion de un .py debe reportarse como violacion estructural, "
         f"no colarse como 'sin cambios' -- violaciones vistas: {resultado.violaciones_estructurales}"
     )
