@@ -466,42 +466,41 @@ Migración de los 8 invariantes de la lista cerrada (spec `prosa-de-codigo` Req.
 antes de cualquier poda**, en `04 - Desarrollo/pipeline de anonimizacion` (bitácora + nota de
 arquitectura, formato del vault existente):
 
-- [ ] 6.1 Migrar invariante 1/8: 875 MB RSS por `MotorPii` (ctypes) — evidencia
+- [x] 6.1 Migrar invariante 1/8: 875 MB RSS por `MotorPii` (ctypes) — evidencia
       `despacho_paralelo.py:79-80,217,339,752`. **Borrador redactado y verificado contra el
       código actual** (líneas reales al 2026-09-16: `79-87,217,337,748`), pendiente de
       aprobación humana para pegarlo en el vault — ver PR6a, apply-progress.
-- [ ] 6.2 Migrar invariante 2/8: razonamiento de concurrencia (2x núcleos; umbral de grupo
+- [x] 6.2 Migrar invariante 2/8: razonamiento de concurrencia (2x núcleos; umbral de grupo
       tóxico 3→4) — `despacho_paralelo.py:68-117,160,171,179`. **Borrador redactado.**
       **Corrección de precisión encontrada**: el código corrige el conteo de cargas de
       3 A 2, no de 3 a 4 (el "4" real en el código es `--procesos 4` de una reproducción de
       un bug DISTINTO de atribución causal). El borrador documenta el número correcto (2) y
       señala la imprecisión de este enunciado de `spec.md` — no se corrigió la spec en este
       batch (fuera de alcance de `sdd-apply`); requiere decisión del orquestador/usuario.
-- [ ] 6.3 Migrar invariante 3/8: motivo de cada `noqa: C901` — `pyproject.toml:56-72`.
+- [x] 6.3 Migrar invariante 3/8: motivo de cada `noqa: C901` — `pyproject.toml:56-72`.
       **Borrador redactado y verificado** (6 funciones exentas en 4 archivos, confirmado
       contra el código).
-- [ ] 6.4 Migrar invariante 4/8: cartel anti-espejo esquema Arrow —
+- [x] 6.4 Migrar invariante 4/8: cartel anti-espejo esquema Arrow —
       `tests/salida/test_esquema_arrow_de_exportacion.py:1-13`. **Borrador redactado y
       verificado**, líneas vigentes sin cambios.
-- [ ] 6.5 Migrar invariante 5/8: cartel anti-espejo codec de señal —
+- [x] 6.5 Migrar invariante 5/8: cartel anti-espejo codec de señal —
       `tests/salida/test_codec_senal.py`. **Borrador redactado y verificado**, vigente.
-- [ ] 6.6 Migrar invariante 6/8: latencias medidas Postgres (54,9 ms / ~366 ms) + timeout 5s —
+- [x] 6.6 Migrar invariante 6/8: latencias medidas Postgres (54,9 ms / ~366 ms) + timeout 5s —
       `salida/destinos/postgres.py:87-135`. **Borrador redactado y verificado**, vigente
       (bloque real `57-165`, el rango citado en la spec cae dentro de ese bloque).
-- [ ] 6.7 Migrar invariante 7/8: constantes de calibración ECG (`_ANCHO_TRAZO_PT=0.43`, r=1,000,
+- [x] 6.7 Migrar invariante 7/8: constantes de calibración ECG (`_ANCHO_TRAZO_PT=0.43`, r=1,000,
       umbral de ruido) — `extraccion/trazos_pymupdf.py:22`, `extraccion/senal_ecg.py:10-85`.
       **Borrador redactado y verificado**, vigente.
-- [ ] 6.8 Migrar invariante 8/8: trade-off del piso de confianza del DNI —
+- [x] 6.8 Migrar invariante 8/8: trade-off del piso de confianza del DNI —
       `pii/reconocedores/dni_ar.py:43`. **Borrador redactado y verificado**, vigente.
-- [ ] 6.9 Verificación de migración: 8 notas existen y enlazadas; listar los 8 punteros
-      (`# ... -- ver D-0XX en Obsidian`) antes de tocar código. Compuerta de aceptación previa
-      a abrir cualquier PR de poda. **No cumplida todavía a propósito**: los 8 borradores
-      están listos y verificados contra el código (ver apply-progress y
-      `scratchpad/obsidian_borradores/`), pero NINGUNO se escribió en el vault real — la
-      escritura requiere aprobación explícita de un integrante del equipo (AGENTS.md,
-      restricción del prompt de esta sesión). Además, el vault no usa hoy una convención de
-      IDs `D-0XX`: los punteros de los borradores referencian el TÍTULO de la nota, no un ID
-      -- decisión a confirmar con el equipo antes de insertar los punteros reales en PR6b-f.
+- [x] 6.9 Verificación de migración: los 8 invariantes existen en Obsidian y están enlazados
+      antes de tocar código. Cumplida el 16/09/2026 por el orquestador, con aprobación del
+      usuario. Por decisión del usuario van en UNA sola nota, "Invariantes medidos — Pipeline
+      de anonimización" (una sección por invariante), enlazada desde la nota de arquitectura y
+      desde la Guía. Cada puntero del código cita el TÍTULO exacto de su sección (el vault no
+      usa IDs D-0XX para invariantes). Al verificar contra el código se corrigieron dos
+      borradores: 6.2 (son 2 cargas, no 4) y 6.6 (pre_ping agrega ~124 ms sobre los ~366 ms
+      normales; no los evita).
 - [x] 6.10 GREEN — compuerta mecánica `tests/prosa/test_poda_no_toca_codigo.py` (ast antes/
       después, normalizar quitando docstrings iniciales, `ast.dump(include_attributes=False)`).
       RED de control: aplicar un cambio de prueba que altera código (ej. renombrar variable),
