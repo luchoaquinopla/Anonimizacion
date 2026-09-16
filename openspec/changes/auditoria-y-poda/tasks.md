@@ -511,6 +511,26 @@ arquitectura, formato del vault existente):
       PASA; (b) mutación de un operador real (`is not None` → `is None`) en el mismo archivo
       → compuerta FALLA, reportando el módulo. `src/` restaurado y confirmado limpio
       (`git status --porcelain -- src/` vacío) después de ambas demostraciones.
+      **Revisión adversarial (mismo batch, 4 correcciones, RED/GREEN en commits separados
+      -- `757c7e4`/`86c15d2`, `808f578`/`aeee27b`, `08321cf`/`643642b`, `9e6f3a1`/`7a14c32`,
+      docstring `b926153`)**: (1) falso negativo por renombre — `git diff --diff-filter=M`
+      dejaba pasar un `git mv` + edición sin detectarlo; ahora `--no-renames` reporta
+      cualquier `.py` agregado/borrado/renombrado como violación estructural, separada del
+      chequeo de AST. (2) alcance ampliado de `src/anonimizacion` a `src/`, `tests/`,
+      `migrations/`, `scripts/` (una sola constante `_CARPETAS_ALCANCE`; excluye
+      `tests/prosa` -- la propia compuerta -- porque auditarse a sí misma no aporta nada y
+      ese módulo es un archivo nuevo de PR6a, no una poda). (3) ciclo de vida: `COMPUERTA_AST_REF`
+      explícita e inexistente ahora FALLA (`RefCompuertaInvalida`) en vez de saltearse en
+      silencio; sin ref explícita y sin la rama base por defecto, sigue salteándose con
+      motivo explícito. (4) sin `git` en el PATH: `pytest.skip` con motivo claro en vez de
+      `FileNotFoundError` crudo, vía wrapper único `_ejecutar_git`. Verificado que lo que NO
+      había que tocar sigue intacto (normalización): editar sólo un docstring pasa, editar
+      un string literal que no es docstring falla, borrar un docstring entero pasa sin
+      romper el parse, árbol idéntico pasa. Suite tras las 4 correcciones: `not postgres` →
+      1032 passed/1 skipped/0 failed; `postgres` → 28 passed; `ruff check .` → limpio;
+      `tests/prosa/` → 8/8 passed en el estado actual (árbol idéntico a la base, sin
+      violaciones). `git diff feat/auditoria-y-poda --stat` sigue acotado a
+      `tests/prosa/` + `tasks.md` -- nada de Obsidian, nada de poda real todavía.
 - [ ] 6.11 PR6a — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
       `configuracion.py`): docstrings ≤2 líneas; compuerta AST verde.
 - [ ] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortar; insertar puntero
