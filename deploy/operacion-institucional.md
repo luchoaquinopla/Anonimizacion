@@ -2,7 +2,7 @@
 
 ## Estado de este material
 
-Esta guía prepara la operación institucional **sin declarar una instalación lista para producción**. Desde `arranque-para-el-instituto` el repositorio SÍ tiene un *composition root* real: el comando único `anonimizacion` (`pyproject.toml`, `[project.scripts]`) conecta el portal, el lanzamiento de corridas y PostgreSQL de punta a punta para el modo de operación de un solo médico en una sola máquina -- ver "Instalación base" más abajo. Lo que sigue faltando para producción institucional está en la "Lista de salida a producción": servicio de sistema operativo administrado por IT, TLS, revisión de secretos por IT, cifrado en reposo, política de retención/backup aprobada, y el corpus/carga/auditoría PII final. El camino de Celery/Redis (workers distribuidos, para escalar más allá de una máquina) sigue siendo un modo de despliegue aparte, fuera del alcance de `anonimizacion` -- no publicar ni habilitar corridas institucionales hasta completar esa lista.
+Esta guía prepara la operación institucional **sin declarar una instalación lista para producción**. Desde `arranque-para-el-instituto` el repositorio SÍ tiene un *composition root* real: el comando único `anonimizacion` (`pyproject.toml`, `[project.scripts]`) conecta el portal, el lanzamiento de corridas y PostgreSQL de punta a punta para el modo de operación de un solo médico en una sola máquina -- ver "Instalación base" más abajo. Lo que sigue faltando para producción institucional está en la "Lista de salida a producción": servicio de sistema operativo administrado por IT, TLS, revisión de secretos por IT, cifrado en reposo, política de retención/backup aprobada, y el corpus/carga/auditoría PII final. Escalar más allá de una máquina (workers distribuidos) queda fuera del alcance de `anonimizacion`: el paralelismo real hoy es `ProcessPoolExecutor` dentro de un solo proceso (`trabajadores/despacho_paralelo.py`); un camino de Celery/Redis existió como cáscara sin llamador de producción y se retiró en `auditoria-y-poda` E5 -- no publicar ni habilitar corridas institucionales hasta completar esa lista.
 
 ## Instalación base
 
@@ -45,10 +45,6 @@ Usar `deploy/variables-entorno.example` sólo como catálogo. La cuenta de servi
 
 | Variable | Uso actual | Regla institucional |
 |---|---|---|
-| `CELERY_BROKER_URL` | Broker Celery; por defecto local en desarrollo. | Usar endpoint Redis interno, con TLS/credenciales si IT lo requiere. |
-| `CELERY_RESULT_BACKEND` | Backend de resultados Celery. | Mantenerlo en red interna y separado del dataset. |
-| `CELERY_WORKER_CONCURRENCY` | Límite de workers entre 1 y 16. | Empezar con un valor bajo y medir CPU/RAM/DB antes de aumentarlo. |
-| `CELERY_TASK_ALWAYS_EAGER` | Sólo desarrollo/pruebas sin Redis. | Debe ser `0` o estar ausente en un servicio real. |
 | `ANONIMIZACION_PEPPER` / `ANONIMIZACION_PEPPER_ARCHIVO` | Pepper HMAC que hace irreversibles las claves de pseudonimización (`pseudonimizacion/almacen_pepper.py`); lo lee `anonimizacion diagnosticar`/`procesar`/`servir` al arrancar. | Guardar separado del dataset y rotarlo mediante procedimiento controlado. |
 | `ANONIMIZACION_PANEL_SECRETO` / `ANONIMIZACION_PANEL_SECRETO_ARCHIVO` | Secreto HTTP Basic Auth del panel (`web/secreto_panel.py`); obligatorio con `--escuchar-red`. | Guardar en gestor de secretos; rotarlo no afecta datos ya escritos. |
 | `ANONIMIZACION_DB_URL` | URL de Postgres sólo para correr Alembic a mano (`migrations/env.py`). | Guardar en gestor de secretos; nunca en repositorio, logs o manifiestos. |
@@ -62,7 +58,7 @@ Usar `deploy/variables-entorno.example` sólo como catálogo. La cuenta de servi
 | Originales | Lectura controlada | Sin acceso directo | Cifrados en reposo y separados del dataset. |
 | Cuarentena | Escritura/lectura de revisión autorizada | Sin acceso directo | Cifrada, con metadata segura y retención independiente. |
 | Dataset anonimizado | Escritura | Lectura según rol de investigación | No debe incluir PDFs, DNI, nombres, rutas ni secretos. |
-| PostgreSQL/Redis | Acceso con credenciales del servicio | Sin acceso | Segmentación de red y mínimo privilegio. |
+| PostgreSQL | Acceso con credenciales del servicio | Sin acceso | Segmentación de red y mínimo privilegio. |
 | Variables protegidas | Lectura | Sin acceso | ACL sólo para administradores de secretos y cuenta de servicio. |
 
 Las raíces de entrada las configura IT. El inventariador resuelve rutas y omite enlaces que salen de una raíz autorizada, pero la ACL del sistema operativo es la defensa principal.
@@ -90,7 +86,7 @@ Postgres es la única salida del pipeline: no hay una segunda proyección (bundl
 
 ## Lista de salida a producción
 
-- [ ] Servicio real de corridas compuesto y probado contra PostgreSQL/Redis.
+- [ ] Servicio real de corridas compuesto y probado contra PostgreSQL.
 - [ ] Autenticación institucional, TLS y autorización por rol para el portal.
 - [ ] Gestor de secretos y ACL revisados por IT.
 - [ ] Cifrado en reposo de originales y cuarentena verificado.
