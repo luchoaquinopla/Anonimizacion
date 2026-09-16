@@ -420,8 +420,47 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
       15/15 aislado, mismo patrón ya documentado, no es regresión); `-m postgres` -> 28 passed;
       `-m caracterizacion` -> 17 passed, `git diff feat/auditoria-y-poda --stat --
       tests/caracterizacion/` vacío; `ruff check .` -> All checks passed.
+- [x] 5.11 (no en el plan original, hallazgo de revisión adversarial confirmado por el
+      orquestador) — corregidos 3 documentos de proyecto que describían Celery/Redis como
+      vigente: `README.md:29` (instruía `CELERY_TASK_ALWAYS_EAGER=1`, variable que ya no hace
+      nada; reemplazado por el gotcha real de `uv sync` desinstalando `es-core-news-lg`/deps de
+      test, ver 5.12); `docs/pipeline.md` (sección "Celery + Redis" reescrita a "Concurrencia:
+      `ProcessPoolExecutor`" -- describe el mecanismo real, con el razonamiento de memoria
+      medido, y registra Celery+Redis como alternativa considerada, esbozada y retirada por
+      falta de llamador; también corregidas 2 menciones sueltas en la sección de carga 10k que
+      listaban "Celery/Redis"/"cola" entre lo no medido, ya no aplica); `AGENTS.md:126`
+      (lista del stack: "Celery+Redis" -> "`ProcessPoolExecutor`"). Verificado con `rg -in
+      "celery|redis" --glob '!openspec/changes/archive/**' .`: revisadas una por una todas las
+      coincidencias restantes fuera de `openspec/changes/archive/` -- las de
+      `despacho_paralelo.py:96,231` se conservan (documentan la decisión de descartar
+      Celery+Redis, no un módulo inexistente); las de `openspec/changes/auditoria-y-poda/*`
+      (proposal/design/tasks/spec de este mismo cambio) y `openspec/changes/operacion-segura-y-escalable/*`
+      se dejan intactas (artefactos de planificación/historia de sus propios cambios, no
+      documentación del estado actual del sistema); `migrations/versions/0008_corrida_en_salida.py:15`
+      y `tests/pipeline/test_modo_sin_validacion_de_episodio.py:8` quedan anotados como
+      **material de poda de E6** (prosa desactualizada preexistente, no causada por este
+      retiro) -- ver Fase 6 más abajo.
+- [x] 5.12 (mismo hallazgo) — documentado en `README.md` el gotcha reproducible de `uv sync`:
+      sin `--extra dev` desinstala `pytest`/`ruff`/`pytest-cov`; con o sin ese flag, desinstala
+      `es-core-news-lg` (modelo de spaCy) porque vive fuera del lock -- hay que reinstalarlo con
+      `uv pip install` después de cualquier `uv sync`/`uv lock`. No es un defecto de esta
+      entrega (el modelo nunca estuvo en el lock), pero no estaba documentado en ningún lado y
+      se descubrió operando esta misma entrega.
+- [x] 5.13 Verificación final tras 5.11/5.12: `uv run pytest -q -m "not postgres"` -> 1024
+      passed, 1 skipped, 0 failed. `-m postgres` -> 28 passed. `-m caracterizacion` -> 17
+      passed, `git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío. `ruff
+      check .` -> All checks passed.
 
 ## Fase 6 — Entrega 6: migración a Obsidian + poda (PR6a–PR6f)
+
+**Material de poda anotado desde E5** (prosa desactualizada preexistente, NO causada por el
+retiro de Celery/Redis -- decisión explícita del orquestador de no tocarla en E5):
+- `migrations/versions/0008_corrida_en_salida.py:15` -- comentario menciona "un reintento de
+  Celery"; migración histórica de Alembic, no se edita retroactivamente por convención, pero el
+  comentario en sí es candidato de poda si se toca ese archivo por otro motivo.
+- `tests/pipeline/test_modo_sin_validacion_de_episodio.py:8` -- docstring dice "La tarea Celery
+  `procesar_documento`", nombre de función que no existe (`procesar_grupo` es la real);
+  staleness previa a E5, no una mención viva de Celery.
 
 Migración de los 8 invariantes de la lista cerrada (spec `prosa-de-codigo` Req. 3), **TODAS
 antes de cualquier poda**, en `04 - Desarrollo/pipeline de anonimizacion` (bitácora + nota de
