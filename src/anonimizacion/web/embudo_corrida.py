@@ -36,17 +36,19 @@ import sqlalchemy as sa
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from anonimizacion.pipeline.etapas import Etapa
 from anonimizacion.salida.modelos_orm import Cuarentena, DocumentoCorridaOrm, Estudio
 
-#: Orden de EJECUCIÓN real (design.md, Decisión 8) -- NO el orden del enum
-#: `Etapa` (`pipeline/etapas.py`), que declara `COORDINACION` entre
-#: `RECONCILIACION` y `DETECCION_PII`. El recorrido real de un documento
-#: termina en pseudonimización y recién después corre `_coordinar_resueltos`.
-#: `deteccion` y `deteccion_pii` quedan fuera: ninguna de las dos produce
-#: cuarentena (Requisito 2 de la spec).
-#: `despacho` (openspec `paralelismo-de-procesamiento` PR 3, hallazgo de
+#: Orden de EJECUCIÓN real (design.md, Decisión 8/D4) -- NO el orden de
+#: declaración de `Etapa` (`pipeline/etapas.py`), que declara `COORDINACION`
+#: entre `RECONCILIACION` y `DETECCION_PII`. El recorrido real de un
+#: documento termina en pseudonimización y recién después corre
+#: `_coordinar_resueltos`. `DETECCION` y `DETECCION_PII` quedan fuera:
+#: ninguna de las dos produce cuarentena (Requisito 2 de la spec
+#: `vocabulario-etapas-pipeline`) -- ver la lista de exclusión más abajo.
+#: `DESPACHO` (openspec `paralelismo-de-procesamiento` PR 3, hallazgo de
 #: revisión adversarial): un documento ya inventariado cuyo proceso hijo
-#: murió antes de llegar a EXTRACCION. Va justo después de `ingesta` porque
+#: murió antes de llegar a EXTRACCION. Va justo después de `INGESTA` porque
 #: es el único punto del recorrido donde ese documento pudo haberse
 #: detenido -- nunca llegó a ninguna etapa posterior del pipeline. Antes de
 #: agregarla, `despacho_paralelo.py` apartaba con un `etapa` fuera de este
@@ -56,16 +58,31 @@ from anonimizacion.salida.modelos_orm import Cuarentena, DocumentoCorridaOrm, Es
 #: que `llegaron` nunca restaba esos apartados en ningún punto del recorrido
 #: y el desglose quedaba inflado a partir de esa etapa en adelante, aunque
 #: el total (`residuo`/`cierra`) siguiera cerrando bien.
-ETAPAS_EMBUDO: tuple[str, ...] = (
-    "ingesta",
-    "despacho",
-    "extraccion",
-    "parseo",
-    "reconciliacion",
-    "coordinacion",
-    "pseudonimizacion",
-    "salida",
+#:
+#: Deliberadamente explícito y no derivado del orden de declaración de
+#: `Etapa`: agregar un miembro al enum unificado no debe reordenar esta
+#: vista sin una decisión editada acá mismo (spec Requisito 4, Escenario 1).
+ORDEN_EMBUDO: tuple[Etapa, ...] = (
+    Etapa.INGESTA,
+    Etapa.DESPACHO,
+    Etapa.EXTRACCION,
+    Etapa.PARSEO,
+    Etapa.RECONCILIACION,
+    Etapa.COORDINACION,
+    Etapa.PSEUDONIMIZACION,
+    Etapa.SALIDA,
 )
+
+#: Miembros del enum unificado que a propósito no aparecen en `ORDEN_EMBUDO`,
+#: con su motivo (spec Requisito 4, "cobertura del desglose"). Ninguna de las
+#: dos produce cuarentena, así que sumarlas al desglose sólo agregaría filas
+#: con `llegaron = apartados = 0`.
+ETAPAS_EXCLUIDAS_DEL_EMBUDO: tuple[Etapa, ...] = (
+    Etapa.DETECCION,
+    Etapa.DETECCION_PII,
+)
+
+ETAPAS_EMBUDO: tuple[str, ...] = tuple(etapa.value for etapa in ORDEN_EMBUDO)
 
 _CODIGO_SOBRETAMANO = "artefacto_sobretamano"
 _VENTANA_RECIENTE_SEG = 5 * 60
