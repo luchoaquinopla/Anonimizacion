@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pymupdf
 
 from .plantilla_documento import (
@@ -331,7 +332,8 @@ def generar_corpus_clinico(
     return CorpusClinicoSintetico(tuple(documentos), oraculo)
 
 
-# --- Trazado de ECG con oráculo (fase 1, openspec `senal-ecg-y-dataset-vinculado`) --------
+# --- Trazado de ECG con oráculo (fase 1, openspec `senal-ecg-y-dataset-vinculado`,
+# corregido en `correccion-orientacion-senal-ecg`) --------------------------------
 #
 # El PDF real mide 12 derivaciones (1238 puntos) + 1 tira de ritmo V1
 # (5000 puntos) + 4 pulsos de calibración, en una página con `rotation=90`
@@ -340,6 +342,18 @@ def generar_corpus_clinico(
 # sin rotar). Este generador dibuja esa misma geometría con `pymupdf`
 # (nunca reportlab), con un oráculo conocido, para el test de integración
 # extremo a extremo (`test_pdf_sintetico_ecg.py`).
+#
+# Orientación REAL (medida contra el ECG real, no un supuesto): los pulsos
+# de calibración quedan en el extremo de Y ALTA, más allá de toda
+# derivación -- el tiempo avanza hacia Y DECRECIENTE. La columna 0 (I/II/III)
+# es la más CERCANA a los pulsos; V4/V5/V6 la más lejana. Este generador
+# reproduce esa geometría (nunca "Y creciente = tiempo creciente").
+#
+# Consistencia fisiológica: I y II son las señales base; III, aVR, aVL, aVF
+# se derivan de ellas por Einthoven/Goldberger (nunca independientes) --
+# `construir_senal` ahora rechaza (`None`) una señal que no cumpla esas
+# identidades (ver `_validar_fisiologia`), así que un oráculo con
+# derivaciones inventadas por separado ya no sirve como corpus "válido".
 
 # Hechos MEDIDOS contra el ECG real -- deliberadamente NO importados de
 # `extraccion/senal_ecg.py`: si el fixture reutilizara las constantes del
@@ -358,6 +372,17 @@ _X_FILA_ECG_MM = (60.0, 100.0, 140.0)
 _X_TIRA_ECG_MM = 200.0  # banda propia, medido: NO coincide con ninguna fila de la grilla
 _ESCALA_MM_POR_MV_REAL = -10.0  # medido contra el ECG real: +1 mV = -10 mm en X (nunca +10)
 
+# Geometría vertical: duración de una columna (2,5 s a 25 mm/s) + un margen
+# de separación entre columnas para que el agrupamiento por centroide de Y
+# (`_asignar_derivaciones`) no las confunda. `_Y_TOPE_ECG_MM` es el extremo
+# (Y alta) de la columna 0 -- el más cercano a los pulsos, medido en el ECG
+# real. `_Y_PULSO_ECG_MM` queda por encima de TODO el dato (columnas + tira
+# + su propio ancho), como el ECG real.
+_DURACION_COLUMNA_ECG_MM = (_MUESTRAS_DERIVACION_ECG - 1) / _FRECUENCIA_ECG * _MM_POR_S_ECG
+_ESPACIO_COLUMNA_ECG_MM = _DURACION_COLUMNA_ECG_MM + 2.0
+_Y_TOPE_ECG_MM = 265.0
+_Y_PULSO_ECG_MM = 270.0
+
 
 def _mm_a_pt(mm: float) -> float:
     return mm * 72 / 25.4
@@ -368,18 +393,48 @@ def _onda_ecg_sintetica(rng: random.Random, n: int, *, amplitud_mv: float) -> li
     return [amplitud_mv * math.sin(2 * math.pi * 3 * indice / n + fase) for indice in range(n)]
 
 
+# Latido asimétrico en el tiempo (P antes del QRS, T después, amplitudes
+# distintas) -- si el tiempo queda invertido, la forma NO es la misma
+# (a diferencia de una onda seno pura, que reversa en fase pero sigue
+# siendo la misma seno). Períodos/anchos en segundos, sobre tiempo GLOBAL
+# (no reinicia por columna) para que la fase sea continua entre columnas.
+_PERIODO_LATIDO_S = 0.8  # ~75 lpm
+_T_ONDA_P_S, _ANCHO_ONDA_P_S = 0.05, 0.02
+_T_ONDA_R_S, _ANCHO_ONDA_R_S = 0.16, 0.008
+_T_ONDA_T_S, _ANCHO_ONDA_T_S = 0.35, 0.05
+
+
+def _onda_latido(
+    t_s: np.ndarray, *, amplitud_p: float, amplitud_r: float, amplitud_t: float
+) -> np.ndarray:
+    """Tres gaussianas (P, R, T) sobre la fase dentro de cada latido --
+    asimétrica en el tiempo, así una inversión temporal es detectable."""
+    fase = np.mod(t_s, _PERIODO_LATIDO_S)
+    return (
+        amplitud_p * np.exp(-((fase - _T_ONDA_P_S) ** 2) / (2 * _ANCHO_ONDA_P_S**2))
+        + amplitud_r * np.exp(-((fase - _T_ONDA_R_S) ** 2) / (2 * _ANCHO_ONDA_R_S**2))
+        + amplitud_t * np.exp(-((fase - _T_ONDA_T_S) ** 2) / (2 * _ANCHO_ONDA_T_S**2))
+    )
+
+
+def _tiempo_global_s(offset_muestras: int, cantidad: int) -> np.ndarray:
+    return (offset_muestras + np.arange(cantidad)) / _FRECUENCIA_ECG
+
+
 def _dibujar_trazo_ecg(
     pagina: pymupdf.Page,
-    valores_mv: list[float],
+    valores_mv: list[float] | np.ndarray,
     *,
-    y0_mm: float,
+    y_tope_mm: float,
     x_referencia_mm: float,
     escala_mm_por_mv: float,
 ) -> None:
+    """Dibuja `valores_mv` con el tiempo avanzando hacia Y DECRECIENTE desde
+    `y_tope_mm` (el extremo más cercano a los pulsos, orientación real)."""
     puntos_pt = [
         (
             _mm_a_pt(x_referencia_mm + mv * escala_mm_por_mv),
-            _mm_a_pt(y0_mm + indice / _FRECUENCIA_ECG * _MM_POR_S_ECG),
+            _mm_a_pt(y_tope_mm - indice / _FRECUENCIA_ECG * _MM_POR_S_ECG),
         )
         for indice, mv in enumerate(valores_mv)
     ]
@@ -394,11 +449,19 @@ def _dibujar_pulso_ecg(
 ) -> None:
     """Pie -> meseta -> pie (medido contra el ECG real, ver
     `extraccion/senal_ecg.py::_pie_y_meseta`): NO un escalón que se sostiene
-    hasta el final -- el pulso real vuelve a la línea base."""
+    hasta el final -- el pulso real vuelve a la línea base. La orientación
+    interna de sus propios puntos es irrelevante para la dirección del
+    tiempo (`_pie_y_meseta` ordena por Y ella misma) -- se dibuja creciente
+    por simplicidad."""
     valores = [0.0] * 5 + [1.0] * 50 + [0.0] * 5
-    _dibujar_trazo_ecg(
-        pagina, valores, y0_mm=y0_mm, x_referencia_mm=x_referencia_mm, escala_mm_por_mv=escala_mm_por_mv
-    )
+    puntos_pt = [
+        (_mm_a_pt(x_referencia_mm + mv * escala_mm_por_mv), _mm_a_pt(y0_mm + indice / _FRECUENCIA_ECG * _MM_POR_S_ECG))
+        for indice, mv in enumerate(valores)
+    ]
+    trazo = pagina.new_shape()
+    trazo.draw_polyline(puntos_pt)
+    trazo.finish(color=(0, 0, 0), fill=None, width=0.43, closePath=False)
+    trazo.commit()
 
 
 def _dibujar_grilla_ecg(pagina: pymupdf.Page) -> None:
@@ -417,20 +480,39 @@ def crear_pdf_ecg_con_trazos_sinteticos(
     semilla: int = 0,
     escala_mm_por_mv: float = _ESCALA_MM_POR_MV_REAL,
     oraculo_por_derivacion: dict[str, list[float]] | None = None,
+    orden_columnas_invertido: bool = False,
+    filas_intercambiadas: tuple[int, int] | None = None,
 ) -> dict[str, list[float]]:
     """PDF sintético de ECG rotado 90°: 12 derivaciones + tira V1 + 4
     pulsos de calibración (uno por banda: 3 filas + la propia banda de la
-    tira) + grilla rosa. Devuelve el oráculo -- mV por derivación (llaves de
-    `ORDEN_DERIVACIONES`) y la tira de ritmo (`"tira_ritmo"`).
+    tira) + grilla rosa, en la orientación REAL (pulsos en Y alta, tiempo
+    hacia Y decreciente). Devuelve el oráculo -- mV por derivación (llaves
+    de `ORDEN_DERIVACIONES`) y la tira de ritmo (`"tira_ritmo"`).
+
+    Las derivaciones no son independientes entre sí: I y II son señales
+    base (latido asimétrico, ver `_onda_latido`); III, aVR, aVL, aVF se
+    derivan de ellas por Einthoven/Goldberger, en tiempo GLOBAL continuo
+    (no por columna) -- `construir_senal` valida esas identidades
+    (`_validar_fisiologia`) y rechaza cualquier corpus que no las cumpla.
+    V1 de la grilla es, además, el segmento de la tira en su ventana --
+    debe correlacionar con ella (también validado).
 
     `escala_mm_por_mv` (default: medido contra el real, +1 mV = -10 mm)
     controla la dirección del pulso -- pasar `+10.0` ejercita que
     `construir_senal` sigue la dirección que MIDE cada pulso, nunca una
-    constante fija (ver `tests/extraccion/test_senal_ecg.py`, "invierte la
-    dirección del pulso"). `oraculo_por_derivacion` reemplaza la onda seno
-    default en derivaciones puntuales -- para armar un oráculo independiente
-    con forma conocida (pico/valle), sin reutilizar la fórmula del
-    extractor."""
+    constante fija. `oraculo_por_derivacion` reemplaza "I" y/o "II" (las
+    derivadas se recalculan a partir de lo que quede vigente, para no
+    romper Einthoven/Goldberger) o cualquier derivación V/tira_ritmo
+    directamente.
+
+    `orden_columnas_invertido` (regresión, ver
+    `tests/fixtures/test_pdf_sintetico_ecg.py`,
+    "orientación vieja equivocada"): dibuja cada columna en la posición
+    FÍSICA opuesta a la real (la más lejana a los pulsos en vez de la más
+    cercana) -- reproduce el bug original, donde el contenido de una
+    columna terminaba etiquetado como el de otra. `filas_intercambiadas`
+    intercambia dos filas (dos derivaciones) dentro de la columna 0 --
+    misma idea, a nivel fila."""
     rng = random.Random(semilla)
     documento = pymupdf.open()
     pagina = documento.new_page(width=612, height=792)
@@ -438,36 +520,95 @@ def crear_pdf_ecg_con_trazos_sinteticos(
 
     _dibujar_grilla_ecg(pagina)
 
+    overrides = oraculo_por_derivacion or {}
+
+    # I y II: overrides directos o latido sintético con fases distintas
+    # (para que no sean múltiplos escalares entre sí, a diferencia del
+    # fixture de bajo nivel de `test_senal_ecg.py`).
+    valor_i = overrides.get(
+        "I", _onda_latido(_tiempo_global_s(0, _MUESTRAS_TIRA_ECG), amplitud_p=0.05, amplitud_r=0.40, amplitud_t=0.10)
+    )
+    valor_ii = overrides.get(
+        "II", _onda_latido(_tiempo_global_s(0, _MUESTRAS_TIRA_ECG), amplitud_p=0.08, amplitud_r=0.90, amplitud_t=0.20)
+    )
+    i_global = np.asarray(valor_i, dtype=float)
+    ii_global = np.asarray(valor_ii, dtype=float)
+    if len(i_global) != _MUESTRAS_TIRA_ECG or len(ii_global) != _MUESTRAS_TIRA_ECG:
+        raise ValueError("I/II deben cubrir los 10 s completos (tira) para derivar el resto en tiempo global")
+
+    derivadas_globales = {
+        "I": i_global,
+        "II": ii_global,
+        "III": ii_global - i_global,
+        "aVR": -(i_global + ii_global) / 2,
+        "aVL": i_global - ii_global / 2,
+        "aVF": ii_global - i_global / 2,
+    }
+
+    valores_tira_global = np.asarray(
+        overrides.get(
+            "tira_ritmo",
+            _onda_latido(
+                _tiempo_global_s(0, _MUESTRAS_TIRA_ECG), amplitud_p=0.04, amplitud_r=0.50, amplitud_t=0.15
+            ),
+        ),
+        dtype=float,
+    )
+
     oraculo: dict[str, list[float]] = {}
-    for columna in range(4):
-        y0_mm = _OFFSETS_COLUMNA_ECG[columna] / _FRECUENCIA_ECG * _MM_POR_S_ECG
+    for columna_real in range(4):
+        offset = _OFFSETS_COLUMNA_ECG[columna_real]
+        ventana = slice(offset, offset + _MUESTRAS_DERIVACION_ECG)
+        columna_fisica = (3 - columna_real) if orden_columnas_invertido else columna_real
+        y_tope_mm = _Y_TOPE_ECG_MM - columna_fisica * _ESPACIO_COLUMNA_ECG_MM
+
         for fila in range(3):
-            derivacion = _ORDEN_DERIVACIONES_ECG[columna * 3 + fila]
-            valores = (oraculo_por_derivacion or {}).get(
-                derivacion,
-                _onda_ecg_sintetica(rng, _MUESTRAS_DERIVACION_ECG, amplitud_mv=0.3 + 0.05 * fila),
-            )
+            derivacion = _ORDEN_DERIVACIONES_ECG[columna_real * 3 + fila]
+            if derivacion in derivadas_globales:
+                valores = derivadas_globales[derivacion][ventana].tolist()
+            elif derivacion == "V1":
+                valores = overrides.get("V1", valores_tira_global[ventana].tolist())
+            else:
+                valores = overrides.get(
+                    derivacion, _onda_ecg_sintetica(rng, _MUESTRAS_DERIVACION_ECG, amplitud_mv=0.15 + 0.05 * fila)
+                )
+            oraculo[derivacion] = list(valores)
+
+            fila_fisica = fila
+            if columna_real == 0 and filas_intercambiadas is not None:
+                a, b = filas_intercambiadas
+                if fila == a:
+                    fila_fisica = b
+                elif fila == b:
+                    fila_fisica = a
+
             _dibujar_trazo_ecg(
                 pagina,
                 valores,
-                y0_mm=y0_mm,
-                x_referencia_mm=_X_FILA_ECG_MM[fila],
+                y_tope_mm=y_tope_mm,
+                x_referencia_mm=_X_FILA_ECG_MM[fila_fisica],
                 escala_mm_por_mv=escala_mm_por_mv,
             )
-            oraculo[derivacion] = valores
 
     for x_referencia in (*_X_FILA_ECG_MM, _X_TIRA_ECG_MM):
         _dibujar_pulso_ecg(
-            pagina, y0_mm=280.0, x_referencia_mm=x_referencia, escala_mm_por_mv=escala_mm_por_mv
+            pagina, y0_mm=_Y_PULSO_ECG_MM, x_referencia_mm=x_referencia, escala_mm_por_mv=escala_mm_por_mv
         )
 
-    valores_tira = (oraculo_por_derivacion or {}).get(
-        "tira_ritmo", _onda_ecg_sintetica(rng, _MUESTRAS_TIRA_ECG, amplitud_mv=0.4)
-    )
+    # La tira siempre arranca junto a los pulsos (medido: "empiezan en el
+    # mismo Y") -- `orden_columnas_invertido` sólo escrambla las columnas de
+    # la grilla, nunca la tira; la correlación V1-grilla-vs-tira se valida
+    # en espacio de MUESTRAS (offsets de `OFFSETS_COLUMNA`), no en Y
+    # absoluto, así que esto no afecta esa validación.
+    y_tope_tira_mm = _Y_TOPE_ECG_MM
     _dibujar_trazo_ecg(
-        pagina, valores_tira, y0_mm=0.0, x_referencia_mm=_X_TIRA_ECG_MM, escala_mm_por_mv=escala_mm_por_mv
+        pagina,
+        valores_tira_global.tolist(),
+        y_tope_mm=y_tope_tira_mm,
+        x_referencia_mm=_X_TIRA_ECG_MM,
+        escala_mm_por_mv=escala_mm_por_mv,
     )
-    oraculo["tira_ritmo"] = valores_tira
+    oraculo["tira_ritmo"] = valores_tira_global.tolist()
 
     documento.save(ruta)
     documento.close()

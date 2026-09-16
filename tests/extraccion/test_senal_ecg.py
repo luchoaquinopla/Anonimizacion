@@ -29,11 +29,29 @@ from anonimizacion.extraccion.senal_ecg import (
 
 # columna -> Y de inicio (mm), fila -> X de referencia (mm) de la banda de
 # amplitud; la tira tiene su PROPIA banda, medido: nunca coincide con las
-# 3 filas de la grilla (ver tests/fixtures/pdf_sintetico.py)
+# 3 filas de la grilla (ver tests/fixtures/pdf_sintetico.py). Con el pulso
+# por DEBAJO de todo el dato (`_Y_PULSO`), el tiempo avanza con Y creciente
+# (`direccion=+1`) -- así `columna` en `_corpus_valido` coincide 1 a 1 con
+# el índice temporal real, sin necesidad de invertir nada acá.
 _Y_COLUMNA = tuple(offset / FRECUENCIA_HZ * MM_POR_S for offset in OFFSETS_COLUMNA)
 _X_FILA = (50.0, 100.0, 150.0)
 _X_TIRA = 220.0
 _ESCALA_MM_REAL = -10.0  # medido: +1 mV = -10 mm, nunca +10
+_Y_PULSO = -30.0  # debajo de todo el dato (Y mínimo de columnas/tira es 0.0)
+
+# Coeficientes que hacen que `_corpus_valido` cumpla Einthoven/Goldberger de
+# verdad (no un supuesto): columna 0 = miembros, columna 1 = aumentada,
+# columna 2 fila 0 = V1 de grilla (debe coincidir con el segmento
+# equivalente de la tira). `_onda_seno` es sin(2*pi*3*i/n) escalado por la
+# amplitud -- misma fase para cualquier amplitud, así que una combinación
+# lineal de amplitudes es exacta punto a punto.
+_COEF_I = 0.30
+_COEF_II = 0.50
+_COEF_III = _COEF_II - _COEF_I  # Einthoven: III = II - I
+_COEF_AVR = -(_COEF_I + _COEF_II) / 2  # Goldberger
+_COEF_AVL = _COEF_I - _COEF_II / 2
+_COEF_AVF = _COEF_II - _COEF_I / 2
+_COEF_TIRA = 0.40
 
 
 def _trazo_desde_mv(
@@ -63,25 +81,60 @@ def _onda_seno(n: int, amplitud_mv: float = 0.5) -> list[float]:
     return [amplitud_mv * math.sin(2 * math.pi * 3 * i / n) for i in range(n)]
 
 
+def _tira_valor(indice_global: int, coeficiente: float) -> float:
+    """Mismo generador que `_onda_seno`, pero indexado por posición GLOBAL
+    dentro de la tira de 10 s -- permite que la V1 de la grilla (una
+    ventana de 2,5 s) coincida EXACTO con su segmento equivalente de la
+    tira, como en el ECG real."""
+    return coeficiente * math.sin(2 * math.pi * 3 * indice_global / MUESTRAS_TIRA)
+
+
+def _tira_completa(coeficiente: float) -> list[float]:
+    return [_tira_valor(i, coeficiente) for i in range(MUESTRAS_TIRA)]
+
+
+def _v1_de_grilla(coeficiente: float) -> list[float]:
+    inicio = OFFSETS_COLUMNA[2]
+    return [_tira_valor(inicio + i, coeficiente) for i in range(MUESTRAS_DERIVACION)]
+
+
+# (columna, fila) -> coeficiente, para las celdas con relación fisiológica
+# real (Einthoven en columna 0, Goldberger en columna 1); el resto (V2..V6)
+# no tiene relación que validar, cualquier forma sirve.
+_COEFICIENTE_POR_CELDA = {
+    (0, 0): _COEF_I,
+    (0, 1): _COEF_II,
+    (0, 2): _COEF_III,
+    (1, 0): _COEF_AVR,
+    (1, 1): _COEF_AVL,
+    (1, 2): _COEF_AVF,
+}
+
+
 def _corpus_valido(*, escala_mm: float = _ESCALA_MM_REAL) -> tuple[tuple[tuple[float, float], ...], ...]:
     """17 trazos: 12 derivaciones + 1 tira + 4 pulsos (uno por banda: 3
-    filas + la banda de la tira), en grilla válida."""
+    filas + la banda de la tira), en grilla válida y fisiológicamente
+    consistente (Einthoven/Goldberger/V1-vs-tira, ver
+    `_validar_fisiologia`)."""
     trazos: list[tuple[tuple[float, float], ...]] = []
     for columna in range(4):
         for fila in range(3):
-            valores = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=0.3 + 0.05 * fila)
+            if columna == 2 and fila == 0:
+                valores = _v1_de_grilla(_COEF_TIRA)
+            elif (columna, fila) in _COEFICIENTE_POR_CELDA:
+                valores = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=_COEFICIENTE_POR_CELDA[(columna, fila)])
+            else:
+                valores = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=0.15 + 0.05 * fila)
             trazos.append(
                 _trazo_desde_mv(
                     valores, y0_mm=_Y_COLUMNA[columna], x_referencia_mm=_X_FILA[fila], escala_mm=escala_mm
                 )
             )
     trazos.append(
-        _trazo_desde_mv(
-            _onda_seno(MUESTRAS_TIRA, amplitud_mv=0.4), y0_mm=0.0, x_referencia_mm=_X_TIRA, escala_mm=escala_mm
-        )
+        _trazo_desde_mv(_tira_completa(_COEF_TIRA), y0_mm=0.0, x_referencia_mm=_X_TIRA, escala_mm=escala_mm)
     )
     for x_referencia in (*_X_FILA, _X_TIRA):
-        trazos.append(_pulso(280.0, x_referencia, escala_mm=escala_mm))
+        trazos.append(_pulso(_Y_PULSO, x_referencia, escala_mm=escala_mm))
     return tuple(trazos)
 
 
@@ -101,7 +154,12 @@ def test_construir_senal_recupera_oraculo_equiespaciado() -> None:
             indice_lead = columna * 3 + fila
             if indice_lead == indice_v1:
                 continue
-            esperado_mv = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=0.3 + 0.05 * fila)
+            if columna == 2 and fila == 0:
+                esperado_mv = _v1_de_grilla(_COEF_TIRA)
+            elif (columna, fila) in _COEFICIENTE_POR_CELDA:
+                esperado_mv = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=_COEFICIENTE_POR_CELDA[(columna, fila)])
+            else:
+                esperado_mv = _onda_seno(MUESTRAS_DERIVACION, amplitud_mv=0.15 + 0.05 * fila)
             inicio = OFFSETS_COLUMNA[columna]
             recuperado_mv = senal.muestras_uv[indice_lead, inicio : inicio + MUESTRAS_DERIVACION] / 1000.0
             error_maximo = np.max(np.abs(recuperado_mv - np.array(esperado_mv)))
@@ -152,7 +210,7 @@ def test_construir_senal_falla_si_los_pulsos_apuntan_en_direcciones_distintas() 
     """Calibración inconsistente entre bandas -- ninguna dirección es
     'la correcta' por defecto, así que ante la duda: `None`."""
     trazos = list(_corpus_valido())
-    trazos[-1] = _pulso(280.0, _X_TIRA, escala_mm=10.0)  # la banda de la tira, al revés que las demás
+    trazos[-1] = _pulso(_Y_PULSO, _X_TIRA, escala_mm=10.0)  # la banda de la tira, al revés que las demás
 
     assert construir_senal(tuple(trazos)) is None
 
@@ -163,7 +221,7 @@ def test_construir_senal_falla_si_dos_pulsos_compiten_por_la_misma_banda() -> No
     asignación 1 a 1, y otra banda se queda sin pulso. Violación de layout:
     `None`, nunca una asignación arbitraria."""
     trazos = list(_corpus_valido())
-    trazos[14] = _pulso(280.0, _X_FILA[0])  # pulso de la fila 1 duplicado sobre la fila 0
+    trazos[14] = _pulso(_Y_PULSO, _X_FILA[0])  # pulso de la fila 1 duplicado sobre la fila 0
 
     assert construir_senal(tuple(trazos)) is None
 
@@ -210,7 +268,7 @@ def test_construir_senal_falla_si_hay_dos_tiras_de_ritmo() -> None:
 def test_construir_senal_falla_si_el_pulso_no_mide_10mm() -> None:
     trazos = list(_corpus_valido())
     valores_20mm = [0.0] * 5 + [2.0] * 50 + [0.0] * 5  # 20mm, no 10mm
-    trazos[-1] = _trazo_desde_mv(valores_20mm, y0_mm=280.0, x_referencia_mm=_X_TIRA)
+    trazos[-1] = _trazo_desde_mv(valores_20mm, y0_mm=_Y_PULSO, x_referencia_mm=_X_TIRA)
 
     assert construir_senal(tuple(trazos)) is None
 
