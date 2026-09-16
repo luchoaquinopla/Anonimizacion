@@ -36,8 +36,9 @@ from anonimizacion.salida.modelos_salida import ContenidoEcgSalida, ContenidoEco
 # Paulo); pre_ping AGREGA ~124 ms (~2,25 checkouts extra) en el caso típico, hasta ~220 ms bajo
 # contención (4 checkouts). Costo real, aceptado para no perder documentos válidos.
 # Invariante: «Conexión a la base, verificación y tope de espera» (Obsidian, Invariantes medidos).
-# pool_recycle recicla por EDAD desde el checkout, no detecta inactividad -- pool_pre_ping es la
-# defensa real contra conexión muerta por inactividad; pool_recycle es complemento, no sustituto.
+# pool_recycle recicla por EDAD desde la CREACIÓN de la conexión (evaluada al hacer checkout),
+# no detecta inactividad -- pool_pre_ping es la defensa real contra conexión muerta por
+# inactividad; pool_recycle es complemento, no sustituto. 270s es defensivo, no medido.
 POOL_RECYCLE_SEGUNDOS = 270
 # Explícito para que el presupuesto contra max_connections de RDS sea legible (N procesos * pool_size).
 POOL_SIZE = 5
@@ -171,7 +172,8 @@ class EscritorPostgres:
     def escribir_registro(self, registro: RegistroAnonimizado) -> None:
         """Inserta el `estudio` y sus mediciones en una sola transacción (evita una fila
         huérfana si el despacho por tipo falla después de commitear). Reprocesar no duplica:
-        guarda de dos capas (SELECT + restricción única), `IntegrityError` se trata como "ya escrito"."""
+        guarda de dos capas (SELECT + restricción única), `IntegrityError` se trata como "ya escrito".
+        Sin `clave_documento` inserta siempre: sin garantía de idempotencia."""
         if registro.tipo_documento not in self._escritores_por_tipo:
             raise ValueError(f"tipo_documento no soportado por EscritorPostgres: {registro.tipo_documento!r}")
 

@@ -1,5 +1,6 @@
 """Captura de trazos vectoriales negros de una página (extracción del ECG).
-`get_drawings()` entrega coordenadas sin rotar; nunca lee texto, sólo geometría."""
+`get_drawings()` entrega coordenadas sin rotar; nunca lee texto, sólo geometría.
+No aplicar `derotation_matrix`/`rotation_matrix`: estropea el eje del tiempo."""
 
 from __future__ import annotations
 

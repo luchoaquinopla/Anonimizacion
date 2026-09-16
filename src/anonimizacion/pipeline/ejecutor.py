@@ -105,7 +105,8 @@ def _ejecutar_con_reintentos(
     dormir: Callable[[float], None],
 ) -> object:
     """Ejecuta `funcion`, reintentando solo si lanza algo que NO sea `ErrorParseo`. Al agotar
-    reintentos, la excepción original se descarta y nunca se propaga su mensaje crudo."""
+    reintentos, la excepción original se descarta y nunca su mensaje crudo: puede traer
+    detalle de infra o PII hacia los logs."""
     intento = 0
     while True:
         try:

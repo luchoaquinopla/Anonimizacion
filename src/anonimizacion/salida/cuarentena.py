@@ -20,7 +20,9 @@ class EscritorCuarentena:
     def registrar(self, error: ErrorDocumento) -> None:
         """Inserta el apartado; reprocesar la misma corrida no duplica (guarda de dos capas:
         SELECT + restricción única `(corrida_id, id_documento)`, misma transacción).
-        Sin `corrida_id`, inserta siempre -- sin garantía de idempotencia."""
+        Sin `corrida_id`, inserta siempre -- sin garantía de idempotencia.
+        IntegrityError se resuelve acá: `_a_fallo` traga excepciones y se confundiría
+        con una caída de infra."""
         with Session(self._engine) as sesion:
             try:
                 # Consulta e inserción en la misma transacción: separarlas ampliaría la carrera sin ganar nada.

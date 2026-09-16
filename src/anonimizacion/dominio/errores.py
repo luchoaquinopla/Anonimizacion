@@ -22,6 +22,7 @@ class EtapaDocumento(str, Enum):
     SALIDA = "salida"
     INGESTA = "ingesta"
     # Documento inventariado cuyo proceso hijo murió antes de llegar a EXTRACCION.
+    # etapa MUST ser de ETAPAS_EMBUDO: un str libre suma al total pero desaparece del desglose.
     DESPACHO = "despacho"
 
 
@@ -43,6 +44,7 @@ class CodigoErrorDocumento(str, Enum):
     COBERTURA_AMBIGUA = "cobertura_ambigua"
     # Dirección opuesta a COBERTURA_INCOMPLETA: el PDF trae un campo que el modelo no citó.
     # Única excepción a "todos van a cuarentena": es marca de completitud, no motivo de rechazo.
+    # Si la dirección es dudosa, COBERTURA_INCOMPLETA: ante la duda cuarentena, nunca este código.
     CAMPO_NO_EXTRAIDO = "campo_no_extraido"
     # Nivel EPISODIO: el documento está bien, falla el grupo al que pertenece.
     EPISODIO_INCOMPLETO = "episodio_incompleto"

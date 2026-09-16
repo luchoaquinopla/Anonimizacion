@@ -197,8 +197,8 @@ class LanzadorCorrida:
     def _avanzar_y_persistir(self, corrida: Corrida, destino: EstadoCorrida) -> None:
         """Avanza `corrida` en memoria y persiste, o falla ruidoso. Si el `RuntimeError`
         se dispara, hoy sólo puede ser por corrupción externa a la fila (no hay dos
-        llamadores compitiendo en operación normal). Sin automatismo de recuperación
-        a propósito: enmascararía la corrupción que lo causó."""
+        llamadores compitiendo en operación normal). Recuperación manual: corregir
+        estado/version contra la versión real; nunca reintentar la operación."""
         version_antes = corrida.version
         corrida.avanzar_a(destino)
         if not self.repositorio.actualizar_corrida(corrida, version_esperada=version_antes):

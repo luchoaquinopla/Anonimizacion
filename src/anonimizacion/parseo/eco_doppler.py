@@ -79,6 +79,8 @@ _PATRON_FIRMA = re.compile(r"Firma:\s*(?P<nombre>.+?)\s*-\s*MP\s*(?P<matricula>\
 _PATRON_MATRICULA = re.compile(r"Matr[ií]cula\s+([A-Za-z])\s*(\d+)", re.IGNORECASE)
 _PATRON_NOMBRE_FIRMA = re.compile(r"^[A-ZÁÉÍÓÚÑ.]+(?:\s+[A-ZÁÉÍÓÚÑ.]+)+$")
 _TEXTO_FIRMA_EXCLUIDO = {"DIAGNOSTICO POR IMAGENES"}
+# Se compara contra la línea ya sin acentos (`_sin_acentos`): las entradas acentuadas
+# de acá abajo son redundantes, nunca matchean por sí solas.
 _PREFIJOS_BOILERPLATE = (
     "servicio de ecocardiografia",
     "ecografia doppler color cardiaca",

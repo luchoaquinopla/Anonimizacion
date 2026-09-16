@@ -3,7 +3,8 @@ Puro numpy; validación estricta todo-o-nada: cualquier violación de layout dev
 
 Geometría esperada, medida contra el ECG real: 12 derivaciones (~1238 puntos, 4 columnas x
 3 filas), 1 tira de ritmo V1 (~5000 puntos), 4 pulsos de calibración (~60 puntos). El signo y
-la línea base de cada banda se leen del pulso de su banda, nunca de una constante fija: +1 mV
+la línea base de cada banda se leen del pulso de su banda, nunca de una constante fija ni del
+promedio del trazo (no es un cero confiable: una derivación puede tener ST elevado): +1 mV
 se mide como -10 mm en X (pie a la derecha, meseta a la izquierda). La dirección del tiempo se
 deriva de la posición de los pulsos (siempre marcan el inicio), nunca se asume Y creciente =
 tiempo creciente. Invariante: «Calibración del trazado del ECG» (Obsidian, Invariantes medidos).
@@ -286,6 +287,7 @@ def _muestrear(
         return None
     # .astype(int16) envuelve en silencio fuera de rango (32768 -> -32768): se valida antes.
     muestras_uv = np.round(mv_interpolado * 1000)
+    # Se rechaza, nunca se recorta: recortar también corrompe en silencio.
     if np.any(np.abs(muestras_uv) > AMPLITUD_MAXIMA_UV):
         return None
     return muestras_uv.astype(np.int16)

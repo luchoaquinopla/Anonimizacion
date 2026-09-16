@@ -181,7 +181,8 @@ class ReconciliadorLaboratorioGeneral:
         self, documento: DocumentoParseado, contenido: ContenidoLaboratorio, texto: TextoExtraido
     ) -> tuple[bool, tuple[str, ...]]:
         """Compara filas PDF vs. modelo. PDF con más filas es benigno (parser omitió
-        algo real); PDF con menos es integridad y termina en `COBERTURA_INCOMPLETA`."""
+        algo real); PDF con menos es integridad y termina en `COBERTURA_INCOMPLETA`.
+        False con conteos distintos: sin emparejamiento posicional confiable no se inventa uno."""
         filas_pdf = self._filas_inventariadas(texto)
         if not filas_pdf:
             return False, ()

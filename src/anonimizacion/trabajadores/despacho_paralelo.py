@@ -98,7 +98,8 @@ def inicializar_trabajador(
     """`initializer` de `ProcessPoolExecutor`: corre una vez por hijo, antes de la
     primera tarea. Construye acá -- no en el padre -- todo lo no picklable o caro:
     `MotorPii`, el `Engine` de Postgres y el pepper (leído por el hijo de su propio
-    entorno heredado, nunca recibido como argumento). `directorio_marcador_pid`
+    entorno heredado, nunca recibido como argumento: viajaría pickleado, otra copia
+    del secreto en tránsito). `directorio_marcador_pid`
     (`None` = producción) es instrumentación de test: cada hijo deja un archivo con su
     propio PID, para confirmar que dos grupos corrieron en procesos genuinamente distintos."""
     pepper = obtener_pepper()
@@ -158,6 +159,7 @@ def _error_grupo_perdido(referencia: Referencia, corrida_id: str) -> ErrorDocume
     código ya significa un error dentro del pipeline sobre un documento que sí corrió."""
     return ErrorDocumento(
         id_documento=referencia["id_documento"],
+        # etapa MUST ser de ETAPAS_EMBUDO: un str libre suma al total pero desaparece del desglose.
         etapa=EtapaDocumento.DESPACHO,
         codigo=CodigoErrorDocumento.PROCESO_INTERRUMPIDO,
         corrida_id=corrida_id,

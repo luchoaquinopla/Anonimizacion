@@ -10,6 +10,7 @@ from typing import Any, Protocol
 MARCADOR_REDACTADO = "[REDACTADO]"
 
 # Segunda barrera de regex lisa (sin score/rango de Presidio), independiente del motor de PII.
+# Mismo patrón de forma que dni_ar._PATRONES: cambiar uno obliga a cambiar el otro.
 _PATRON_DNI = re.compile(
     r"(?<![\d.])\d{1,2}\.\d{3}\.\d{3}(?!\d)|(?<![\d.])\d{3}\.\d{3}(?!\d)|(?<!\d)\d{6,8}(?!\d)"
 )

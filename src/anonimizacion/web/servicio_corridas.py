@@ -73,9 +73,11 @@ def _despachar_y_cerrar(
     hilo, no un `ProcessPoolExecutor` anidado: el trabajo CPU-bound ya corre en procesos
     hijos propios de `despachador`, así que este hilo sólo orquesta (I/O-bound desde la
     perspectiva de este proceso) sin competir por el GIL con el resto de las peticiones
-    HTTP. Un `Exception` inesperado marca la corrida `FALLIDA` y se vuelve a lanzar para
-    quedar visible en stderr. Si `detener` está seteado al retornar, el despacho se
-    cortó a propósito -- cierra `FALLIDA` también, nunca `COMPLETADA` sin evidencia."""
+    HTTP. Nunca el camino secuencial: cargaría `MotorPii` en el servidor y congelaría
+    HTTP; `procesos=1` igual usa un hijo real. Un `Exception` inesperado marca la
+    corrida `FALLIDA` y se vuelve a lanzar para quedar visible en stderr. Si `detener`
+    está seteado al retornar, el despacho se cortó a propósito -- cierra `FALLIDA`
+    también, nunca `COMPLETADA` sin evidencia."""
     detener_latido = threading.Event()
     hilo_latido = threading.Thread(
         target=_emitir_latidos,
