@@ -599,3 +599,134 @@ descartado corriendo cada suite por separado, secuencialmente.
 estas correcciones (3 tests nuevos de Postgres + 2 tests de defensa en
 profundidad de PII + comentarios corregidos, sin agregar código de producción
 más allá del filtro de una línea y su docstring).
+
+## Entrega 4 (PR 4, rama `feat/senal-ecg-4-verificador-pii`, mergeada como PR #45)
+
+Estado: **completa** — 4.1/4.2 implementadas en esta rama; 4.3–4.6 se cierran
+en la sesión de cierre del cambio (ver sección siguiente). Fusionada
+previamente sin pasar por `apply-progress.md` (se desarrolló en paralelo a la
+entrega 3); este bloque incorpora el registro que vivía aparte en Engram
+(`sdd/senal-ecg-y-dataset-vinculado/apply-progress-entrega4`, observación
+`#1300`), sin perder ningún detalle.
+
+Commits: `802b941` (implementación inicial), `e677756` (correcciones de
+revisión adversarial).
+
+### Correcciones de revisión adversarial (commit `e677756`)
+
+1. **CRITICAL**: `verificador_lineal.py` no tenía llamador de producción — el
+   diseño lo ubica bajo `tests/`, no bajo `src/`. `git mv
+   src/anonimizacion/pii/verificador_lineal.py tests/pii/verificador_lineal.py`;
+   actualizados los 3 imports (`tests/fixtures/corpus_piloto.py`,
+   `tests/pii/test_verificador_lineal.py`,
+   `tests/carga/medir_escalado_verificador_pii.py`) para importar desde
+   `tests.pii.verificador_lineal`.
+2. **WARNING**: docstring corregido — la búsqueda es O(texto) porque el goto
+   se extiende a función total, pero la CONSTRUCCIÓN de ese goto es
+   O(Σ|patrones| × |alfabeto usado|), no O(patrones) puro. Ya no dice
+   "O(texto + patrones)" sin matizar.
+3. **SUGGESTION**: agregados a `tests/fixtures/verificador_pii.py::generar_semilla`
+   y a `tests/pii/test_verificador_lineal.py` casos de casefold que cambia el
+   LARGO del string: "ß"→"ss" (straße/strasse), ligadura "ﬁ"→"fi"
+   (ofﬁce/office), "İ"→"i̇" con punto combinante (İstanbul). Los 3 verificados
+   contra el oráculo cuadrático.
+
+### Hallazgo: casefold puede cambiar el largo del string sin romper la semántica
+
+`ß`→`ss` crece, `İ`→`i̇` con combining mark también cuenta 2 codepoints — pero
+como TANTO el patrón como el texto se casefoldean antes de construir/buscar en
+el autómata, la semántica de subcadena se preserva sin casos especiales
+adicionales. El test que parecía detectar un bug real (straße/strasse) en
+realidad tenía una expectativa mal calculada a mano: ambos casefoldean a
+"strasse", dando 2 coincidencias, no 1.
+
+### Archivos
+
+| Archivo | Acción |
+|---|---|
+| `tests/pii/verificador_lineal.py` | Movido desde `src/anonimizacion/pii/` |
+| `tests/fixtures/corpus_piloto.py` | Modificado (import) |
+| `tests/fixtures/verificador_pii.py` | Modificado (casos de casefold) |
+| `tests/pii/test_verificador_lineal.py` | Modificado (casos de casefold) |
+| `tests/carga/medir_escalado_verificador_pii.py` | Modificado (import) |
+
+### Verificación (sesión original de la entrega 4)
+
+`PYTHONPATH=.../src .../python.exe -m pytest -q -m "not postgres"
+-p no:cacheprovider` → **947 passed, 1 skipped**. `uv run --extra dev ruff
+check .` → limpio. Diffstat vs `origin/feat/senal-ecg-y-dataset-vinculado`: 5
+files changed, 301 insertions(+), 5 deletions(-).
+
+### Restante (al cierre de esa sesión)
+
+4.3 (exportación real, dependía de la entrega 3 -- ya mergeada), 4.4 (cierre
+5.1 con Postgres/cola), 4.5/5.2 (auditoría del dataset exportado). Ver la
+siguiente sección para el cierre de estas tareas.
+
+## Cierre del cambio (rama `fix/cierre-del-cambio-senal-ecg`, desde la integradora ya con PR #44/#45/#46/#47/#48 mergeados)
+
+Cuatro focos de esta sesión: la auditoría de PII de 4.3/5.2, la revisión de
+5.1, la deuda de `test_cli.py` sobre la base compartida, y la unificación de
+este mismo archivo. Detalle completo de los tres primeros en el result
+contract del turno (commits, tamaño del cambio, riesgos). Resumen:
+
+1. **Tarea 4.3 / 5.2 (auditoría de PII sobre el dataset exportado)**: nuevo
+   `tests/pii/test_auditoria_exportacion_sin_pii.py` — corpus sintético con
+   PII conocida → pipeline real → `exportar_dataset` → verificador lineal
+   sobre los 4 Parquet completos + `manifiesto.json`, 0 coincidencias.
+   Falsabilidad demostrada con un segundo test que inyecta PII a propósito en
+   una fila real ya exportada y confirma que el mismo verificador la detecta.
+   Vive en la suite normal (no `tests/carga/`): es una prueba de
+   correctitud/invariante de seguridad, corre en segundos contra SQLite, no
+   una medición de volumen.
+   - **Hallazgo real durante la construcción de la auditoría**: `pyarrow`
+     25.0.1 no hace un round-trip correcto a través de Parquet de una columna
+     `FixedSizeListArray` cuando TODAS las filas de una página son `None`
+     (`ArrowInvalid: Expected all lists to be of size=N but index K had
+     size=0`; reproducido también con `FixedSizeListArray.from_arrays`
+     directo, no es un problema de `pa.Table.from_pylist`). Esto rompía
+     `ecg.parquet` cada vez que ningún ECG de una página tuviera señal
+     capturada -- exactamente el estado actual de cobertura del extractor
+     contra corpus sin trazos dibujados. Corregido cambiando
+     `muestras_uv`/`mascara` de `pa.list_(tipo, 60000)` (tamaño fijo) a
+     `pa.list_(tipo)` (tamaño variable) en `ESQUEMA_ECG` -- el invariante de
+     largo exacto lo sigue garantizando `SenalEcg.__post_init__`, sólo cambió
+     el tipo de columna Parquet.
+   - Documentado en `docs/pipeline.md` (nueva sección "Señal de ECG y dataset
+     vinculado exportado" + subsección "numpy + PyArrow"), con la fecha y el
+     método de la corrida (15/09/2026).
+   - Logs/bitácora, registros y diagnósticos de 5.2 ya tenían cobertura
+     falsable previa (`tests/observabilidad/test_bitacora_segura.py`,
+     `tests/integracion/test_salida_sin_pii.py`); `diagnostico.py` no tiene
+     superficie de PII de paciente. Sin cambios ahí.
+2. **Tarea 5.1 (integración completa)**: revisada contra la evidencia real de
+   la corrida de verificación de esta sesión (ver result contract) -- no se
+   tilda sin los números exactos de `pytest -q` / `pytest -q -m postgres`.
+3. **Deuda `test_cli.py`**: `_postgres_real_para_cli` ya no hace
+   `Base.metadata.drop_all`/`create_all` contra la base compartida
+   (`anonimizacion`, puerto 5433); ahora crea una base ESCRATCH propia
+   (`cli_scratch_test`) y aplica `alembic upgrade head` PROGRAMÁTICO (mismo
+   patrón que `tests/salida/test_migraciones.py::_url_postgres_scratch`),
+   sin dejar rastro y sin depender de que alguien migre la base compartida a
+   mano. Se agregó `_terminar_conexiones_y_dropear` porque los procesos hijos
+   de `--procesos 2` (`ProcessPoolExecutor`) a veces dejaban una conexión
+   abierta al momento de intentar el `DROP DATABASE` (`ObjectInUse`).
+4. **Unificación de apply-progress**: esta sección + la de "Entrega 4" de
+   arriba incorporan el contenido que vivía aparte en Engram
+   (`sdd/senal-ecg-y-dataset-vinculado/apply-progress-entrega4`, observación
+   `#1300`), fusionado sin sobrescribir nada de lo ya registrado acá.
+
+### Riesgos / decisiones no triviales de esta sesión
+
+- El cambio de `pa.list_(tipo, N)` a `pa.list_(tipo)` en `ESQUEMA_ECG` es un
+  cambio de TIPO de columna en el contrato Parquet (de `fixed_size_list` a
+  `list` de largo variable) -- no de contenido ni de semántica. Ningún test
+  existente verificaba el tipo pyarrow exacto de esas columnas (sólo nombres
+  de columnas y valores decodificados), así que no rompió cobertura previa,
+  pero un consumidor externo (`modelo_hvi`) que inspeccionara el tipo Arrow
+  en vez de sólo el largo de la lista decodificada notaría la diferencia --
+  documentado en `docs/pipeline.md` para que no sea sorpresa.
+- No se propuso contenido de Obsidian (arquitectura/bitácora) para este
+  cierre: la tarea 4.6 lo exige con aprobación de un integrante antes de
+  cargarlo (AGENTS.md), y este agente no tiene acceso al vault -- queda
+  explícitamente pendiente, no tildado por descuido.
