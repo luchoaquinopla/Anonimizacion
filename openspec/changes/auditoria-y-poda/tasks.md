@@ -193,25 +193,62 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
 
 ## Fase 3 — Entrega 3: poder de detección en tests (PR3, split a/b si >400)
 
-- [ ] 3.1 Agregar aserciones reales sobre el valor de retorno de `reconciliar(...)` en los 31
+- [x] 3.1 Agregar aserciones reales sobre el valor de retorno de `reconciliar(...)` en los 31
       tests sin oráculo de `tests/reconciliacion/` (ej. `test_ecg_mortara.py:57,77`):
-      `assert == ()` en aprobados, tupla exacta esperada en degradación.
-- [ ] 3.2 Demostrar manualmente (sin commitear la mutación) que 3.1 detecta una degradación
-      simulada del parser; documentar en el PR.
-- [ ] 3.3 RED — `tests/web/test_codigos_cuarentena_exhaustividad.py`:
-      `{CodigoErrorDocumento} - {CAMPO_NO_EXTRAIDO} ⊆ EXPLICACION_POR_CODIGO.keys()`.
-- [ ] 3.4 GREEN — completar entradas faltantes en `web/codigos_cuarentena.py`
-      `EXPLICACION_POR_CODIGO` si 3.3 detecta huecos.
-- [ ] 3.5 Renombrar `tests/pipeline/test_equivalencia_agrupacion.py` →
+      `assert == ()` en aprobados, tupla exacta esperada en degradación. Commit `2c7ffa7`.
+      Valor exacto de cada aserción determinado ejecutando el caso real (nunca derivado dentro
+      del propio `assert`); confirmado por lectura del contrato en `reconciliacion/base.py` y
+      `reconciliacion/_comun.py`. Casos ECG sin `senal` inyectada devuelven `("ecg.senal",)`,
+      no `()` (`ecg_mortara.py:175-176`). `uv run python -c "..."` con conteo por `ast`
+      (ver 3.8) confirma **cero** tests de `tests/reconciliacion/` sin `assert`/`pytest.raises`
+      sobre el retorno de `reconciliar(...)` tras este batch.
+- [x] 3.2 Demostrar manualmente (sin commitear la mutación) que 3.1 detecta una degradación
+      simulada del parser; documentar en el PR. Evidencia: `parseo/ecg_mortara.py:349` mutado
+      a `pr_interval=None` fijo (degradación simulada: el parser deja de citar un campo que el
+      PDF sí trae); `uv run pytest -q tests/reconciliacion/` → 1 failed
+      (`test_inventario_ecg_cubre_el_modelo_generado_por_el_parseador`,
+      `AssertionError: ('ecg.pr_interval', 'ecg.senal') == ('ecg.senal',)`), 111 passed.
+      Revertido con `git checkout -- src/anonimizacion/parseo/ecg_mortara.py`;
+      `git status --porcelain -- src/` vacío tras revertir.
+- [x] 3.3 RED — `tests/web/test_codigos_cuarentena_exhaustividad.py`:
+      `{CodigoErrorDocumento} - {CAMPO_NO_EXTRAIDO} ⊆ EXPLICACION_POR_CODIGO.keys()`. Commit
+      `fd003d7`. RED demostrado por mutación (no había hueco real que forzara un RED contra
+      `main`): entrada `"pdf_ilegible"` retirada a propósito de
+      `web/codigos_cuarentena.py::EXPLICACION_POR_CODIGO`; `uv run pytest -q
+      tests/web/test_codigos_cuarentena_exhaustividad.py` → 1 failed,
+      `AssertionError: ... sin entrada en EXPLICACION_POR_CODIGO: {'pdf_ilegible'}`. Revertido
+      con `git checkout --`; `git status --porcelain -- src/` vacío.
+- [x] 3.4 GREEN — completar entradas faltantes en `web/codigos_cuarentena.py`
+      `EXPLICACION_POR_CODIGO` si 3.3 detecta huecos. **No aplica**: verificado con
+      `{c.value for c in CodigoErrorDocumento} - {"campo_no_extraido"} -
+      EXPLICACION_POR_CODIGO.keys()` → `set()` vacío contra `main` sin modificar (18 códigos,
+      los 17 no excluidos ya tienen entrada). El test queda como red permanente contra futuros
+      códigos sin traducción; no se tocó `src/` en esta tarea.
+- [x] 3.5 Renombrar `tests/pipeline/test_equivalencia_agrupacion.py` →
       `tests/pseudonimizacion/test_ventana_de_episodio.py`; eliminar comparación tautológica
-      y el helper `_episodios_del_coordinador`/`_pares`.
-- [ ] 3.6 Reexpresar los 3 oráculos existentes sobre `vincular_episodios` directo; agregar
+      y el helper `_episodios_del_coordinador`/`_pares`. Commit `240cc49` (`git mv` + reescritura
+      de contenido).
+- [x] 3.6 Reexpresar los 3 oráculos existentes sobre `vincular_episodios` directo; agregar
       oráculos nuevos a mano (7 días exacto antes del ancla, dos anclas separadas por meses,
       episodio de un solo documento) con asserts sobre `metadata_por_episodio[...].fecha_ancla`.
-- [ ] 3.7 GREEN — corregir docstring `coordinador_episodios.py:9-13`: ya no afirma que el test
-      "fija esa equivalencia como contrato".
-- [ ] 3.8 Verificación PR3: suite completa verde; si supera 400 líneas, partir en PR3a
-      (oráculos de reconciliación) / PR3b (ventana de episodio + exhaustividad).
+      Commit `240cc49`. RED confirmado por mutación (`vinculacion.py:100`, umbral de ventana
+      forzado de `_VENTANA_DIAS` a `999`): 3/6 tests del archivo nuevo se ponen en rojo
+      (`test_siete_dias_entra_ocho_corta_el_episodio`,
+      `test_saltos_encadenados_de_seis_dias_no_se_funden_en_un_episodio_de_doce`,
+      `test_dos_anclas_del_mismo_paciente_separadas_por_meses`) -- confirma que el oráculo
+      nuevo detecta una regresión real de agrupación, a diferencia del espejo que reemplaza.
+      Revertido con `git checkout --`; `git status --porcelain -- src/` vacío.
+- [x] 3.7 GREEN — corregir docstring `coordinador_episodios.py:9-13`: ya no afirma que el test
+      "fija esa equivalencia como contrato". Commit `240cc49` (mismo commit que 3.5/3.6 por ser
+      la misma unidad de trabajo: D5 exige que el reemplazo del test y la corrección del
+      docstring vayan juntos).
+- [x] 3.8 Verificación PR3: suite completa verde. `uv run pytest -q -m "not postgres"` →
+      1035 passed, 1 skipped (symlink Windows, preexistente), 1 failed
+      (`test_despachar_en_paralelo_..._distintos`, confirmado EL MISMO fallo preexistente
+      sensible a la carga, no uno nuevo). `-m postgres` → 28 passed. `-m caracterizacion` →
+      17 passed; `git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío.
+      `ruff check .` → All checks passed. No superó 400 líneas (ver tamaño real en
+      apply-progress), no hizo falta partir en PR3a/PR3b.
 
 ## Fase 4 — Entrega 4: CLI instalable por wheel (PR4a `procesar`, PR4b `servir`)
 
