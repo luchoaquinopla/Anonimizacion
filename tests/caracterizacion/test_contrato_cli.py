@@ -70,39 +70,36 @@ def test_exportar_requiere_salida_y_tiene_tamano_pagina_por_defecto() -> None:
 
 def test_procesar_sin_banderas_resuelve_los_defaults_de_configuracion(monkeypatch: pytest.MonkeyPatch) -> None:
     """Escenario "banderas y defaults de `procesar`": sin `anonimizacion.toml`
-    ni banderas, los valores que le llegan a `procesar_carpeta.py` deben ser
-    exactamente los de `ConfiguracionOperador()` por defecto."""
-    captura: dict[str, object] = {}
+    ni banderas, los valores EFECTIVOS que le llegan a la lógica de negocio
+    deben ser exactamente los de `ConfiguracionOperador()` por defecto.
 
-    def _diagnosticar_ok(config, *, requiere_entrada, requiere_red):
-        return [Hallazgo(ok=True, mensaje="todo en orden")]
+    Corrección (auditoria-y-poda, E4): antes se afirmaba armando el `argv` de
+    un script cargado por ruta -- afirmaba el MECANISMO (`_cargar_script`/
+    `sys.argv`), no la superficie observable que D1 exige y que el docstring
+    del módulo dice fijar. Se corrige interceptando `diagnosticar`, el punto
+    donde la configuración YA resuelta se hace visible -- ese punto no
+    depende de cómo se ejecute el procesamiento después, así que sobrevive a
+    E4 sin volver a romperse."""
+    capturado: dict[str, object] = {}
 
-    class _ModuloFalso:
-        @staticmethod
-        def main() -> int:
-            captura["argv"] = list(cli.sys.argv)
-            return 0
+    def _diagnosticar_espia(config, *, requiere_entrada, requiere_red):
+        capturado["config"] = config
+        # Corta acá a propósito: lo único que interesa es la config resuelta
+        # que YA le llegó a este punto, no lo que pasa después.
+        return [Hallazgo(ok=False, mensaje="corte deliberado del test -- sólo interesa la config resuelta")]
 
-    monkeypatch.setattr(cli, "diagnosticar", _diagnosticar_ok)
-    monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ModuloFalso())
+    monkeypatch.setattr(cli, "diagnosticar", _diagnosticar_espia)
     # Fuerza "no hay anonimizacion.toml en el cwd" sin depender del directorio real.
     monkeypatch.setattr(cli, "_cargar_config_o_none", lambda ruta: ConfiguracionOperador())
 
     codigo = cli.main(["procesar", "--entrada", "carpeta"])
 
-    assert codigo == 0
-    argv = captura["argv"]
-    assert argv[0] == "procesar_carpeta.py"
+    assert codigo == 1
+    config = capturado["config"]
     defaults = ConfiguracionOperador()
-    assert argv == [
-        "procesar_carpeta.py",
-        "--entrada",
-        "carpeta",
-        "--db-url",
-        str(defaults.db_url),
-        "--procesos",
-        str(defaults.procesos),
-    ]
+    assert str(config.entrada) == "carpeta"
+    assert config.db_url == defaults.db_url
+    assert config.procesos == defaults.procesos
     assert defaults.procesos == grado_de_concurrencia_por_defecto()
 
 
@@ -122,22 +119,26 @@ def test_diagnosticar_devuelve_1_si_hay_un_hallazgo_en_falta(monkeypatch: pytest
     assert cli.main(["diagnosticar"]) == 1
 
 
-def test_procesar_devuelve_1_sin_llegar_a_cargar_script_si_el_diagnostico_falla(
-    monkeypatch: pytest.MonkeyPatch,
+def test_procesar_devuelve_1_sin_ejecutar_trabajo_si_el_diagnostico_falla(
+    monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    llamado = {"cargo_script": False}
+    """Si el diagnóstico encuentra un problema, `procesar` corta ANTES de
+    hacer ningún trabajo real.
 
-    def _cargar_script_espia(nombre: str):
-        llamado["cargo_script"] = True
-        raise AssertionError("no debería llegar a cargar el script si el diagnóstico falla")
-
+    Corrección (auditoria-y-poda, E4): la garantía observable es "no ejecutó
+    el procesamiento", no "no llamó a `_cargar_script`" -- esa segunda forma
+    de decirlo está atada al mecanismo que E4 elimina. No se mockea nada del
+    camino de procesamiento a propósito: si `procesar` alguna vez llegara a
+    ejecutarlo sin que el diagnóstico esté en orden, este test lo detecta
+    porque ese camino real (pepper/Postgres) no está disponible en el
+    entorno de test y el `codigo`/mensaje esperados no aparecen."""
     monkeypatch.setattr(cli, "_cargar_config_o_none", lambda ruta: ConfiguracionOperador())
     monkeypatch.setattr(
         cli, "diagnosticar", lambda config, *, requiere_entrada, requiere_red: [Hallazgo(ok=False, mensaje="falta algo")]
     )
-    monkeypatch.setattr(cli, "_cargar_script", _cargar_script_espia)
 
     codigo = cli.main(["procesar", "--entrada", "carpeta"])
 
     assert codigo == 1
-    assert llamado["cargo_script"] is False
+    salida = capsys.readouterr().err
+    assert "No se puede procesar" in salida
