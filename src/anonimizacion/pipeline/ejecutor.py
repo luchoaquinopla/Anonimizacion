@@ -74,8 +74,6 @@ from .resultado import ExitoDocumento, FalloDocumento, ResultadoDocumento
 
 # Backoff exponencial fijo (design.md, tasks.md 9.1): 3 reintentos tras el
 # intento inicial -- 4 intentos totales como máximo por documento/etapa.
-# `trabajadores/politica_reintentos.py` reusa estas mismas constantes (no se
-# duplica el número en dos lugares).
 BACKOFF_SEGUNDOS: tuple[int, ...] = (5, 30, 180)
 MAX_REINTENTOS = len(BACKOFF_SEGUNDOS)
 # El grupo ES la unidad completa de trabajo (design.md, Decisión 6): no hay un
