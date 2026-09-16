@@ -9,8 +9,9 @@ con qué motivo se aparta.
 Antes cada módulo tenía su propia copia del clustering. Dos copias de un
 algoritmo clínico son una bomba de tiempo: corregir la deriva de la ventana en
 una y no en la otra deja dos definiciones distintas de "episodio" según qué
-camino del pipeline se recorra. `tests/pipeline/test_equivalencia_agrupacion.py`
-fija esa equivalencia como contrato.
+camino del pipeline se recorra. La ventana de ±7 días vive en
+`vincular_episodios` (`tests/pseudonimizacion/test_ventana_de_episodio.py`
+la cubre); este módulo sólo traduce ese resultado a `EpisodioCoordinado`.
 """
 
 from __future__ import annotations
