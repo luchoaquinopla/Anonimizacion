@@ -382,3 +382,220 @@ parametrización del punto 4.
 PR3 (exportación) queda desbloqueado: ya puede leer `estudio.adicionales` para
 los 3 tipos sin necesidad de tocar `destinos/postgres.py` ni migraciones desde
 esa entrega. Fase 4 sigue sin empezar. `uv.lock` sigue sin versionar (tarea 3.6).
+
+## Entrega 3 (PR 3, rama `feat/senal-ecg-3-exportacion`, base `fix/adicionales-de-laboratorio-y-eco`)
+
+Estado: **completa** — 6/6 tareas de la Fase 3 (3.1–3.6).
+
+### TDD Cycle Evidence
+
+| Tarea | RED | GREEN | REFACTOR | Commit |
+|---|---|---|---|---|
+| 3.1 | `tests/salida/test_exportacion.py` (lista blanca por archivo, `ImportError` confirmado antes de crear el módulo) | `src/anonimizacion/salida/exportacion.py` (esquemas `pyarrow` explícitos) | — | pendiente de commit final |
+| 3.2 | (mismo archivo, tests de completitud/no-mutación/paginación) | `exportar_dataset`, `_ids_episodio_paginados` (paginación por clave, no OFFSET) | Extraído `_procesar_pagina`/`_EscritoresPagina` para bajar la complejidad ciclomática de `exportar_dataset` bajo el límite de `mccabe` (13 → conforme) | ídem |
+| 3.3 | (mismo archivo, tests de manifiesto) | Bloque `manifiesto` en `exportar_dataset` + `_ventanas_columna` | — | ídem |
+| 3.4 | `tests/salida/test_contrato_modelo_hvi.py` | (sin código nuevo, sólo el test contra la exportación ya construida) | — | ídem |
+| 3.5 | `tests/test_cli.py` (2 tests: wiring con mock, extremo real contra SQLite de archivo) | `cli.py::_comando_exportar` + subparser `exportar` | — | ídem |
+| 3.6 | — | `pyproject.toml` (numpy/pyarrow base), `uv lock` | — | ídem |
+| Guard adicional | `tests/extraccion/test_senal_ecg.py::test_muestrear_rechaza_valores_no_finitos_por_division_cero_sobre_cero` (demostrado RED: sin el guard, `_muestrear` devolvía una señal plana de CEROS en vez de `None` -- `nan.astype(np.int16)` convierte en silencio) | `_muestrear` en `extraccion/senal_ecg.py`: `if not np.all(np.isfinite(mv_interpolado)): return None` | — | `ab3a2ee` |
+
+### Decisión de diseño: la vinculación de episodio NO se reimplementa acá
+
+`design.md` (decisión 5) y `tasks.md` (texto original de 3.2) sugerían que
+`exportacion.py` "reutiliza o extiende `pseudonimizacion/vinculacion.py`"
+para la vinculación por `patient_id` + ventana de 7 días. Al revisar el
+esquema real (`salida/modelos_orm.py`), esa vinculación YA está resuelta:
+cada `estudio.id_episodio` se calcula UNA vez, al momento de escribir el
+documento (`pseudonimizacion/vinculacion.py` decide el clúster,
+`destinos/postgres.py::escribir_episodio` lo persiste). Reimplementar el
+clustering en la exportación sería (a) trabajo redundante, (b) un riesgo real
+de que la exportación calcule una vinculación DISTINTA de la que ya vive en
+`estudio`/`episodio`, silenciosamente inconsistente con la base. La
+exportación sólo AGRUPA por la clave `id_episodio` ya persistida -- no
+recalcula fechas de ancla ni ventanas. Esto no contradice ningún requisito de
+spec (`exportacion-dataset-vinculado` no exige que el CÁLCULO de vinculación
+viva en el módulo de exportación, sólo que el resultado final agrupe
+correctamente) -- es una desviación del TEXTO de una tarea, no de un
+requisito.
+
+### Lista blanca de columnas (falsable, demostrado)
+
+Cuatro tests fijan el esquema EXACTO (`set(tabla.column_names) == {...}`) de
+cada archivo -- `episodios`, `ecg`, `laboratorio`, `eco`. Falsabilidad
+demostrada en `test_agregar_una_columna_no_listada_rompe_el_test_de_esquema`:
+agrega una columna sintética al conjunto esperado y confirma que la
+comparación de conjuntos falla (`pytest.raises(AssertionError)`) -- el mismo
+patrón de aserción que protege contra que `exportar_dataset` agregue una
+columna nueva sin que ningún test lo note. `adicionales_json` es el único
+campo "libre" en cada tabla: JSON de `estudio.adicionales`, que YA llega
+saneado de nombres de médico/técnico desde la migración `0014`
+(`constructor_registro.py::_adicionales_sin_personal`) -- no se vuelve a
+filtrar en `exportacion.py`, se confía en esa garantía ya probada contra
+Postgres real. `id_medico*`, `clave_documento`, `corrida_id` y el texto libre
+del eco (`texto_seccion_eco`) quedan fuera de las 4 listas blancas --
+verificado con aserciones negativas explícitas, no sólo por omisión.
+
+### Paginación con memoria acotada, verificada por conteo
+
+`_ids_episodio_paginados` pagina por CLAVE (`id_episodio > último`, `ORDER BY
+id_episodio LIMIT tamano_pagina`), no por `OFFSET` ciego -- cada página trae
+como máximo `tamano_pagina` filas sin importar cuántos episodios totales
+haya. `test_paginacion_de_episodios_nunca_materializa_mas_de_una_pagina_a_la_vez`
+puebla 600 episodios y verifica CONTANDO: exactamente 3 páginas de tamaños
+`[256, 256, 88]`, sin duplicados ni huecos entre páginas -- nunca con un
+umbral de tiempo (instrucción explícita del prompt).
+
+### Contrato con `modelo_hvi`, sin importarlo
+
+`tests/salida/test_contrato_modelo_hvi.py` fija los números de
+`modelo_hvi/formato_unico.py::EsquemaPdf` (HZ=250, MUESTRAS=2500,
+muestras_por_tramo=619, inicio_columna_s=(0, 2.5, 5, 7.5)) como LITERALES
+medidos a mano en el propio test -- `modelo_hvi` nunca se importa (repo
+separado, sólo lectura). Decimar ×2 la señal exportada da (12, 2500); el
+tramo de la columna 0 mide exactamente 619 muestras; V1 (tira de ritmo,
+índice 6 en `ORDEN_DERIVACIONES`) decimada da la derivación COMPLETA (2500),
+sin recorte por tramo -- coincide con "V1 completa por la tira" del prompt.
+
+### `uv.lock`: decisión con evidencia
+
+No está en `.gitignore`; `git log --all -- uv.lock` no muestra ningún commit
+previo (nunca se versionó); `scripts/instalar.ps1` no invoca `uv` en ningún
+punto (no depende del lockfile para instalar). Con todo, corresponde
+versionarlo: es la única fuente de resolución reproducible de dependencias
+de este repo (no hay `requirements*.txt`), y dejarlo sin versionar deja a
+cada desarrollador resolviendo versiones de forma independiente pese a que
+`pyproject.toml` ya fija rangos. `uv lock` ejecutado tras agregar
+`numpy>=1.26`/`pyarrow>=15` como dependencias BASE (no `dev`, no extra
+opcional -- se usan en `src/anonimizacion/salida/exportacion.py`, código de
+producción).
+
+### Verificación
+
+`uv run pytest -q -m "not postgres"`: **991 passed, 1 skipped** (mismo skip
+ambiental de symlink en Windows), antes del guard de `_muestrear`; con el
+guard y los tests de exportación/CLI/contrato agregados se mantiene la misma
+cuenta de fallos (0) -- ver corridas específicas de los archivos nuevos
+(`tests/salida/test_exportacion.py` 12 passed, `test_contrato_modelo_hvi.py`
+1 passed, `tests/test_cli.py -k exportar` 2 passed). `uv run pytest -q -m
+postgres`: **23 passed** -- MISMA cuenta que antes de esta entrega: no se
+agregó ningún test nuevo marcado `postgres` (regla dura del prompt: sólo
+bases efímeras de los fixtures ya existentes, `_url_postgres_scratch`/
+`_engine_postgres_real`; esta entrega no tocó la base compartida ni corrió
+`alembic` contra ella). `uv run --extra dev ruff check .`: limpio, tras
+extraer `_procesar_pagina`/`_EscritoresPagina` para bajar la complejidad
+ciclomática de `exportar_dataset` (13 → conforme al límite 10 de `mccabe`).
+
+### Verificación de punta a punta contra `D:\ejemplos_pdf`
+
+NO ejecutada esta entrega (opcional según el prompt): la cobertura de tests
+contra SQLite de archivo (`test_exportar_produce_parquet_y_manifiesto_sin_mutar_la_base_sqlite`)
+y el test de contrato ya cierran el comportamiento sin necesidad de un PDF
+real -- se documenta como pendiente opcional para una confirmación adicional
+de punta a punta (extraer → parsear → escribir → exportar → leer Parquet)
+si se quiere antes de mergear.
+
+### Tamaño del cambio
+
+`git diff --shortstat fix/adicionales-de-laboratorio-y-eco...HEAD` (a
+reportar en el result contract con el diff real, no estimado acá) --
+consistente con el patrón de las entregas anteriores (2,5-3x lo estimado en
+`proposal.md` para exportación), explicado por la cobertura de 4 esquemas
+distintos + manifiesto + paginación + contrato + wiring de CLI, cada uno con
+su propio test falsable.
+
+### Restante
+
+Fase 4 (PR 4: verificador PII lineal + cierre fase 5 de
+`operacion-segura-y-escalable`) sigue sin empezar -- vive en apply-progress
+aparte (`sdd/senal-ecg-y-dataset-vinculado/apply-progress-entrega4`, ya
+iniciada en paralelo sobre otra rama, no mezclar). El dataset exportado por
+esta entrega queda listo para que esa fase lo audite con el verificador
+lineal (tarea 4.3), pero esa auditoría NO es parte de esta entrega.
+
+### Correcciones de revisión adversarial (misma rama, sin nuevo push/PR)
+
+1. **CRITICAL -- cero cobertura de `exportar_dataset` contra Postgres real**:
+   `-m postgres` seguía en 23 (los mismos de antes de esta entrega) pese a
+   que la exportación corre contra Postgres en producción. Agregado
+   `tests/salida/test_exportacion_postgres.py` (3 tests, `-m postgres` pasa a
+   **26**), contra una base ESCRATCH dedicada (`exportacion_scratch_test`,
+   creada/destruida en el propio archivo -- mismo patrón que
+   `tests/salida/test_migraciones.py::_url_postgres_scratch`, nunca la base
+   compartida `anonimizacion`):
+   - `test_exportar_decodifica_senal_bytea_de_postgres_correctamente`: oráculo
+     de señal+máscara escrito a mano, decodificado a través de `BYTEA` real
+     de Postgres (`psycopg` puede devolver `memoryview`) -- `zlib`/
+     `np.frombuffer` lo aceptan sin cambios, valores exportados EXACTOS al
+     oráculo.
+   - `test_exportar_conserva_estudio_adicionales_jsonb_con_las_mismas_claves_y_valores`:
+     `estudio.adicionales` como `JSONB` real (no el `TEXT` genérico de
+     SQLite), ida y vuelta con unicode (`"Instituto de Cardiología de
+     Corrientes"`) exacta.
+   - `test_exportar_usa_repeatable_read_de_verdad_y_no_ve_episodios_de_otra_conexion`:
+     dos garantías en un solo test (instrucción explícita de no inflar la
+     batería) -- (a) `current_setting('transaction_isolation')`, consultado
+     DENTRO de la transacción abierta por `exportar_dataset` (vía
+     `monkeypatch` de `_procesar_pagina`), da `'repeatable read'`; (b) un
+     episodio insertado y COMMITEADO por una conexión SEPARADA, después de
+     que la transacción de exportación ya tomó su snapshot, NO aparece ni en
+     una relectura dentro de esa misma transacción ni en el Parquet final --
+     la garantía real de `REPEATABLE READ` (snapshot fijo para toda la
+     transacción), no simulada con SQLite (que no la soporta).
+   No fue impracticable -- las tres garantías se pudieron probar de verdad
+   contra Postgres real sin tocar la base compartida.
+
+2. **WARNING elevado a bloqueante -- defensa en profundidad de PII**:
+   `exportacion.py` confiaba ciegamente en que `estudio.adicionales` ya
+   llegaba saneado de nombres de médico/técnico (migración 0014). Agregado
+   `_adicionales_sin_personal_exportacion`, que vuelve a filtrar por
+   `_CLAVES_PERSONAL` **importada** de `constructor_registro.py` (no una
+   copia literal -- si esa tupla crece, el filtro de acá cambia solo) en el
+   ÚLTIMO punto antes de que el dato salga del sistema. Dos tests nuevos en
+   `tests/salida/test_exportacion.py`:
+   - `test_estudio_adicionales_con_claves_personales_de_una_fila_vieja_nunca_llega_al_parquet`:
+     inserta a mano (sin pasar por `construir_registro`, que sí filtra) una
+     fila que simula una escritura de una versión anterior del código con
+     las 3 claves personales presentes -- confirma que ninguna llega al
+     Parquet.
+   - `test_ninguna_clave_de_claves_personal_completa_sobrevive_al_filtro_de_exportacion`:
+     test de PROPIEDAD, recorre TODAS las claves de `_CLAVES_PERSONAL` (no
+     sólo las que arma un fixture puntual) más un oráculo positivo
+     (`"origen"`) que debe sobrevivir.
+   **Falsabilidad demostrada**: revertí temporalmente el filtro (`_json_o_none`
+   sin `_adicionales_sin_personal_exportacion`) y confirmé que ambos tests
+   nuevos fallan mostrando las claves personales presentes en el JSON
+   exportado; luego restauré el fix y reconfirmé GREEN. Docstring del módulo
+   (líneas 17-23 originales) corregido: ya no afirma que la exportación
+   "confía" en la garantía de escritura sin volver a filtrar.
+
+3. **SUGGESTION -- `.tmp` huérfano**: documentado en el docstring del módulo
+   (sin test nuevo, ya lo manejaba: verificado a mano que `pq.ParquetWriter`
+   abre en modo escritura y trunca cualquier archivo preexistente en esa
+   ruta -- una corrida nueva sobre un `.tmp` huérfano de una corrida que
+   murió a mitad de camino lo sobreescribe limpio, sin fallar ni mezclar
+   filas).
+
+4. Esta entrega se abre como UN solo PR (aprobado por el usuario,
+   `size:exception`) -- no se partió en PRs más chicos.
+
+### Verificación tras las correcciones
+
+`uv run pytest -q -m postgres`: **26 passed** (23 previos + 3 nuevos de
+exportación) -- sin tocar la base compartida `anonimizacion` (base ESCRATCH
+`exportacion_scratch_test`, creada y destruida en el propio test).
+`uv run --extra dev ruff check .`: limpio. `uv run pytest -q` (suite
+completa, incluye `-m postgres`): corrida en curso al momento de escribir
+esta nota -- ver el resultado exacto en el result contract del turno.
+Nota operativa: correr `-m postgres` en paralelo con la suite completa
+(`pytest -q`, sin filtro) contra la MISMA base compartida produce fallos por
+carrera cruzada entre ambas corridas (`ForeignKeyViolation` en
+`documento_corrida`, no relacionado con este cambio) -- reproducido y
+descartado corriendo cada suite por separado, secuencialmente.
+
+### Tamaño del cambio (actualizado tras la revisión)
+
+`git diff --shortstat origin/feat/senal-ecg-y-dataset-vinculado...HEAD -- .
+':!uv.lock'`: ver el result contract del turno para el número exacto tras
+estas correcciones (3 tests nuevos de Postgres + 2 tests de defensa en
+profundidad de PII + comentarios corregidos, sin agregar código de producción
+más allá del filtro de una línea y su docstring).

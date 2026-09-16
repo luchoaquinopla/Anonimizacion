@@ -272,6 +272,16 @@ def _muestrear(trazo: Trazo, cantidad: int, *, x_pie: float, escala_mm: float) -
 
     grilla_s = np.linspace(0, duracion_objetivo, cantidad)
     mv_interpolado = np.interp(grilla_s, tiempos_s, mv)
+    # Guard explícito de no-finitos: `escala_mm=0.0` (u otra violación de
+    # calibración que no debería llegar acá) produce `nan`/`inf` en `mv`.
+    # `nan.astype(np.int16)` da `0` EN SILENCIO -- pasaría el chequeo de
+    # amplitud de abajo y devolvería una señal plana de ceros, corrupción
+    # indistinguible de "sin señal real" (ver test
+    # `test_muestrear_rechaza_valores_no_finitos_por_division_cero_sobre_cero`).
+    # Mismo criterio "todo o nada" que el resto del módulo: rechazar, nunca
+    # sanear en silencio.
+    if not np.all(np.isfinite(mv_interpolado)):
+        return None
     # CRÍTICO (revisión adversarial): `.astype(np.int16)` sobre un valor fuera
     # de rango envuelve en silencio (p. ej. 32768 -> -32768) en vez de
     # lanzar -- corrompería la señal sin ningún aviso. Se valida ANTES de
