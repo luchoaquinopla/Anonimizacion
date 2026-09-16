@@ -29,9 +29,7 @@ _PATRON_ENCABEZADO_PAGINA = re.compile(
     r"^(?:fecha|hora|apellido y nombre|documento|dni|m[eé]dico|n[ºo°]\s*petici[oó]n)\s*:",
     re.IGNORECASE,
 )
-# Rótulo `Hora de Extracción:` (con variantes ya reconocidas por el parser,
-# ver `parseo/laboratorio_general.py::_CAMPOS_HEADER`) -- ancla del inventario
-# y de `_asociacion_laboratorio` (gotcha 2, design.md decisión 4).
+# Rótulo "Hora de Extracción:", ancla del inventario y de _asociacion_laboratorio.
 _PATRON_ROTULO_HORA_EXTRACCION = re.compile(r"Hora(?:\s+de)?\s+Extracci[oó]n:\s*(.+)", re.IGNORECASE)
 @dataclass(frozen=True)
 class _FilaInventariada:
@@ -98,14 +96,8 @@ def _primer_segmento(texto: str) -> str:
 
 
 def _asociacion_laboratorio(referencia: object, esperado: str, pagina: str) -> bool:
-    """Ancla `laboratorio.hora_extraccion` a su rótulo real (gotcha 2,
-    design.md decisión 4, "la parte más frágil"): sin esto,
-    `reconciliar_referencias` cae en `pagina.count(valor) == 1` (`_comun.py:51`),
-    y un valor de hora suelto (`"08:30"`) tiene chance alta de aparecer cero
-    o varias veces en la página completa -- rompe documentos legítimos. Se
-    busca el rótulo explícito y se valida que el valor esperado aparezca
-    inmediatamente después, mismo criterio de anclaje que usa
-    `_asociacion_ecg` para sus medidas."""
+    """Ancla `laboratorio.hora_extraccion` a su rótulo real: un valor de hora suelto puede
+    aparecer 0 o varias veces en la página, así que se exige que siga al rótulo explícito."""
     selector = getattr(referencia, "selector")
     if selector != "laboratorio.hora_extraccion":
         return False
@@ -172,9 +164,7 @@ class ReconciliadorLaboratorioGeneral:
         return tuple(filas)
 
     def _hallazgos_hora_extraccion(self, texto: TextoExtraido) -> tuple[HallazgoCobertura, ...]:
-        """Inventaría el rótulo `Hora de Extracción:` anclado (gotcha 1/2,
-        design.md decisión 4) -- nunca un patrón suelto de hora, que
-        colisionaría con cualquier otro `HH:MM` del documento."""
+        """Inventaría el rótulo "Hora de Extracción:" anclado, nunca un `HH:MM` suelto."""
         for pagina, contenido in enumerate(texto.paginas_ordenadas, start=1):
             if _PATRON_ROTULO_HORA_EXTRACCION.search(contenido):
                 return (HallazgoCobertura("laboratorio.hora_extraccion", pagina, clase="header"),)
@@ -190,27 +180,8 @@ class ReconciliadorLaboratorioGeneral:
     def _verificar_asociacion_filas(
         self, documento: DocumentoParseado, contenido: ContenidoLaboratorio, texto: TextoExtraido
     ) -> tuple[bool, tuple[str, ...]]:
-        """Compara filas PDF vs. modelo; devuelve (asociación estructurada usable, campos no extraídos).
-
-        El conteo de filas puede diferir en dos direcciones opuestas (ver
-        `dominio/errores.py::CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`):
-
-        - El PDF trae MÁS filas que el modelo: el parser omitió resultados
-          que sí están en el documento. Caso benigno -- lo que el modelo
-          publica es correcto, sólo incompleto. No se lanza; se devuelve
-          `(False, campos_no_extraidos)` con una ocurrencia de
-          `"laboratorio.resultado"` por cada fila de más en el PDF, para que
-          el llamador la sume a la marca de completitud. `False` porque, sin
-          un emparejamiento posicional confiable entre las dos listas de
-          distinto largo, no hay forma segura de decidir CUÁL fila del
-          modelo corresponde a cuál del PDF -- se cede la verificación fila
-          por fila a `reconciliar_referencias` (evidencia genérica de
-          página), regla conservadora: ante la duda de POSICIÓN, no de
-          dirección, no se inventa un emparejamiento.
-        - El PDF trae MENOS filas que el modelo: el modelo afirma resultados
-          que el PDF no respalda. Problema de integridad -- sigue siendo
-          `ErrorParseo(COBERTURA_INCOMPLETA)`, terminal, sin excepción.
-        """
+        """Compara filas PDF vs. modelo. PDF con más filas es benigno (parser omitió
+        algo real); PDF con menos es integridad y termina en `COBERTURA_INCOMPLETA`."""
         filas_pdf = self._filas_inventariadas(texto)
         if not filas_pdf:
             return False, ()
@@ -271,22 +242,7 @@ class ReconciliadorLaboratorioGeneral:
         tiene_asociacion_estructurada = False
         campos_no_extraidos: tuple[str, ...] = ()
         if inventario:
-            # `laboratorio.resultado` (clase "coleccion") usa como ordinal la
-            # posición SECUENCIAL entre las filas que cada lado reconoció
-            # (PDF vs. parseador) -- no un identificador estable de fila. Si
-            # el conteo de ambos lados difiere, un ordinal compartido puede
-            # señalar filas DISTINTAS a cada lado (el parser pudo haber
-            # descartado una fila que no es la última, corriendo el resto).
-            # El cruce genérico de `verificar_cobertura` por (id_campo,
-            # ordinal) asume identidad estable -- correcta cuando los
-            # conteos COINCIDEN, no confiable cuando difieren. Por eso se
-            # excluye `laboratorio.resultado` de ese cruce sólo cuando los
-            # conteos no coinciden, y se delega esa dirección enteramente a
-            # `_verificar_asociacion_filas` (abajo), que decide por
-            # DIFERENCIA DE CONTEO -- una señal que no depende de qué fila
-            # puntual se corrió. El resto de campos (p.ej.
-            # `laboratorio.hora_extraccion`, siempre ordinal 0, sin colección)
-            # sigue el cruce genérico sin cambios.
+            # Ordinal de laboratorio.resultado = posición secuencial, no id estable: si el conteo difiere, se excluye del cruce genérico y decide _verificar_asociacion_filas.
             filas_pdf = self._filas_inventariadas(texto)
             resultados_alineados = len(filas_pdf) == len(contenido.resultados)
             if resultados_alineados:
@@ -305,13 +261,7 @@ class ReconciliadorLaboratorioGeneral:
             )
             campos_no_extraidos += campos_de_filas
 
-        # Gotcha 2 (design.md decisión 4, "la parte más frágil"): el
-        # `validador_asociacion` anclado a `Hora de Extracción:` MUST aplicar
-        # únicamente a `laboratorio.hora_extraccion` -- pasarlo al mismo
-        # `reconciliar_referencias` que resuelve `laboratorio.resultado`
-        # rompería esa ruta (`_comun.py` exige asociación válida para TODA
-        # referencia una vez que el parámetro no es `None`). Se llama dos
-        # veces, cada una con el subconjunto de `fuentes` que le corresponde.
+        # El validador anclado a hora_extraccion no puede compartir la misma llamada que resultado (_comun.py exige asociación válida para toda referencia); se llama dos veces con subconjuntos de fuentes.
         fuentes_hora = tuple(f for f in documento.fuentes if f.id_campo == "laboratorio.hora_extraccion")
         fuentes_resto = tuple(f for f in documento.fuentes if f.id_campo != "laboratorio.hora_extraccion")
         reconciliar_referencias(

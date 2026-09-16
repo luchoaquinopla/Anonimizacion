@@ -1,59 +1,5 @@
-"""Redacción compartida de PII en texto libre (fix aditivo, cierre de gap PR7/PR8 -> PR9).
-
-**Contexto del gap** (ver `apply-progress` de PR7/PR8 y `pipeline/ejecutor.py`,
-docstring de `_resolver_documento`): `pii/politica.py::clasificar` ya
-DETECTA PII en texto libre desde PR4 (`_detecciones_texto_libre`, vía
-`MotorPii.detectar` sobre `ContenidoEco.secciones_texto` -- un nombre
-mencionado incidentalmente en la conclusión dictada del eco). Pero hasta
-PR8 nadie usaba esos hallazgos para REDACTAR el texto antes de que
-`salida/constructor_registro.py` armara el `RegistroAnonimizado` final: la
-detección corría, y el resultado se descartaba. Sin esto, un eco con texto
-libre que mencione un nombre real llegaba sin redactar al registro de
-salida, violando el requirement "Cero PII en el registro de salida" (spec
-`anonymized-output`).
-
-**Origen de este módulo**: extraído de `observabilidad/bitacora_segura.py`
-(PR8, tasks.md 10.1), que ya implementaba exactamente esta lógica de
-redacción (regex DNI + spans del motor de PII) como su "filtro de
-redacción" (capa 2). En vez de reimplementarla o duplicarla, PR9 la mueve
-acá como módulo compartido y la reusa en DOS puntos:
-
-1. `observabilidad/bitacora_segura.py` -- ahora importa de acá en vez de
-   definir el regex/las funciones de forma privada.
-2. `salida/constructor_registro.py` -- aplica `redactar_texto` sobre cada
-   `SeccionTextoEco.texto` antes de armar `FilaTextoSeccionEco`, con el
-   mismo principio de "modo degradado" que `bitacora_segura`: si no se
-   inyecta un `motor_pii` (evitar cargar spaCy si el llamador no lo tiene a
-   mano), igual se aplica el regex de DNI; el composition-root real del
-   pipeline (`pipeline/ejecutor.py::EjecutorPipeline._emitir`) SIEMPRE
-   inyecta el `MotorPii` ya cargado que usa para el resto del pipeline, así
-   que en producción la redacción por NER está activa.
-
-**Tercera capa: comparación exacta contra nombres ya conocidos (Tarea 2,
-hallazgo de auditoría)**. `pii/politica.py` (docstring del módulo, líneas
-24-26) documentaba desde PR4 que decidir a qué persona pertenece un
-hallazgo de texto libre "es una decisión de Fase 6/7 que puede requerir
-contexto adicional (p.ej. comparar contra el nombre ya conocido del
-paciente/médico de ese mismo documento)" -- pero rastreando el código real
-de Fase 6/7 (este módulo y `salida/constructor_registro.py`) esa
-comparación NUNCA se implementó: `redactar_texto` solo corría regex de DNI
-+ NER, nunca comparaba contra `documento.identidad.nombre` ni contra el
-nombre del médico de ese mismo documento. Era una intención escrita en un
-comentario, no código -- exactamente el patrón de "afirmación falsa en
-comentario/docstring" que este repo ya viene arrastrando (ver AGENTS.md).
-
-`redactar_por_nombres_conocidos` cierra ese hueco: el nombre del paciente y
-el del médico de un documento son datos YA CONOCIDOS con certeza (vienen
-del header parseado, no de una inferencia probabilística), así que
-cualquier aparición literal de esos nombres -o de sus componentes
-individuales, por si el texto libre menciona solo el apellido o solo el
-nombre de pila- se redacta por comparación EXACTA, determinística,
-independiente de que el NER los reconozca o no como entidad. Es la red de
-contención más fuerte posible para el escenario de fuga más probable: que
-la conclusión dictada mencione al propio paciente o al médico firmante de
-ESE MISMO documento (no un gazetteer genérico, que solo cubriría apellidos
-que alguien haya pensado en poner en una lista).
-"""
+"""Redacción compartida de PII en texto libre, en tres capas por certeza creciente: regex DNI,
+comparación exacta contra nombres ya conocidos (paciente/médico de ESE documento), NER."""
 
 from __future__ import annotations
 
@@ -63,34 +9,15 @@ from typing import Any, Protocol
 
 MARCADOR_REDACTADO = "[REDACTADO]"
 
-# Mismo patrón de forma que `pii/reconocedores/dni_ar.py::_PATRONES` (con
-# puntos y sin puntos), simplificado: acá no hace falta el score ni la
-# validación de rango de Presidio -- es una segunda barrera de regex lisa y
-# llana, independiente de que el motor de PII esté disponible o no.
+# Segunda barrera de regex lisa (sin score/rango de Presidio), independiente del motor de PII.
 _PATRON_DNI = re.compile(
     r"(?<![\d.])\d{1,2}\.\d{3}\.\d{3}(?!\d)|(?<![\d.])\d{3}\.\d{3}(?!\d)|(?<!\d)\d{6,8}(?!\d)"
 )
 
-# Tokens de un nombre por debajo de esta longitud (conectores como "de",
-# "la", "y", "del") no se usan solos como gatillo de redacción: son palabras
-# comunes del idioma, redactarlas sueltas produciría ruido masivo sin
-# proteger nada (ver `_componentes_nombre`).
+# Conectores ("de", "la", "y") por debajo de este largo no gatillan redacción solos: ruido masivo sin proteger nada.
 _TOKEN_MINIMO = 3
 
-# Clases de equivalencia acentuada (hallazgo de auditoría: fuga de PII por
-# acentos). `re.IGNORECASE` cubre mayúsculas/minúsculas pero NO cubre
-# diacríticos -- "Maria" y "María" son puntos de código distintos para el
-# motor de regex, así que un nombre conocido con tilde ("María González",
-# como lo escribe el sistema del instituto en el header) no matcheaba su
-# aparición sin tilde en el texto libre dictado (o viceversa), y la mención
-# sobrevivía intacta en el registro de salida.
-#
-# La corrección NO normaliza el texto de entrada (NFD + strip de
-# diacríticos): eso cambia longitudes y obliga a remapear offsets de vuelta
-# al original, una fuente clásica de errores de un caracter que acá
-# significarían cortar mal una redacción. En cambio, el patrón se arma para
-# que cada letra base del nombre conocido matchee su propia clase de
-# variantes acentuadas: los offsets del texto original nunca se tocan.
+# re.IGNORECASE no cubre diacríticos ("Maria" != "María"); se matchea por clase de letra base en vez de normalizar el texto (evitaría remapear offsets de redacción).
 _EQUIVALENTES_ACENTUADAS: dict[str, str] = {
     "a": "aáàäâ",
     "e": "eéèëê",
@@ -101,24 +28,15 @@ _EQUIVALENTES_ACENTUADAS: dict[str, str] = {
     "c": "cç",
 }
 
-# Reverso de `_EQUIVALENTES_ACENTUADAS`: de CUALQUIER variante (con o sin
-# acento) a su letra base. Necesario porque el nombre conocido puede traer
-# la letra YA acentuada (p.ej. "í" en "María") -- sin este reverso, sólo se
-# resolvía la dirección "letra base en el nombre -> variante acentuada en el
-# texto", no la inversa ("letra acentuada en el nombre -> letra base en el
-# texto").
+# Reverso de _EQUIVALENTES_ACENTUADAS: resuelve también cuando el nombre conocido ya trae la letra acentuada (p.ej. "í" en "María").
 _BASE_POR_VARIANTE: dict[str, str] = {
     variante: base for base, variantes in _EQUIVALENTES_ACENTUADAS.items() for variante in variantes
 }
 
 
 class DetectorEntidades(Protocol):
-    """Lo mínimo que este módulo necesita del motor de PII.
-
-    `MotorPii.detectar` (`pii/motor.py`) ya cumple este contrato; se declara
-    acá como Protocol -no se importa `MotorPii` directamente- para poder
-    inyectar dobles de test livianos sin pagar el costo de cargar spaCy.
-    """
+    """Lo mínimo que este módulo necesita del motor de PII, sin importar `MotorPii`
+    directamente: permite inyectar dobles de test livianos sin cargar spaCy."""
 
     def detectar(self, texto: str) -> Sequence[Any]: ...
 
@@ -133,48 +51,22 @@ def redactar_por_motor(texto: str, motor: DetectorEntidades) -> str:
     detecciones = motor.detectar(texto)
     if not detecciones:
         return texto
-    # reemplazar de atrás para adelante: así los offsets de las detecciones
-    # anteriores (calculadas sobre el texto original) siguen siendo válidos.
+    # De atrás para adelante: así los offsets de detecciones previas siguen siendo válidos.
     for deteccion in sorted(detecciones, key=lambda d: d.inicio, reverse=True):
         texto = texto[: deteccion.inicio] + MARCADOR_REDACTADO + texto[deteccion.fin :]
     return texto
 
 
 def _componentes_nombre(nombre: str) -> tuple[str, ...]:
-    """Nombre completo + cada uno de sus tokens de longitud significativa.
-
-    Un hallazgo de texto libre puede mencionar el nombre completo tal cual
-    figura en el header ("Roberto Fernandez"), o solo el apellido ("Dr.
-    Fernandez"), o solo el nombre de pila -- cualquiera de las tres formas
-    debe redactarse. Los tokens por debajo de `_TOKEN_MINIMO` (conectores
-    como "de"/"la"/"y") se excluyen: ver docstring de esa constante.
-
-    El piso mínimo también se aplica al nombre completo (hallazgo de
-    auditoría): una captura de header degenerada de una o dos letras (p.ej.
-    `["A"]`) no debe convertirse en gatillo de redacción -- redactaría esa
-    letra suelta en TODO el texto libre y corrompería el contenido clínico
-    en masa, silenciosamente. Si tras el filtro no queda ningún componente
-    utilizable, se devuelve una tupla vacía: el llamador
-    (`redactar_por_nombres_conocidos`) ya contempla ese caso y no arma un
-    patrón vacío (que matchearía cualquier posición del texto).
-    """
+    """Nombre completo + cada token significativo (apellido o nombre de pila solos también
+    redactan). El piso mínimo evita que una captura de header degenerada redacte todo el texto."""
     componentes = [nombre] + nombre.split()
     return tuple(c for c in componentes if len(c) >= _TOKEN_MINIMO)
 
 
 def _fragmento_tolerante_a_acentos(componente: str) -> str:
-    """Arma el fragmento de regex de `componente` matcheando ambas direcciones
-    de acento (header con tilde / texto sin tilde, y viceversa).
-
-    Por cada caracter: si su base en minúscula tiene variantes acentuadas
-    conocidas (`_EQUIVALENTES_ACENTUADAS`), se emite una clase de caracteres
-    con todas ellas; si no, se emite `re.escape(caracter)` sin tocar -- así un
-    nombre con punto, guion o paréntesis sigue escapado como antes y no se
-    convierte en metacaracteres de regex. `re.IGNORECASE` (aplicado por el
-    llamador al compilar) cubre mayúsculas/minúsculas tanto para estas clases
-    como para el resto de los caracteres escapados; acá sólo se resuelven los
-    diacríticos, que `IGNORECASE` no cubre.
-    """
+    """Arma el fragmento de regex de `componente` matcheando ambas direcciones de acento
+    (con/sin tilde); caracteres sin variante quedan `re.escape`d, sin volverse metacaracteres."""
     partes = []
     for caracter in componente:
         base = _BASE_POR_VARIANTE.get(caracter.lower())
@@ -186,21 +78,8 @@ def _fragmento_tolerante_a_acentos(componente: str) -> str:
 
 
 def redactar_por_nombres_conocidos(texto: str, nombres: Sequence[str]) -> str:
-    """Redacta coincidencias EXACTAS del nombre completo o sus componentes.
-
-    A diferencia de `redactar_por_motor` (que depende de que spaCy reconozca
-    la entidad), esta función no infiere nada: `nombres` son identidades YA
-    CONOCIDAS con certeza para ESTE documento (el paciente y/o el médico,
-    leídos del header parseado por el llamador -- ver
-    `salida/constructor_registro.py`). Cualquier aparición literal, sin
-    importar mayúsculas/minúsculas NI diacríticos (ver
-    `_fragmento_tolerante_a_acentos`), se reemplaza por `MARCADOR_REDACTADO`.
-
-    Los componentes más largos se intentan primero (`sorted(..., reverse=True)`)
-    para que "Roberto Fernandez" se redacte como una sola unidad en vez de
-    dejar dos reemplazos separados de "Roberto" y "Fernandez" cuando el
-    nombre completo aparece junto.
-    """
+    """Redacta coincidencias EXACTAS de `nombres` (identidades ya conocidas con certeza para
+    este documento), sin inferir. Componentes más largos primero, para redactar como unidad."""
     if not texto or not nombres:
         return texto
     componentes: set[str] = set()
@@ -225,20 +104,8 @@ def redactar_texto(
     motor_pii: DetectorEntidades | None = None,
     nombres_conocidos: Sequence[str] | None = None,
 ) -> str:
-    """Aplica las capas de redacción sobre `texto`, en orden de certeza decreciente:
-
-    1. Regex de DNI (siempre).
-    2. Comparación exacta contra `nombres_conocidos`, si se pasan (Tarea 2:
-       nombre del paciente/médico de ESTE documento -- certeza, no inferencia).
-    3. `motor_pii` (NER), si se inyecta -- el único paso probabilístico.
-
-    `motor_pii=None` es el modo degradado (ver docstring del módulo) -- nunca
-    se instancia un `MotorPii` acá adentro, porque cargarlo implica cargar
-    spaCy, un costo que este módulo no debe pagar por sí mismo; queda a
-    cargo de quien lo llame decidir si lo inyecta o no. `nombres_conocidos`
-    no tiene ese costo (es comparación de string), así que se aplica siempre
-    que se pasen, con o sin `motor_pii`.
-    """
+    """Aplica las tres capas en orden de certeza decreciente: regex DNI, nombres conocidos,
+    NER. `motor_pii=None` es modo degradado -- nunca se instancia acá, para no cargar spaCy."""
     redactado = redactar_por_regex(texto)
     if nombres_conocidos:
         redactado = redactar_por_nombres_conocidos(redactado, nombres_conocidos)
