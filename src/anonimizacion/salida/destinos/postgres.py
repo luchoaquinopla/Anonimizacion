@@ -27,6 +27,7 @@ decisión.
 from __future__ import annotations
 
 from datetime import date
+from typing import Callable
 
 from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.engine import make_url
@@ -182,6 +183,17 @@ class EscritorPostgres:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        # Whitelist y despacho son LA MISMA estructura (Requisito 1,
+        # extensibilidad-tipo-documento): un tipo sin entrada acá no pasa el
+        # chequeo de `escribir_registro` NI llega al `else` de `_insertar` --
+        # no hay dos listas que puedan desincronizarse.
+        self._escritores_por_tipo: dict[
+            TipoDocumento, Callable[[RegistroAnonimizado, Session, int], None]
+        ] = {
+            TipoDocumento.LABORATORIO: self._escribir_laboratorio,
+            TipoDocumento.ECG: self._escribir_ecg,
+            TipoDocumento.ECOCARDIOGRAMA: self._escribir_eco,
+        }
 
     # --- vinculo_paciente: respaldo persistente de ResolutorClaves ---------
 
@@ -317,11 +329,7 @@ class EscritorPostgres:
         y una fila escrita antes de este cambio no puede recuperarla sin releer el
         documento original.
         """
-        if registro.tipo_documento not in (
-            TipoDocumento.LABORATORIO,
-            TipoDocumento.ECG,
-            TipoDocumento.ECOCARDIOGRAMA,
-        ):
+        if registro.tipo_documento not in self._escritores_por_tipo:
             raise ValueError(f"tipo_documento no soportado por EscritorPostgres: {registro.tipo_documento!r}")
 
         with Session(self._engine) as sesion:
@@ -383,12 +391,10 @@ class EscritorPostgres:
         sesion.flush()  # asigna id_estudio sin cerrar la transaccion
         id_estudio = estudio.id_estudio
 
-        if registro.tipo_documento is TipoDocumento.LABORATORIO:
-            self._escribir_laboratorio(registro, sesion, id_estudio)
-        elif registro.tipo_documento is TipoDocumento.ECG:
-            self._escribir_ecg(registro, sesion, id_estudio)
-        else:
-            self._escribir_eco(registro, sesion, id_estudio)
+        # Mismo diccionario que la whitelist de `escribir_registro` -- un tipo
+        # sin entrada llega acá sólo si se llama a `_insertar` directo
+        # (bypaseando esa guarda), y `KeyError` es la excepción explícita.
+        self._escritores_por_tipo[registro.tipo_documento](registro, sesion, id_estudio)
 
     def _escribir_laboratorio(
         self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int
