@@ -23,6 +23,8 @@ from anonimizacion.web.secreto_panel import obtener_secreto_panel
 
 _RAIZ_REPO_ALEMBIC = Config(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "alembic.ini"))
 _URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+_URL_POSTGRES_ADMIN = _URL_POSTGRES_REAL
+_NOMBRE_BASE_SCRATCH_DIAGNOSTICO = "diagnostico_scratch_test"
 _CONNECT_REAL = socket.socket.connect
 
 
@@ -302,42 +304,70 @@ def test_carpeta_de_entrada_accesible_es_ok(tmp_path) -> None:
 
 @pytest.fixture()
 def _postgres_real_al_dia(monkeypatch: pytest.MonkeyPatch):
-    """Postgres real con las migraciones al día -- o `skip` si no responde.
+    """Base Postgres real, EFÍMERA y propia de este archivo -- NO la base
+    compartida `anonimizacion` de puerto 5433. Migrada con `alembic upgrade
+    head` PROGRAMÁTICO, mismo patrón que
+    `tests/salida/test_migraciones.py::_url_postgres_scratch` y
+    `tests/test_cli.py::_postgres_real_para_cli`.
 
-    Otros tests de la suite (`tests/scripts/test_procesar_carpeta.py`) dejan
-    el esquema armado vía `Base.metadata.create_all`/`drop_all` directo, sin
-    pasar por Alembic -- sin `alembic_version`, un `upgrade head` de acá
-    chocaría con tablas que ya existen. Se arranca de un estado limpio de
-    verdad: se tira TODO (esquema de `Base` + `alembic_version`) antes de
-    aplicar las migraciones desde cero.
-    """
-    from anonimizacion.salida.modelos_orm import Base
-
+    Antes este fixture corría directo contra la base COMPARTIDA: hacía
+    `Base.metadata.drop_all` + `DROP TABLE alembic_version` para partir de
+    cero (otros tests de la suite arman el esquema con `create_all`/
+    `drop_all` sin pasar por Alembic, así que un `upgrade head` ahí chocaba
+    con tablas ya existentes) y al final volvía a dejarla en `head` "para no
+    romper otros tests/marks" -- esa misma frase ya delataba que el fixture
+    sabía que estaba ensuciando un recurso ajeno. Entre el `drop_all` y el
+    `upgrade head` había una ventana real sin tablas: cualquier otro test
+    corriendo en paralelo contra esa base fallaba con `UndefinedTable`
+    (causa confirmada de la falla intermitente de
+    `tests/integracion/test_reintentar_no_duplica.py`). Con una base
+    descartable propia, la ventana de borrado desaparece y el
+    `upgrade head` final ya no hace falta -- nadie más la usa.
+    `skip` si Postgres real no responde."""
     monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
-    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    motor_admin = sa.create_engine(
+        _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+    )
     try:
-        with sonda.connect():
-            pass
+        with motor_admin.connect() as conexion:
+            conexion.execute(
+                sa.text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = :nombre_base AND pid <> pg_backend_pid()"
+                ),
+                {"nombre_base": _NOMBRE_BASE_SCRATCH_DIAGNOSTICO},
+            )
+            conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH_DIAGNOSTICO}"))
+            conexion.execute(sa.text(f"CREATE DATABASE {_NOMBRE_BASE_SCRATCH_DIAGNOSTICO}"))
     except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
-        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_ADMIN}: {excepcion}")
         return
-    try:
-        Base.metadata.drop_all(sonda)
-        with sonda.begin() as conexion:
-            conexion.execute(sa.text("DROP TABLE IF EXISTS alembic_version"))
-    finally:
-        sonda.dispose()
 
-    cfg = Config(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", _URL_POSTGRES_REAL)
-    command.upgrade(cfg, "head")
-    yield cfg
-    command.upgrade(cfg, "head")  # deja la base al día para no romper otros tests/marks
+    url_scratch = _URL_POSTGRES_ADMIN.rsplit("/", 1)[0] + f"/{_NOMBRE_BASE_SCRATCH_DIAGNOSTICO}"
+    try:
+        cfg = Config(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "alembic.ini"))
+        cfg.set_main_option("sqlalchemy.url", url_scratch)
+        command.upgrade(cfg, "head")
+        yield cfg, url_scratch
+    finally:
+        motor_admin.dispose()
+        with sa.create_engine(
+            _URL_POSTGRES_ADMIN, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
+        ).connect() as conexion:
+            conexion.execute(
+                sa.text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = :nombre_base AND pid <> pg_backend_pid()"
+                ),
+                {"nombre_base": _NOMBRE_BASE_SCRATCH_DIAGNOSTICO},
+            )
+            conexion.execute(sa.text(f"DROP DATABASE IF EXISTS {_NOMBRE_BASE_SCRATCH_DIAGNOSTICO}"))
 
 
 @pytest.mark.postgres
 def test_migraciones_al_dia_contra_postgres_real(_postgres_real_al_dia) -> None:
-    config = ConfiguracionOperador(db_url=_URL_POSTGRES_REAL)
+    _cfg, url_scratch = _postgres_real_al_dia
+    config = ConfiguracionOperador(db_url=url_scratch)
 
     hallazgos = diagnosticar(config, requiere_entrada=False, requiere_red=False)
 
@@ -346,12 +376,13 @@ def test_migraciones_al_dia_contra_postgres_real(_postgres_real_al_dia) -> None:
 
 @pytest.mark.postgres
 def test_migraciones_desactualizadas_contra_postgres_real(_postgres_real_al_dia) -> None:
-    script = ScriptDirectory.from_config(_postgres_real_al_dia)
+    cfg, url_scratch = _postgres_real_al_dia
+    script = ScriptDirectory.from_config(cfg)
     revisiones = list(script.walk_revisions())
     revision_anterior = revisiones[1].revision  # una atrás de head
-    command.downgrade(_postgres_real_al_dia, revision_anterior)
+    command.downgrade(cfg, revision_anterior)
 
-    config = ConfiguracionOperador(db_url=_URL_POSTGRES_REAL)
+    config = ConfiguracionOperador(db_url=url_scratch)
     hallazgos = diagnosticar(config, requiere_entrada=False, requiere_red=False)
 
     assert _ok(hallazgos, "Migraciones") is False

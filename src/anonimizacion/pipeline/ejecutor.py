@@ -45,7 +45,9 @@ from anonimizacion.dominio.errores import CodigoErrorDocumento, ErrorDocumento, 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.deteccion.detector_tipo import detectar_tipo as _detectar_tipo_real
+from anonimizacion.extraccion.registro_trazos import capturador_de as _capturador_de_real
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido, extraer_texto_de_flujo
+from anonimizacion.extraccion.trazos_pymupdf import CapturadorDePagina
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo
 from anonimizacion.ingesta.fuente import FuenteDeArtefactos
 from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
@@ -240,6 +242,10 @@ class EjecutorPipeline:
         dormir: Callable[[float], None] = time.sleep,
         extraer: Callable[[ArtefactoCrudo], TextoExtraido] | None = None,
         detectar_tipo: Callable[[TextoExtraido], TipoDocumento] = _detectar_tipo_real,
+        # design.md, decisión #1 (`senal-ecg-y-dataset-vinculado`): sólo el
+        # ECG tiene capturador registrado -- laboratorio/eco devuelven `None`
+        # y `extraer_texto_de_flujo` no invoca captura de trazos para ellos.
+        capturador_de: Callable[[TipoDocumento], CapturadorDePagina | None] = _capturador_de_real,
         obtener_parseador: Callable[[TipoDocumento], ParseadorDocumento] = _obtener_parseador_real,
         obtener_reconciliador: Callable[[TipoDocumento], ReconciliadorDocumento] = _obtener_reconciliador_real,
         resolver_claves: Callable[..., ClavesPaciente] = _resolver_claves_real,
@@ -287,6 +293,7 @@ class EjecutorPipeline:
                 "extraer su texto."
             )
         self._detectar_tipo = detectar_tipo
+        self._capturador_de = capturador_de
         self._obtener_parseador = obtener_parseador
         self._obtener_reconciliador = obtener_reconciliador
         self._resolver_claves = resolver_claves
@@ -301,12 +308,25 @@ class EjecutorPipeline:
         y 4). `self._fuente` no puede ser `None` acá -- `__init__` ya validó
         que si `extraer` no se proveyó, `fuente` sí.
 
+        `capturador_para` (design.md, decisión #1 `senal-ecg-y-dataset-
+        vinculado`): closure que cierra sobre `self._detectar_tipo` y
+        `self._capturador_de` -- el único punto del pipeline que conoce
+        ambos a la vez, para que `extraccion/texto_pymupdf.py` nunca importe
+        `deteccion` (evita el ciclo, ver su docstring). `detectar_tipo` corre
+        acá y de nuevo en `_resolver_documento` (dos veces por documento,
+        aceptado por diseño): el costo es una búsqueda de subcadena en
+        microsegundos, a cambio de abrir el PDF una sola vez.
+
         Ciclo de vida: `fuente.abrir()` entrega un `BinaryIO` fresco; este es
         el LLAMADOR, así que lo cierra con `with` apenas termina de leerlo.
         """
         assert self._fuente is not None  # invariante garantizado por __init__
+
+        def _capturador_para(texto: TextoExtraido) -> CapturadorDePagina | None:
+            return self._capturador_de(self._detectar_tipo(texto))
+
         with self._fuente.abrir(artefacto) as flujo:
-            return extraer_texto_de_flujo(flujo)
+            return extraer_texto_de_flujo(flujo, capturador_para=_capturador_para)
 
     def _observar_duracion(self, etapa: str, duracion_ms: float) -> None:
         """`observar` que se pasa a `_ejecutar_con_reintentos`; no-op si no hay `metricas`."""

@@ -652,6 +652,95 @@ def test_extraer_por_defecto_usa_la_fuente_inyectada_sin_tocar_filesystem() -> N
     assert "HEMATOLOGIA" in texto_visto_por_el_parseador[0]
 
 
+def test_extraer_por_defecto_inyecta_capturador_solo_para_el_tipo_detectado() -> None:
+    """design.md, decisión #1 (`senal-ecg-y-dataset-vinculado`): el
+    `capturador_para` que `_extraer_por_defecto` construye cierra sobre
+    `detectar_tipo` + `capturador_de` -- ningún capturador se invoca para un
+    tipo sin registro (`capturador_de` fake devuelve `None`), y el que SÍ
+    está registrado llega hasta `TextoExtraido.trazos` intacto."""
+    contenido_pdf = crear_pdf_bytes_con_texto(["cualquier texto, no importa para este test"])
+    artefacto = ArtefactoCrudo(uri="memoria://doc-ecg.pdf", sha256="b" * 64, formato=FormatoArtefacto.PDF)
+    fuente = _FuenteEnMemoria(contenidos={artefacto.uri: contenido_pdf})
+    escritor = _EscritorFake(escritos=[])
+    cuarentena = _CuarentenaFake(registrados=[])
+
+    trazo_falso = (((0.0, 0.0), (1.0, 1.0)),)
+    tipos_consultados: list[TipoDocumento] = []
+
+    def _capturador_de_fake(tipo: TipoDocumento):
+        tipos_consultados.append(tipo)
+        if tipo is not TipoDocumento.ECG:
+            return None
+        return lambda pagina: trazo_falso
+
+    trazos_vistos_por_el_parseador: list[tuple] = []
+
+    class _ParseadorFake:
+        def parsear(self, texto: TextoExtraido) -> DocumentoParseado:
+            trazos_vistos_por_el_parseador.append(texto.trazos)
+            return _documento("paciente-1")
+
+    class _ReconciliadorFake:
+        def reconciliar(self, documento: object, texto: TextoExtraido) -> None:
+            return None
+
+    def resolver_claves(*_args: object, **_kwargs: object) -> ClavesPaciente:
+        return ClavesPaciente(id_paciente="paciente-1", id_alt_paciente=None, version_clave=1)
+
+    def vincular_episodios(documentos: list, pepper: bytes) -> ResultadoVinculacion:
+        return ResultadoVinculacion(
+            id_episodio_por_documento={d.id_documento: "episodio-1" for d in documentos},
+            metadata_por_episodio={
+                "episodio-1": MetadataEpisodio(id_paciente="paciente-1", fecha_ancla=date(2026, 1, 10))
+            },
+        )
+
+    def construir_registro(
+        documento: DocumentoParseado,
+        claves: ClavesPaciente,
+        *,
+        id_episodio,
+        pepper,
+        clave_documento,
+        motor_pii=None,
+        campos_no_extraidos=(),
+    ):
+        return RegistroAnonimizado(
+            id_paciente=claves.id_paciente,
+            id_episodio=id_episodio,
+            tipo_documento=documento.tipo_documento,
+            version_esquema=documento.version_esquema,
+            fecha_estudio=documento.fecha_estudio,
+            contenido=object(),
+            adicionales={},
+            clave_documento=clave_documento,
+            campos_no_extraidos=campos_no_extraidos,
+        )
+
+    ejecutor = EjecutorPipeline(
+        resolutor=object(),
+        motor=object(),
+        pepper=PEPPER,
+        destino=escritor,
+        cuarentena=cuarentena,
+        fuente=fuente,
+        detectar_tipo=lambda texto: TipoDocumento.ECG,
+        capturador_de=_capturador_de_fake,
+        obtener_parseador=lambda tipo: _ParseadorFake(),
+        obtener_reconciliador=lambda tipo: _ReconciliadorFake(),
+        resolver_claves=resolver_claves,
+        vincular_episodios=vincular_episodios,
+        construir_registro=construir_registro,
+        clasificar_pii=lambda documento, motor: None,
+    )
+
+    (resultado,) = ejecutor.procesar_lote([ItemLote(id_documento="doc-1", artefacto=artefacto)])
+
+    assert isinstance(resultado, ExitoDocumento)
+    assert tipos_consultados == [TipoDocumento.ECG]
+    assert trazos_vistos_por_el_parseador[0] == trazo_falso
+
+
 def test_ejecutor_sin_fuente_ni_extraer_falla_explicito_en_la_construccion() -> None:
     with pytest.raises(ValueError, match="fuente"):
         EjecutorPipeline(

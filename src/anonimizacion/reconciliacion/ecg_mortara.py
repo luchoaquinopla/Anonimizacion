@@ -165,4 +165,13 @@ class ReconciliadorEcgMortara:
             {clave: valor for clave, valor in valores.items() if valor is not None},
             validador_asociacion=_asociacion_ecg,
         )
-        return reconciliar_cobertura(documento, self.inventariar(texto))
+        cobertura = reconciliar_cobertura(documento, self.inventariar(texto))
+        # `ecg.senal` (openspec `senal-ecg-y-dataset-vinculado`): no viene del
+        # inventario de texto (`inventariar` sólo reconoce header/medidas) --
+        # el layout de trazos que `construir_senal` valida es geometría, no
+        # texto. Cuando la señal no valida (`None`), se agrega acá, nunca
+        # como motivo de cuarentena (requirement "Validación geométrica del
+        # layout con degradación explícita").
+        if contenido.senal is None:
+            cobertura = (*cobertura, "ecg.senal")
+        return cobertura

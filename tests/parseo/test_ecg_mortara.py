@@ -13,13 +13,16 @@ from __future__ import annotations
 
 from datetime import time
 
+import pymupdf
 import pytest
 
 from anonimizacion.dominio.errores import CodigoErrorDocumento, DetalleParseoIncompleto, ErrorParseo
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.extraccion.texto_pymupdf import TextoExtraido
+from anonimizacion.extraccion.trazos_pymupdf import capturar_trazos
 from anonimizacion.parseo.ecg_mortara import ParseadorEcgMortara
+from tests.fixtures.pdf_sintetico import crear_pdf_ecg_con_trazos_sinteticos
 
 # "MORTARA" es el marcador de equipo que usa `deteccion/firmas/ecg_mortara.py`
 # para clasificar el tipo de documento -- no es PII, es el nombre del modelo
@@ -65,6 +68,42 @@ def test_parsea_ecg_layout_real_sin_advertencias() -> None:
     assert "advertencia_equipo" not in resultado.adicionales
     assert resultado.adicionales["institucion"] == "HOSPITAL FICTICIO"
     assert resultado.adicionales["medico_derivante"] == "Dr Ficticio Derivante"
+    assert resultado.contenido.senal is None  # `texto.trazos` vacío -- sin capturador inyectado
+
+
+# --- señal de ECG (openspec `senal-ecg-y-dataset-vinculado`) ---------------
+
+
+def _trazos_desde_pdf_sintetico(tmp_path, *, semilla: int = 1) -> tuple:
+    ruta = tmp_path / "ecg_con_trazos.pdf"
+    crear_pdf_ecg_con_trazos_sinteticos(ruta, semilla=semilla)
+    documento = pymupdf.open(ruta)
+    try:
+        return capturar_trazos(documento[0])
+    finally:
+        documento.close()
+
+
+def test_parsea_ecg_con_layout_de_trazos_valido_incluye_senal_calibrada(tmp_path) -> None:
+    """Scenario "ECG con señal válida" (spec `document-parsing`)."""
+    trazos = _trazos_desde_pdf_sintetico(tmp_path)
+    texto = TextoExtraido(paginas=(_HEADER_REAL + _MEDIDAS_REAL + _PIE_REAL,), trazos=trazos)
+
+    resultado = ParseadorEcgMortara().parsear(texto)
+
+    assert resultado.contenido.senal is not None
+    assert resultado.contenido.senal.muestras_uv.shape == (12, 5000)
+
+
+def test_parsea_ecg_con_layout_de_trazos_invalido_deja_senal_en_none() -> None:
+    """Scenario "ECG con señal que no valida" (spec `document-parsing`): el
+    parsing sigue produciendo el registro tipado, sin campo de señal."""
+    trazos_invalidos = (((0.0, 0.0), (1.0, 1.0), (2.0, 2.0)),)  # ni pulso, ni derivación, ni tira
+    texto = TextoExtraido(paginas=(_HEADER_REAL + _MEDIDAS_REAL + _PIE_REAL,), trazos=trazos_invalidos)
+
+    resultado = ParseadorEcgMortara().parsear(texto)
+
+    assert resultado.contenido.senal is None
 
 
 def test_ecg_conserva_hora_con_precision_de_segundo_sin_truncar() -> None:

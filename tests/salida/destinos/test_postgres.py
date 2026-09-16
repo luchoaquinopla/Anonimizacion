@@ -23,13 +23,17 @@ corregido post-PR5, commit 07da933).
 
 from __future__ import annotations
 
+import socket
 from dataclasses import replace
 from datetime import date, time
 
+import numpy as np
 import pytest
 import sqlalchemy as sa
 
 from pydantic import SecretStr
+
+from anonimizacion.dominio.senal_ecg import SenalEcg
 
 from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, IdentidadCruda, RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
@@ -41,7 +45,8 @@ from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos import postgres as destinos_postgres
 from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
 from anonimizacion.dominio.precision_hora import PrecisionHora
-from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, TextoSeccionEco, VinculoPaciente
+from anonimizacion.salida.codec_senal import decodificar_mascara, decodificar_muestras
+from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, SenalEcgOrm, TextoSeccionEco, VinculoPaciente
 
 PEPPER_TEST = b"pepper-fijo-de-test-nunca-real"
 SHA256_SINTETICO_TEST = "e" * 64  # huella inventada de 64 hex, ningún valor real
@@ -199,6 +204,71 @@ def test_escribir_registro_ecg_crea_fila_ancha(escritor: EscritorPostgres, motor
     assert filas[0].id_episodio == "ep-1"
 
 
+# --- senal_ecg: satélite 1:1 de estudio (openspec `senal-ecg-y-dataset-vinculado`) --
+
+
+def _senal_conocida() -> SenalEcg:
+    muestras = np.zeros((12, 5000), dtype=np.int16)
+    muestras[0, 0] = 1234
+    mascara = np.zeros((12, 5000), dtype=bool)
+    mascara[0, :] = True
+    return SenalEcg(muestras_uv=muestras, mascara=mascara)
+
+
+def _registro_ecg_con_senal(
+    senal: SenalEcg | None, *, clave: str = CLAVE_DOCUMENTO_TEST, id_episodio: str = "ep-1"
+) -> RegistroAnonimizado:
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40", senal=senal
+        ),
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    return construir_registro(documento, claves, id_episodio=id_episodio, pepper=PEPPER_TEST, clave_documento=clave)
+
+
+def test_escribir_registro_ecg_con_senal_valida_crea_fila_en_senal_ecg(escritor: EscritorPostgres, motor) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_ecg_con_senal(_senal_conocida()))
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    (fila,) = _leer_todas(motor, SenalEcgOrm)
+    assert fila.id_estudio == estudio.id_estudio
+    assert fila.frecuencia_hz == 500
+    assert fila.version_extractor == 1
+    assert fila.version_formato == destinos_postgres.VERSION_FORMATO_ACTUAL
+    assert decodificar_muestras(fila.muestras_uv)[0, 0] == 1234
+    assert bool(decodificar_mascara(fila.mascara)[0, 0]) is True
+
+
+def test_escribir_registro_ecg_sin_senal_no_crea_fila_en_senal_ecg(escritor: EscritorPostgres, motor) -> None:
+    """`senal=None` (layout que no valida): el estudio se escribe igual, sin fila satélite."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(_registro_ecg_con_senal(None))
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+    assert len(_leer_todas(motor, SenalEcgOrm)) == 0
+
+
+def test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_en_senal_ecg(
+    escritor: EscritorPostgres, motor
+) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_ecg_con_senal(_senal_conocida())
+
+    for _ in range(3):
+        escritor.escribir_registro(registro)
+
+    assert len(_leer_todas(motor, Estudio)) == 1
+    assert len(_leer_todas(motor, SenalEcgOrm)) == 1
+
+
 def test_escribir_registro_eco_pivota_medidas_conocidas_y_guarda_extras_en_adicionales(
     escritor: EscritorPostgres, motor
 ) -> None:
@@ -235,6 +305,128 @@ def test_escribir_registro_eco_pivota_medidas_conocidas_y_guarda_extras_en_adici
     filas_texto = _leer_todas(motor, TextoSeccionEco)
     assert len(filas_texto) == 1
     assert filas_texto[0].texto == "Funcion sistolica conservada"
+
+
+# --- estudio.adicionales: header persistido para los 3 tipos (entrega 2b) --
+#
+# Hallazgo: `_escribir_laboratorio` y `_escribir_eco` nunca leían
+# `registro.adicionales` -- sólo `_escribir_ecg` lo persistía (en
+# `medicion_ecg.adicionales`, ahora eliminada). Se perdían en silencio
+# edad/origen (laboratorio) y edad/peso/altura/superficie_corporal (eco).
+# Oráculo con valores LITERALES escritos a mano, no derivados del código.
+
+
+def _registro_laboratorio_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_derivante` (personal) + `origen`/`edad` (header, esperados)."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.LABORATORIO,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoLaboratorio(
+            numero_peticion="P-1",
+            resultados=(
+                ResultadoLaboratorio(
+                    seccion="HEMATOLOGIA", prueba="Hemoglobina", resultado="14.5",
+                    unidades="g/dL", valores_referencia="12-16",
+                ),
+            ),
+        ),
+        adicionales={"medico_derivante": "Dr. Roberto Diaz", "origen": "Guardia", "edad": "45 años"},
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+    return registro, {"origen": "Guardia", "edad": "45 años"}
+
+
+def _registro_ecg_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_derivante` (personal) + `institucion`/`sexo` (header, esperados)."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECG,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEcg(
+            vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
+        ),
+        adicionales={"medico_derivante": "Dr. Roberto Diaz", "institucion": "Instituto de Cardiologia", "sexo": "M"},
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+    return registro, {"institucion": "Instituto de Cardiologia", "sexo": "M"}
+
+
+def _registro_eco_con_adicionales() -> tuple[RegistroAnonimizado, dict]:
+    """`medico_solicitante` (personal) + edad/peso/altura/superficie_corporal (header, esperados)."""
+    documento = DocumentoParseado(
+        tipo_documento=TipoDocumento.ECOCARDIOGRAMA,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=ContenidoEco(
+            medidas=(MedidaEco(nombre="AO", valor="28", unidad="mm"),),
+            secciones_texto=(),
+            firma=FirmaMedico(nombre="Dr. Carlos Gomez", matricula="MP12345"),
+        ),
+        adicionales={
+            "medico_solicitante": "Dr. Ana Lopez",
+            "edad": "50 años",
+            "peso": "72 kg",
+            "altura": "1.70 m",
+            "superficie_corporal": "1.85",
+        },
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=CLAVE_DOCUMENTO_TEST
+    )
+    return registro, {"edad": "50 años", "peso": "72 kg", "altura": "1.70 m", "superficie_corporal": "1.85"}
+
+
+@pytest.mark.parametrize(
+    "construir_registro_de_tipo",
+    [_registro_laboratorio_con_adicionales, _registro_ecg_con_adicionales, _registro_eco_con_adicionales],
+    ids=["laboratorio", "ecg", "ecocardiograma"],
+)
+def test_cada_tipo_de_documento_persiste_adicionales_de_header_sin_personal(
+    escritor: EscritorPostgres, motor, construir_registro_de_tipo
+) -> None:
+    """Fusiona el oráculo positivo (valores de header persistidos) con la
+    higiene de PII (el campo personal del médico no llega). Guarda además
+    contra el defecto de esta entrega: si se agrega un tipo de documento
+    nuevo a `EscritorPostgres.escribir_registro` sin sumarlo acá, este test
+    para ese tipo empieza a fallar en vez de perder el campo en silencio."""
+    registro, esperado = construir_registro_de_tipo()
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    escritor.escribir_registro(registro)
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    assert estudio.adicionales == esperado
+    assert "medico_derivante" not in estudio.adicionales
+    assert "medico_solicitante" not in estudio.adicionales
+
+    # Campos distintos según el tipo, verificados en el mismo test para no
+    # repetir el escenario: `medicion_eco.adicionales` (medidas del CUERPO sin
+    # pivote) nunca se confunde con `estudio.adicionales` (header); y la
+    # columna `medicion_ecg.adicionales` fue eliminada por la migración 0014.
+    if registro.tipo_documento is TipoDocumento.ECOCARDIOGRAMA:
+        assert _leer_todas(motor, MedicionEco)[0].adicionales is None
+    if registro.tipo_documento is TipoDocumento.ECG:
+        assert not hasattr(MedicionEcg, "adicionales"), "medicion_ecg.adicionales fue eliminada (migracion 0014)"
+
+
+def test_escribir_registro_sin_adicionales_deja_estudio_adicionales_en_null(
+    escritor: EscritorPostgres, motor
+) -> None:
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    escritor.escribir_registro(_registro_con_hora(time(10, 32, 15), PrecisionHora.SEGUNDO))
+
+    (estudio,) = _leer_todas(motor, Estudio)
+    assert estudio.adicionales is None
 
 
 def test_escribir_registro_tipo_no_reconocido_lanza_value_error(escritor: EscritorPostgres) -> None:
@@ -598,4 +790,204 @@ def test_construir_engine_postgres_no_le_pasa_connect_timeout_a_sqlite(motor) ->
             sesion.execute(sa.text("SELECT 1"))
     finally:
         engine.dispose()
+
+
+# --- senal_ecg: MISMA transacción que estudio, contra Postgres real --------
+#
+# SQLite no impone FKs por defecto (`PRAGMA foreign_keys` apagado salvo que
+# se active a mano) -- ningún test contra SQLite puede probar que la fila
+# huérfana es imposible. Sólo Postgres real, con la migración 0013 real
+# (`ON DELETE CASCADE`, FK real), ejerce esa garantía.
+
+
+_CONNECT_REAL = socket.socket.connect
+_URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+
+
+@pytest.fixture()
+def _engine_postgres_real(monkeypatch: pytest.MonkeyPatch):
+    """Ver `tests/integracion/test_postgres_carrera_real.py` para el mismo
+    patrón documentado en detalle (captura de `_CONNECT_REAL` ANTES del
+    guardia de red de sesión, `connect_timeout` para no colgarse sin
+    Docker)."""
+    monkeypatch.setattr(socket.socket, "connect", _CONNECT_REAL)
+    sonda = sa.create_engine(_URL_POSTGRES_REAL, connect_args={"connect_timeout": 3})
+    try:
+        with sonda.connect():
+            pass
+    except Exception as excepcion:  # noqa: BLE001 -- cualquier fallo de conexión es motivo de skip
+        pytest.skip(f"Postgres real no disponible en {_URL_POSTGRES_REAL}: {excepcion}")
+    finally:
+        sonda.dispose()
+
+    engine = construir_engine_postgres(_URL_POSTGRES_REAL)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.postgres
+def test_escribir_registro_ecg_con_senal_persiste_ambas_filas_en_una_transaccion_contra_postgres_real(
+    _engine_postgres_real: sa.Engine,
+) -> None:
+    """GREEN: contra Postgres real, `estudio` + `senal_ecg` quedan
+    persistidos juntos, con la FK real de la migración 0013 (recreada acá
+    vía `Base.metadata.create_all`, que declara la misma FK que la
+    migración -- ver `tests/salida/test_migraciones.py::
+    test_indices_y_restricciones_unicas_del_orm_coinciden_con_la_migracion`)."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-1", id_paciente="pid-real-1", fecha_ancla=date(2024, 1, 10))
+
+    escritor.escribir_registro(
+        _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-1", id_episodio="ep-real-1")
+    )
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        (estudio,) = sesion.scalars(sa.select(Estudio)).all()
+        (senal,) = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert senal.id_estudio == estudio.id_estudio
+
+
+@pytest.mark.postgres
+def test_fallo_al_escribir_la_senal_revierte_tambien_el_estudio_contra_postgres_real(
+    _engine_postgres_real: sa.Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED antes del fix: si `senal_ecg` se escribiera en una transacción
+    SEPARADA de `estudio`, este test fallaría (quedaría un `estudio` sin
+    `senal_ecg`, huérfano). Fuerza un fallo NO relacionado con `IntegrityError`
+    (el único tipo que `escribir_registro` atrapa a propósito -- ver su
+    docstring) durante la codificación de la señal: como ambas escrituras
+    viven en la MISMA `sesion.begin()` (`_insertar`), la excepción debe
+    propagar y el `estudio` de este intento NUNCA debe quedar commiteado."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-2", id_paciente="pid-real-2", fecha_ancla=date(2024, 1, 10))
+
+    def _falla(*_args: object, **_kwargs: object) -> bytes:
+        raise RuntimeError("fallo forzado de codificación -- no debe dejar nada persistido")
+
+    monkeypatch.setattr(destinos_postgres, "codificar_muestras", _falla)
+
+    with pytest.raises(RuntimeError):
+        escritor.escribir_registro(
+            _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-2", id_episodio="ep-real-2")
+        )
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+        senales = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert estudios == [], "un fallo en la señal no debe dejar un estudio huerfano sin señal"
+    assert senales == [], "un fallo en la señal no debe dejar ninguna señal huerfana"
+
+
+@pytest.mark.postgres
+def test_escribir_el_mismo_ecg_con_senal_tres_veces_deja_una_sola_fila_contra_postgres_real(
+    _engine_postgres_real: sa.Engine,
+) -> None:
+    """WARNING (revisión adversarial): la variante SQLite de este test no
+    prueba nada sobre la restricción única real -- SQLite y Postgres pueden
+    divergir en cómo arbitran la carrera IntegrityError/SELECT (ver
+    `tests/salida/test_migraciones.py::
+    test_indices_y_restricciones_unicas_del_orm_coinciden_con_la_migracion`
+    para el mismo principio). Repetida acá contra el motor real."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-3", id_paciente="pid-real-3", fecha_ancla=date(2024, 1, 10))
+    registro = _registro_ecg_con_senal(_senal_conocida(), clave="clave-postgres-real-3", id_episodio="ep-real-3")
+
+    for _ in range(3):
+        escritor.escribir_registro(registro)
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        estudios = sesion.scalars(sa.select(Estudio)).all()
+        senales = sesion.scalars(sa.select(SenalEcgOrm)).all()
+    assert len(estudios) == 1
+    assert len(senales) == 1
+
+
+# --- estudio.adicionales: ida y vuelta e higiene de PII, Postgres real -----
+#
+# Migración 0014 -- el test parametrizado de abajo confirma, para los 3 tipos
+# y contra la columna JSONB real (no el JSON genérico de SQLite), que el
+# campo no personal hace la ida y vuelta idéntica (oráculo positivo) Y que
+# ningún campo de `_CLAVES_PERSONAL` llega a persistirse -- ambas garantías
+# en el mismo test, sin repetir el escenario de escritura.
+
+
+_LAS_3_CLAVES_PERSONALES = {
+    "medico_derivante": "Dr. Roberto Diaz",
+    "medico_solicitante": "Dr. Ana Lopez",
+    "tecnico": "Tec. Marta Ruiz",
+}
+_CONTENIDO_POR_TIPO_PII = {
+    TipoDocumento.LABORATORIO: ContenidoLaboratorio(
+        numero_peticion="P-1",
+        resultados=(
+            ResultadoLaboratorio(
+                seccion="HEMATOLOGIA", prueba="Hemoglobina", resultado="14.5",
+                unidades="g/dL", valores_referencia="12-16",
+            ),
+        ),
+    ),
+    TipoDocumento.ECG: ContenidoEcg(
+        vent_rate="72", pr_interval="160", qrs_duration="90", qt_qtc="400/420", ejes="P60 R30 T40"
+    ),
+    TipoDocumento.ECOCARDIOGRAMA: ContenidoEco(
+        medidas=(MedidaEco(nombre="AO", valor="28", unidad="mm"),),
+        secciones_texto=(),
+        firma=FirmaMedico(nombre="Dr. Carlos Gomez", matricula="MP12345"),
+    ),
+}
+
+
+def _registro_con_las_3_claves_personales(tipo: TipoDocumento, campo_esperado: dict) -> tuple[RegistroAnonimizado, dict]:
+    documento = DocumentoParseado(
+        tipo_documento=tipo,
+        version_esquema=1,
+        identidad=IdentidadCruda(nombre=SecretStr("Juan Perez")),
+        fecha_estudio=date(2024, 1, 10),
+        contenido=_CONTENIDO_POR_TIPO_PII[tipo],
+        adicionales={**_LAS_3_CLAVES_PERSONALES, **campo_esperado},
+    )
+    claves = ClavesPaciente(id_paciente="pid-1", id_alt_paciente=None, version_clave=1)
+    registro = construir_registro(
+        documento, claves, id_episodio="ep-1", pepper=PEPPER_TEST, clave_documento=f"clave-pii-{tipo.value}"
+    )
+    return registro, campo_esperado
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "construir_registro_de_tipo",
+    [
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.LABORATORIO, {"origen": "Guardia"}),
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.ECG, {"institucion": "Instituto de Cardiologia"}),
+        lambda: _registro_con_las_3_claves_personales(TipoDocumento.ECOCARDIOGRAMA, {"peso": "72 kg"}),
+    ],
+    ids=["laboratorio", "ecg", "ecocardiograma"],
+)
+def test_estudio_adicionales_nunca_contiene_ningun_campo_personal_contra_postgres_real(
+    _engine_postgres_real: sa.Engine, construir_registro_de_tipo
+) -> None:
+    """`_CLAVES_PERSONAL` (`medico_derivante`, `medico_solicitante`, `tecnico`
+    -- `constructor_registro.py:79`) se filtra en `_adicionales_sin_personal`
+    ANTES de llegar a `RegistroAnonimizado.adicionales`. El input de este test
+    trae LAS TRES claves para los 3 tipos, con valores sintéticos, más un
+    campo no personal que SÍ debe llegar (oráculo positivo: si nada se
+    escribiera, `estudio.adicionales` sería `None` y la comparación de abajo
+    fallaría, en vez de pasar vacuamente). Se confirmó manualmente que este
+    test FALLA (para las 3 claves y los 3 tipos) si `_adicionales_sin_personal`
+    se rompe para devolver el dict intacto -- ver apply-progress.md."""
+    escritor = EscritorPostgres(_engine_postgres_real)
+    escritor.escribir_episodio(id_episodio="ep-real-pii", id_paciente="pid-real-pii", fecha_ancla=date(2024, 1, 10))
+    registro, esperado = construir_registro_de_tipo()
+    registro = replace(registro, id_episodio="ep-real-pii")
+
+    escritor.escribir_registro(registro)
+
+    with sa.orm.Session(_engine_postgres_real) as sesion:
+        (estudio,) = sesion.scalars(sa.select(Estudio)).all()
+    assert estudio.adicionales == esperado, "oraculo positivo: el campo no personal debe llegar intacto"
+    assert "medico_derivante" not in estudio.adicionales
+    assert "medico_solicitante" not in estudio.adicionales
+    assert "tecnico" not in estudio.adicionales
 

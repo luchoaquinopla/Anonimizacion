@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Time, UniqueConstraint
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -165,6 +165,17 @@ class Estudio(Base):
     #: las filas preexistentes, mismo criterio que `completo` arriba; las
     #: filas nuevas siempre traen una lista (`[]` si `completo` es `True`).
     campos_no_extraidos: Mapped[list[str] | None] = mapped_column(_JsonPortable, nullable=True)
+    #: Campos adicionales de HEADER que no tienen columna propia (edad, sexo,
+    #: peso, talla, superficie corporal, institución, origen -- vocabulario
+    #: variable por tipo de documento, ver `salida/constructor_registro.py::
+    #: _adicionales_sin_personal`), ya sin PII de médico/técnico. Migración
+    #: `0014`: antes sólo `medicion_ecg.adicionales` persistía esto (decisión
+    #: de comité 2026-09-07 exige conservar estos cuasi-identificadores para
+    #: los 3 tipos, no sólo ECG). Distinto de `medicion_eco.adicionales`
+    #: (medidas NO pivoteadas del CUERPO del eco, ver `_PIVOTE_MEDIDAS_ECO`
+    #: en `destinos/postgres.py`) -- este campo es del HEADER. Nullable:
+    #: un documento puede no traer ningún adicional.
+    adicionales: Mapped[dict | None] = mapped_column(_JsonPortable, nullable=True)
 
 
 class MedicionEcg(Base):
@@ -185,7 +196,34 @@ class MedicionEcg(Base):
     qrs_duration: Mapped[str | None] = mapped_column(String, nullable=True)
     qt_qtc: Mapped[str | None] = mapped_column(String, nullable=True)
     ejes: Mapped[str | None] = mapped_column(String, nullable=True)
-    adicionales: Mapped[dict | None] = mapped_column(_JsonPortable, nullable=True)
+
+
+class SenalEcgOrm(Base):
+    """Señal de ECG calibrada, codificada (`salida/codec_senal.py`); ver `dominio/senal_ecg.py::SenalEcg`.
+
+    `SenalEcgOrm` (no `SenalEcg`, ya tomado por el dominio -- mismo motivo
+    que `CorridaOrm`/`DocumentoCorridaOrm`). PK = FK contra `estudio`, 1:1
+    estricto: la señal nunca existe sin su estudio (migración `0013`,
+    `ON DELETE CASCADE`). `muestras_uv`/`mascara` ya llegan comprimidas
+    (zlib) desde `codec_senal.py` -- por eso `LargeBinary`, no una columna
+    tipada de array; `SET STORAGE EXTERNAL` (sólo Postgres, sólo en la
+    migración -- no hay forma de expresarlo en el tipo de columna de
+    SQLAlchemy) evita que TOAST intente comprimir de nuevo.
+    """
+
+    __tablename__ = "senal_ecg"
+
+    id_estudio: Mapped[int] = mapped_column(
+        Integer, ForeignKey("estudio.id_estudio", ondelete="CASCADE"), primary_key=True
+    )
+    muestras_uv: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mascara: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    frecuencia_hz: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
+    version_extractor: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Versión del ESQUEMA BINARIO de `salida/codec_senal.py`, distinta de
+    #: `version_extractor` (versión del algoritmo de reconstrucción) -- ver
+    #: el docstring de `codec_senal.py` y de la migración `0013`.
+    version_formato: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class ResultadoLaboratorio(Base):

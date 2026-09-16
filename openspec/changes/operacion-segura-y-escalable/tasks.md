@@ -71,5 +71,30 @@ Chain strategy: feature-branch-chain
 
 ## Phase 5: Verificación
 
-- [ ] 5.1 Ejecutar `pytest` y las integraciones PostgreSQL/cola; registrar cobertura de escenarios SDD.
-- [ ] 5.2 Auditar dataset, logs, manifiestos y diagnósticos contra PII; verificar separación de originales/cuarentena.
+- [x] 5.1 Ejecutar `pytest` y las integraciones PostgreSQL/cola; registrar cobertura de escenarios SDD.
+  - Cerrado en el cambio `senal-ecg-y-dataset-vinculado` (tarea 4.4), sesión de cierre del
+    15/09/2026: `uv run pytest -q` → **1021 passed, 1 skipped** (skip ambiental de symlink en
+    Windows, sin relación con el pipeline); `uv run pytest -q -m postgres` → **26 passed**
+    (integraciones PostgreSQL reales: migraciones, escrituras idempotentes/atómicas, exportación,
+    diagnóstico, CLI de punta a punta contra base efímera propia). No hay integración de cola real
+    (Celery/Redis) en la suite -- el diseño la reemplaza por `ProcessPoolExecutor` real
+    (`--procesos N`), ejercitado end-to-end en `tests/test_cli.py` y
+    `tests/scripts/test_procesar_carpeta.py` contra Postgres real. Cobertura de escenarios SDD:
+    los 3 tipos de documento, vinculación por ventana de 7/8 días, corridas durables, episodios,
+    cuarentena, portal/operación institucional, corpus sintético a escala (piloto 50, 1k, 10k),
+    señal de ECG, exportación derivada y verificador de PII -- ver `docs/pipeline.md` para el
+    detalle narrado de cada escalón.
+- [x] 5.2 Auditar dataset, logs, manifiestos y diagnósticos contra PII; verificar separación de originales/cuarentena.
+  - Cerrado en el cambio `senal-ecg-y-dataset-vinculado` (tarea 4.5), sesión de cierre del
+    15/09/2026. Dataset + manifiesto: `tests/pii/test_auditoria_exportacion_sin_pii.py` (nuevo) --
+    corpus sintético con PII conocida procesado de punta a punta, exportado y verificado con el
+    Aho-Corasick lineal sobre los 4 Parquet completos y `manifiesto.json`: **0 coincidencias**;
+    falsabilidad demostrada inyectando PII a propósito en una fila real exportada y confirmando
+    detección. Logs/bitácora: ya cubierto por `tests/observabilidad/test_bitacora_segura.py`
+    (incluye test de propiedad `test_property_pii_inyectada_nunca_aparece_en_la_salida`).
+    Registros/salida (previo a exportar): `tests/integracion/test_salida_sin_pii.py`.
+    Diagnósticos (`diagnostico.py`): sin superficie de PII de paciente (sólo estado de
+    migraciones/config/conexión) -- sin hallazgos, sin test nuevo necesario. Separación de
+    originales/cuarentena: cubierta por la suite existente de `ingesta/`/`cuarentena` (sin cambios
+    en esta sesión). Detalle completo en `docs/pipeline.md`, sección "Auditoría de PII sobre el
+    dataset exportado".

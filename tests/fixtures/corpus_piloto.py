@@ -11,6 +11,7 @@ from time import perf_counter
 
 from anonimizacion.dominio.modelos import ClavesPaciente, RegistroAnonimizado
 from anonimizacion.ingesta.fuente import FuenteLocal, HuellasEnMemoria
+from tests.pii.verificador_lineal import contar_coincidencias_pii
 from anonimizacion.pipeline.ejecutor import ItemLote
 from anonimizacion.trabajadores.tareas import construir_fabrica_ejecutor
 from anonimizacion.pipeline.resultado import ExitoDocumento
@@ -131,11 +132,6 @@ def _crear_entrada(
 def _resolver_claves(_identidad, _pepper, _resolutor, *, id_documento: str, etapa: str) -> ClavesPaciente:
     id_caso = id_documento.split("__", maxsplit=1)[0]
     return ClavesPaciente(id_paciente=f"pac-{id_caso}", id_alt_paciente=None, version_clave=1)
-
-
-def contar_coincidencias_pii(registros: list[object], valores_pii: list[str]) -> int:
-    serializados = tuple(repr(registro).casefold() for registro in registros)
-    return sum(valor.casefold() in registro for registro in serializados for valor in valores_pii)
 
 
 def ejecutar_corpus_sintetico(

@@ -18,6 +18,40 @@ def _documento(valor: str = "68 BPM", fuentes: tuple[ReferenciaCampo, ...] = ())
     return DocumentoParseado(TipoDocumento.ECG, 1, IdentidadCruda(nombre=SecretStr("Persona Sintetica")), date(2025, 6, 5), ContenidoEcg(valor, None, None, None, None), fuentes=fuentes)
 
 
+# --- ecg.senal: marca de completitud, nunca cuarentena (openspec `senal-ecg-y-dataset-vinculado`) --
+
+
+def test_reconciliar_agrega_ecg_senal_a_campos_no_extraidos_cuando_no_hay_senal() -> None:
+    """Requirement "Validación geométrica del layout con degradación
+    explícita": `senal=None` se agrega a la marca de completitud, sin
+    lanzar ninguna excepción -- nunca cuarentena por este motivo."""
+    resultado = ReconciliadorEcgMortara().reconciliar(_documento(), TextoExtraido(("68 BPM",)))
+
+    assert "ecg.senal" in resultado
+
+
+def test_reconciliar_no_agrega_ecg_senal_cuando_la_senal_es_valida() -> None:
+    import numpy as np
+
+    from anonimizacion.dominio.senal_ecg import SenalEcg
+
+    senal = SenalEcg(
+        muestras_uv=np.zeros((12, 5000), dtype=np.int16), mascara=np.zeros((12, 5000), dtype=bool)
+    )
+    documento = DocumentoParseado(
+        TipoDocumento.ECG,
+        1,
+        IdentidadCruda(nombre=SecretStr("Persona Sintetica")),
+        date(2025, 6, 5),
+        ContenidoEcg("68 BPM", None, None, None, None, senal=senal),
+        fuentes=(),
+    )
+
+    resultado = ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido(("68 BPM",)))
+
+    assert "ecg.senal" not in resultado
+
+
 def test_aprueba_medida_ecg_con_espacios_equivalentes() -> None:
     fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
     ReconciliadorEcgMortara().reconciliar(_documento(fuentes=(fuente,)), TextoExtraido(("Vent. rate  68   BPM",)))

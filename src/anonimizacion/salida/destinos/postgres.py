@@ -35,12 +35,14 @@ from sqlalchemy.orm import Session
 
 from anonimizacion.dominio.modelos import RegistroAnonimizado
 from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.salida.codec_senal import VERSION_FORMATO_ACTUAL, codificar_mascara, codificar_muestras
 from anonimizacion.salida.modelos_orm import (
     Episodio,
     Estudio,
     MedicionEco,
     MedicionEcg,
     ResultadoLaboratorio,
+    SenalEcgOrm,
     TextoSeccionEco,
     VinculoPaciente,
 )
@@ -370,6 +372,12 @@ class EscritorPostgres:
             # columna nullable de filas preexistentes sin esta marca.
             completo=registro.completo,
             campos_no_extraidos=list(registro.campos_no_extraidos),
+            # `registro.adicionales` ya viene saneado de PII de médico/técnico
+            # (`constructor_registro.py::_adicionales_sin_personal`). Se
+            # persiste acá, en `estudio`, para los 3 tipos de documento --
+            # antes sólo `_escribir_ecg` lo hacía (migración 0014, hallazgo
+            # de que eco/laboratorio lo descartaban en silencio).
+            adicionales=dict(registro.adicionales) or None,
         )
         sesion.add(estudio)
         sesion.flush()  # asigna id_estudio sin cerrar la transaccion
@@ -414,9 +422,26 @@ class EscritorPostgres:
                 qrs_duration=contenido.qrs_duration,
                 qt_qtc=contenido.qt_qtc,
                 ejes=contenido.ejes,
-                adicionales=dict(registro.adicionales) or None,
             )
         )
+        # `senal_ecg` (openspec `senal-ecg-y-dataset-vinculado`): MISMA
+        # sesión/transacción que `estudio` (`_insertar` ya la abrió con
+        # `sesion.begin()`) -- si la escritura de la señal fallara después
+        # de commitear el estudio, quedaría una fila huérfana sin señal,
+        # indistinguible de un ECG legítimamente sin trazos. `None` cuando
+        # el layout no validó: no se escribe fila, `ecg.senal` ya quedó en
+        # `campos_no_extraidos` (`reconciliacion/ecg_mortara.py`).
+        if contenido.senal is not None:
+            sesion.add(
+                SenalEcgOrm(
+                    id_estudio=id_estudio,
+                    muestras_uv=codificar_muestras(contenido.senal.muestras_uv),
+                    mascara=codificar_mascara(contenido.senal.mascara),
+                    frecuencia_hz=contenido.senal.frecuencia_hz,
+                    version_extractor=contenido.senal.version_extractor,
+                    version_formato=VERSION_FORMATO_ACTUAL,
+                )
+            )
 
     def _escribir_eco(self, registro: RegistroAnonimizado, sesion: Session, id_estudio: int) -> None:
         contenido: ContenidoEcoSalida = registro.contenido
@@ -441,6 +466,9 @@ class EscritorPostgres:
                 id_medico_informante=contenido.id_medico_informante,
                 id_matricula_informante=contenido.id_matricula_informante,
                 unidades=unidades or None,
+                # `medicion_eco.adicionales`: medidas del CUERPO sin pivote
+                # (`extras`, arriba) -- distinto de `estudio.adicionales`
+                # (campos del HEADER, seteado en `_insertar`).
                 adicionales=extras or None,
                 **columnas_ancha,
             )

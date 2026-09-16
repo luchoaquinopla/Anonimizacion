@@ -19,6 +19,7 @@ REFERENCIAS_PERMITIDAS: dict[str, frozenset[str]] = {
     "ecg.qrs_duration": frozenset({"ecg.qrs_duration"}),
     "ecg.qt_qtc": frozenset({"ecg.qt_qtc"}),
     "ecg.ejes": frozenset({"ecg.ejes"}),
+    "ecg.senal": frozenset({"ecg.senal"}),
     "laboratorio.nombre": frozenset({"laboratorio.nombre"}),
     "laboratorio.dni": frozenset({"laboratorio.dni"}),
     "laboratorio.fecha_estudio": frozenset({"laboratorio.fecha_estudio"}),

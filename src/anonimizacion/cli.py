@@ -48,6 +48,8 @@ from anonimizacion.diagnostico import Hallazgo, diagnosticar
 from anonimizacion.dominio.errores import ErrorParseo
 from anonimizacion.esqueleto import Esqueleto, FixtureParseable, generar_esqueleto, generar_fixture_parseable
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
+from anonimizacion.salida.destinos.postgres import construir_engine_postgres
+from anonimizacion.salida.exportacion import TAMANO_PAGINA_DEFECTO, exportar_dataset
 
 _RAIZ_REPO = Path(__file__).resolve().parents[2]
 
@@ -138,6 +140,19 @@ def _construir_parser() -> argparse.ArgumentParser:
             "layout. 'parseable': valores sintéticos plausibles (fechas válidas y coherentes, "
             "nombres/números con la misma forma) que un parser puede leer de punta a punta."
         ),
+    )
+
+    p_exportar = subparsers.add_parser(
+        "exportar",
+        help="Exporta el dataset vinculado (Parquet + manifiesto) desde PostgreSQL, sin mutar la base.",
+    )
+    _agregar_argumentos_comunes(p_exportar)
+    p_exportar.add_argument("--salida", type=Path, required=True, help="carpeta donde escribir el dataset exportado")
+    p_exportar.add_argument(
+        "--tamano-pagina",
+        type=int,
+        default=TAMANO_PAGINA_DEFECTO,
+        help=f"episodios por página de streaming (default: {TAMANO_PAGINA_DEFECTO})",
     )
 
     p_servir = subparsers.add_parser("servir", help="Levanta el panel de operación.")
@@ -237,6 +252,31 @@ def _comando_esqueleto(args: argparse.Namespace) -> int:
     return 0
 
 
+def _comando_exportar(args: argparse.Namespace) -> int:
+    """Exporta el dataset vinculado. Sin `diagnosticar` de por medio: no
+    procesa PDFs ni requiere `--entrada` -- sólo lee `db_url`, ya validada
+    implícitamente por `exportar_dataset` (falla con un error de conexión
+    normal de SQLAlchemy si la URL no sirve)."""
+    config = _cargar_config_o_none(args.config)
+    if config is None:
+        return 1
+    db_url = _resolver(args.db_url, config.db_url)
+
+    engine = construir_engine_postgres(str(db_url))
+    try:
+        resumen = exportar_dataset(engine, args.salida, tamano_pagina=args.tamano_pagina)
+    finally:
+        engine.dispose()
+
+    print(
+        f"Exportación completa en '{args.salida}': "
+        f"{resumen.episodios} episodios, {resumen.ecg} ECG, "
+        f"{resumen.laboratorio} resultados de laboratorio, {resumen.eco} eco.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _comando_servir(args: argparse.Namespace) -> int:
     config = _cargar_config_o_none(args.config)
     if config is None:
@@ -285,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         return _comando_procesar(args)
     if args.comando == "esqueleto":
         return _comando_esqueleto(args)
+    if args.comando == "exportar":
+        return _comando_exportar(args)
     if args.comando == "servir":
         return _comando_servir(args)
 
