@@ -145,6 +145,39 @@ def test_poda_no_cambia_el_ast_de_ningun_modulo_tocado(
     )
 
 
+def _crear_repo_git(raiz: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=raiz, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t.co", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "vacio"], cwd=raiz, check=True)
+
+
+def _commit_todo(raiz: Path, mensaje: str) -> str:
+    subprocess.run(["git", "add", "-A"], cwd=raiz, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t.co", "-c", "user.name=t", "commit", "-q", "-m", mensaje], cwd=raiz, check=True)
+    resultado = subprocess.run(["git", "rev-parse", "HEAD"], cwd=raiz, capture_output=True, text=True, check=True)
+    return resultado.stdout.strip()
+
+
+def test_detecta_archivo_py_renombrado_como_violacion(tmp_path: Path) -> None:
+    """RED (corrección 1): con --diff-filter=M, `git mv archivo.py otro.py` + editar
+    código pasaba colado -- el archivo renombrado nunca aparecía como 'modificado', así
+    que su AST nunca se comparaba contra nada."""
+    raiz = tmp_path
+    _crear_repo_git(raiz)
+    (raiz / "src").mkdir()
+    (raiz / "src" / "modulo.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    base = _commit_todo(raiz, "base")
+
+    subprocess.run(["git", "mv", "src/modulo.py", "src/otro.py"], cwd=raiz, check=True)
+    (raiz / "src" / "otro.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+
+    resultado = verificar_compuerta(base, raiz_repo=raiz)
+    rutas_violadas = {ruta for _, ruta in resultado.violaciones_estructurales}
+    assert rutas_violadas & {"src/modulo.py", "src/otro.py"}, (
+        "un renombre + edicion de un .py debe reportarse como violacion estructural, "
+        f"no colarse como 'sin cambios' -- violaciones vistas: {resultado.violaciones_estructurales}"
+    )
+
+
 def test_normalizar_ignora_docstrings_pero_no_codigo() -> None:
     """Control unitario de la propia compuerta, sin depender de git ni de una referencia."""
     solo_docstring_distinto = (
