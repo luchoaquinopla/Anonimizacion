@@ -9,7 +9,6 @@ este archivo tiene que sobrevivir intacto a esa entrega -- `design.md`, D1).
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -86,7 +85,6 @@ def test_procesar_sin_banderas_resuelve_los_defaults_de_configuracion(monkeypatc
 
     monkeypatch.setattr(cli, "diagnosticar", _diagnosticar_ok)
     monkeypatch.setattr(cli, "_cargar_script", lambda nombre: _ModuloFalso())
-    monkeypatch.chdir(Path("/tmp") if Path("/tmp").exists() else Path.cwd())
     # Fuerza "no hay anonimizacion.toml en el cwd" sin depender del directorio real.
     monkeypatch.setattr(cli, "_cargar_config_o_none", lambda ruta: ConfiguracionOperador())
 
