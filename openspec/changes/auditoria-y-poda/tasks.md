@@ -126,8 +126,38 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
       `uv run pytest -q -m postgres` → 28 passed (sin cambios respecto a E0, ninguna prueba
       nueva de esta entrega toca Postgres real); `tests/caracterizacion/` → 17 passed sin
       modificarse (`git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío);
-      `ruff check .` → All checks passed. Tamaño real:
-      `git diff feat/auditoria-y-poda --numstat` → 274 líneas insertadas, 32 borradas.
+      `ruff check .` → All checks passed. Tamaño real (a la fecha de esta verificación, antes
+      de 1.9/1.10): `git diff feat/auditoria-y-poda --numstat` → 274 líneas insertadas, 32
+      borradas.
+- [x] 1.9 RED — 4to defecto de la misma clase, encontrado en revisión adversarial y verificado
+      por el orquestador (fuera del alcance original de `tasks.md`, incorporado a esta entrega
+      porque `proposal.md` excluyó `exportacion.py` sólo para lógica NUEVA por tipo, no para
+      este patrón de despacho): `salida/exportacion.py::_procesar_pagina:359-370` despachaba
+      por `if/elif/else` -- cualquier `tipo_documento` que no fuera "ecg"/"laboratorio" caía en
+      el `else` mudo y se exportaba como fila de `eco.parquet`, con `mediciones_eco.get()`
+      devolviendo `None` -- más grave que en `postgres.py`: contamina en silencio el DATASET
+      que consume el modelo, no una tabla intermedia. `tests/salida/test_exportacion.py`: 4to
+      tipo simulado (`_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA.value`, mismo mecanismo
+      `str, Enum` ya validado -- acá basta el `.value` porque `Estudio.tipo_documento` es
+      `String`, no un enum de SQLAlchemy). RED confirmado en commit `78f29dc` contra
+      `exportacion.py` sin modificar: `Failed: DID NOT RAISE Exception` (la fila se exportó
+      silenciosamente a `eco.parquet`).
+- [x] 1.10 GREEN — commit `61deb90`: `_PROCESADORES_POR_TIPO` (dict `TipoDocumento.value ->
+      función`) unifica whitelist y despacho, mismo patrón que `postgres.py`; tipo sin entrada
+      levanta `ValueError` explícito. Se compara contra `TipoDocumento.X.value` (fuente única
+      del vocabulario, `dominio/tipos_documento.py`), no contra literales sueltos como antes
+      ("ecg"/"laboratorio"). `tiene_tipo`/columnas `tiene_*` conservan sus claves cortas
+      ("eco", no "ecocardiograma") vía `_CLAVE_TIENE_TIPO_POR_TIPO` -- son nombres de columna
+      Parquet ya publicados (`ESQUEMA_EPISODIOS`), no vocabulario a unificar en esta entrega
+      (eso es E2). Verificado sin regresión: `tests/salida/test_esquema_arrow_de_exportacion.py`
+      y `tests/pii/test_auditoria_exportacion_sin_pii.py` siguen en verde sin modificarse.
+      Tamaño final real (incluye 1.9/1.10): `git diff feat/auditoria-y-poda --numstat` → 443
+      líneas insertadas, 62 borradas, 9 archivos. `uv run pytest -q -m "not postgres"` → 1027
+      passed, 1 skipped (mismo symlink preexistente), 1 failed (mismo
+      `test_despachar_en_paralelo_..._distintos`, confirmado ES el mismo fallo sensible a la
+      carga, no uno nuevo); `-m postgres` → 28 passed (sin cambios); `-m caracterizacion` → 17
+      passed, `git diff feat/auditoria-y-poda --stat -- tests/caracterizacion/` vacío; `ruff
+      check .` → All checks passed.
 
 ## Fase 2 — Entrega 2: vocabulario único de etapas (PR2)
 
