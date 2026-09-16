@@ -12,15 +12,24 @@ def _matriz(forma: tuple[int, int] = (12, 5000), dtype=np.int16) -> np.ndarray:
     return np.zeros(forma, dtype=dtype)
 
 
-def test_senal_ecg_valida_construye_con_defaults() -> None:
-    senal = SenalEcg(muestras_uv=_matriz(), mascara=_matriz(dtype=bool))
+def test_senal_ecg_valida_construye_con_frecuencia_default() -> None:
+    senal = SenalEcg(muestras_uv=_matriz(), mascara=_matriz(dtype=bool), version_extractor=2)
 
     assert senal.frecuencia_hz == 500
-    assert senal.version_extractor == 1
+    assert senal.version_extractor == 2
+
+
+def test_senal_ecg_version_extractor_es_obligatorio() -> None:
+    """Sin default (`correccion-orientacion-senal-ecg`): la versión 1 del
+    algoritmo quedaba con la orientación del tiempo invertida -- un default
+    silencioso podría colar una señal sin declarar qué algoritmo la
+    produjo."""
+    with pytest.raises(TypeError):
+        SenalEcg(muestras_uv=_matriz(), mascara=_matriz(dtype=bool))
 
 
 def test_senal_ecg_repr_nunca_vuelca_las_muestras() -> None:
-    senal = SenalEcg(muestras_uv=_matriz(), mascara=_matriz(dtype=bool))
+    senal = SenalEcg(muestras_uv=_matriz(), mascara=_matriz(dtype=bool), version_extractor=2)
 
     assert repr(senal) == "SenalEcg(12x5000@500Hz)"
 
@@ -36,4 +45,4 @@ def test_senal_ecg_repr_nunca_vuelca_las_muestras() -> None:
 )
 def test_senal_ecg_rechaza_forma_o_dtype_invalido(muestras_uv, mascara) -> None:
     with pytest.raises(ValueError):
-        SenalEcg(muestras_uv=muestras_uv, mascara=mascara)
+        SenalEcg(muestras_uv=muestras_uv, mascara=mascara, version_extractor=2)

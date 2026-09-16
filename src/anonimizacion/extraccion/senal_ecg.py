@@ -8,13 +8,15 @@ incompleto (`reconciliacion/ecg_mortara.py` agrega `ecg.senal` a
 `campos_no_extraidos`), nunca una señal parcial o dudosa.
 
 Geometría esperada (17 trazos negros, medida contra el ECG real): 12
-derivaciones de ~1238 puntos en una grilla de 4 columnas (ventana temporal,
-por Y de inicio: 0/2,5/5/7,5 s) x 3 filas (banda de amplitud, por X
-promedio) -- orden `ORDEN_DERIVACIONES`; 1 tira de ritmo V1 de ~5000 puntos
-(los 10 s completos, remplaza el segmento de V1 en la grilla); 4 pulsos de
+derivaciones de ~1238 puntos en una grilla de 4 columnas (ventana temporal
+de 2,5 s cada una, agrupadas por centroide de Y y ordenadas por distancia
+real a los pulsos de calibración -- ver más abajo, "Dirección del
+tiempo") x 3 filas (banda de amplitud, por X promedio) -- orden
+`ORDEN_DERIVACIONES`; 1 tira de ritmo V1 de ~5000 puntos (los 10 s
+completos, remplaza el segmento de V1 en la grilla); 4 pulsos de
 calibración de ~60 puntos, uno por banda de amplitud (las 3 filas de la
-grilla + la propia banda de la tira), medidos justo después de la última
-columna.
+grilla + la propia banda de la tira), medidos en el extremo de Y que marca
+el INICIO del registro.
 
 Signo y línea base (hallazgo contra el ECG real, no un supuesto de texto):
 cada pulso es un cuadrado pie -> meseta -> pie; +1 mV se mide, en el PDF

@@ -212,7 +212,7 @@ def _senal_conocida() -> SenalEcg:
     muestras[0, 0] = 1234
     mascara = np.zeros((12, 5000), dtype=bool)
     mascara[0, :] = True
-    return SenalEcg(muestras_uv=muestras, mascara=mascara)
+    return SenalEcg(muestras_uv=muestras, mascara=mascara, version_extractor=2)
 
 
 def _registro_ecg_con_senal(
@@ -240,7 +240,7 @@ def test_escribir_registro_ecg_con_senal_valida_crea_fila_en_senal_ecg(escritor:
     (fila,) = _leer_todas(motor, SenalEcgOrm)
     assert fila.id_estudio == estudio.id_estudio
     assert fila.frecuencia_hz == 500
-    assert fila.version_extractor == 1
+    assert fila.version_extractor == 2
     assert fila.version_formato == destinos_postgres.VERSION_FORMATO_ACTUAL
     assert decodificar_muestras(fila.muestras_uv)[0, 0] == 1234
     assert bool(decodificar_mascara(fila.mascara)[0, 0]) is True
