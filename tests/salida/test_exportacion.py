@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 import sqlalchemy as sa
 
+from anonimizacion.salida.constructor_registro import _CLAVES_PERSONAL
 from anonimizacion.salida.exportacion import (
     NOMBRE_MANIFIESTO,
     exportar_dataset,
@@ -271,6 +272,94 @@ def test_adicionales_json_del_ecg_nunca_contiene_claves_personales(motor, tmp_pa
     adicionales = json.loads(adicionales_json)
     assert adicionales == {"edad": "45", "institucion": "Instituto de Cardiologia"}
     assert "medico_derivante" not in adicionales
+
+
+def test_estudio_adicionales_con_claves_personales_de_una_fila_vieja_nunca_llega_al_parquet(
+    motor, tmp_path
+) -> None:
+    """Defensa en profundidad (revisión adversarial, CRÍTICO): simula una fila
+    escrita por una versión ANTERIOR del código (o un parser futuro con una
+    regresión) que dejó pasar claves personales a `estudio.adicionales` --
+    `exportacion.py` debe filtrarlas de nuevo, sin confiar en que la escritura
+    ya lo garantizó. Se inserta a mano, sin pasar por `construir_registro`
+    (que sí filtra), justo para simular ese escenario."""
+    with sa.orm.Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-vieja", id_paciente="pid-vieja", fecha_ancla=date(2023, 5, 1)))
+        sesion.add(
+            Estudio(
+                id_episodio="ep-vieja",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2023, 5, 1),
+                precision_hora="ausente",
+                completo=True,
+                campos_no_extraidos=[],
+                adicionales={
+                    "edad": "60",
+                    "medico_derivante": "Dr. Fulano de Tal",
+                    "medico_solicitante": "Dra. Mengana",
+                    "tecnico": "Tec. Perengano",
+                },
+            )
+        )
+        sesion.flush()
+        sesion.add(
+            ResultadoLaboratorio(
+                id_episodio="ep-vieja",
+                id_estudio=sesion.query(Estudio).filter_by(id_episodio="ep-vieja").one().id_estudio,
+                analito="Colesterol",
+                seccion="QUIMICA CLINICA",
+                valor_num=180.0,
+            )
+        )
+
+    exportar_dataset(motor, tmp_path)
+
+    tabla = pq.read_table(tmp_path / "laboratorio.parquet")
+    (adicionales_json,) = tabla.column("adicionales_json").to_pylist()
+    adicionales = json.loads(adicionales_json) if adicionales_json else {}
+    assert adicionales == {"edad": "60"}
+    for clave in _CLAVES_PERSONAL:
+        assert clave not in adicionales
+
+
+def test_ninguna_clave_de_claves_personal_completa_sobrevive_al_filtro_de_exportacion(motor, tmp_path) -> None:
+    """Test de propiedad: recorre TODAS las claves de `_CLAVES_PERSONAL`
+    (no sólo las que arma un fixture puntual) -- si esa tupla crece en el
+    futuro, este test la sigue cubriendo entera sin necesidad de tocarlo."""
+    adicionales_con_todas_las_claves_personales = {clave: f"valor-personal-{clave}" for clave in _CLAVES_PERSONAL}
+    adicionales_con_todas_las_claves_personales["origen"] = "Guardia"  # oráculo positivo: debe sobrevivir
+
+    with sa.orm.Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-propiedad", id_paciente="pid-propiedad", fecha_ancla=date(2023, 6, 1)))
+        sesion.add(
+            Estudio(
+                id_episodio="ep-propiedad",
+                tipo_documento="laboratorio",
+                fecha_estudio=date(2023, 6, 1),
+                precision_hora="ausente",
+                completo=True,
+                campos_no_extraidos=[],
+                adicionales=adicionales_con_todas_las_claves_personales,
+            )
+        )
+        sesion.flush()
+        sesion.add(
+            ResultadoLaboratorio(
+                id_episodio="ep-propiedad",
+                id_estudio=sesion.query(Estudio).filter_by(id_episodio="ep-propiedad").one().id_estudio,
+                analito="Glucosa",
+                seccion="QUIMICA CLINICA",
+                valor_num=95.0,
+            )
+        )
+
+    exportar_dataset(motor, tmp_path)
+
+    tabla = pq.read_table(tmp_path / "laboratorio.parquet")
+    (adicionales_json,) = tabla.column("adicionales_json").to_pylist()
+    adicionales = json.loads(adicionales_json)
+    assert adicionales == {"origen": "Guardia"}
+    assert set(adicionales) & set(_CLAVES_PERSONAL) == set()
 
 
 # --- vinculación y completitud ----------------------------------------------

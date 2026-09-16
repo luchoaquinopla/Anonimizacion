@@ -14,13 +14,30 @@ El manifiesto se escribe último (spec: si el proceso se corta a mitad de
 camino, nunca queda un manifiesto declarando datos que no llegaron a
 persistirse en disco).
 
+`.tmp` huérfano de una corrida anterior que murió a mitad de camino: no
+requiere limpieza manual ni rompe la corrida siguiente. `pq.ParquetWriter`
+abre el archivo en modo escritura (equivalente a `wb`, verificado a mano):
+una corrida nueva sobre el mismo `<archivo>.parquet.tmp` lo trunca y lo
+reescribe desde cero, nunca falla por "archivo ya existe" ni mezcla filas
+de la corrida vieja con la nueva.
+
 Lista blanca de columnas (spec "Cero PII en la exportación" + decisión de
 comité): afuera `clave_documento`, `corrida_id`, cualquier `id_medico*` y el
 texto libre del eco (`texto_seccion_eco`). `adicionales_json` es JSON del
-campo `estudio.adicionales`, que YA llega saneado de nombres de médico/
-técnico (`constructor_registro.py::_adicionales_sin_personal`, migración
-0014) -- no se vuelve a filtrar acá, se confía en esa garantía ya probada
-contra Postgres real (`tests/salida/destinos/test_postgres.py`).
+campo `estudio.adicionales`, que YA debería llegar saneado de nombres de
+médico/técnico (`constructor_registro.py::_adicionales_sin_personal`,
+migración 0014, probado contra Postgres real en
+`tests/salida/destinos/test_postgres.py`) -- pero esta capa NO confía
+ciegamente en esa garantía de escritura: revisión adversarial (CRÍTICO)
+señaló que es una lista fija de 3 claves y la base puede tener filas
+escritas por una versión anterior del código (o un parser futuro que la
+rompa sin que nadie note la regresión hasta que ya está en el dataset
+exportado). Por eso `exportacion.py` vuelve a filtrar `adicionales_json` con
+`_CLAVES_PERSONAL` **importada** de `constructor_registro.py` (no una copia
+literal -- si esa tupla cambia, el filtro de acá cambia con ella sin
+intervención manual), como defensa en profundidad en el ÚLTIMO punto antes
+de que el dato salga del sistema (ver `_adicionales_sin_personal_exportacion`,
+`test_estudio_adicionales_con_claves_personales_de_una_fila_vieja_nunca_llega_al_parquet`).
 """
 
 from __future__ import annotations
@@ -38,6 +55,7 @@ from sqlalchemy.orm import Session
 
 from ..dominio.senal_ecg import FORMA as FORMA_SENAL
 from .codec_senal import VERSION_FORMATO_ACTUAL, decodificar_mascara, decodificar_muestras
+from .constructor_registro import _CLAVES_PERSONAL
 from .modelos_orm import Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio, SenalEcgOrm
 
 TAMANO_PAGINA_DEFECTO = 256
@@ -138,10 +156,20 @@ ESQUEMA_ECO = pa.schema(
 )
 
 
+def _adicionales_sin_personal_exportacion(adicionales: dict) -> dict:
+    """Defensa en profundidad (revisión adversarial, CRÍTICO): filtra de
+    nuevo por `_CLAVES_PERSONAL` (importada de `constructor_registro.py`,
+    NUNCA una copia literal) en el último punto antes de que el dato salga
+    del sistema -- no asume que `estudio.adicionales` ya llegó limpio, aunque
+    la escritura ya debería garantizarlo. Cubre filas viejas escritas por una
+    versión anterior del código o una regresión futura en el escritor."""
+    return {clave: valor for clave, valor in adicionales.items() if clave not in _CLAVES_PERSONAL}
+
+
 def _json_o_none(valor: dict | None) -> str | None:
     if not valor:
         return None
-    return json.dumps(valor, sort_keys=True, ensure_ascii=False)
+    return json.dumps(_adicionales_sin_personal_exportacion(valor), sort_keys=True, ensure_ascii=False)
 
 
 def _ids_episodio_paginados(sesion: Session, *, tamano_pagina: int = TAMANO_PAGINA_DEFECTO) -> Iterator[list[str]]:
