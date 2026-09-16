@@ -37,13 +37,7 @@ def crear_aplicacion_corridas(
     motor_lectura: Engine | None = None,
 ) -> AplicacionWsgi:
     """Crea el plano de control con una lista cerrada de raíces del servidor.
-
-    `motor_lectura` es opcional: sin él, el reporte de cuarentena y el embudo
-    responden 503 en vez de romper (spec `portal-de-corridas` delta, "el plano
-    de control se levanta sin base de lectura conectada"). El plano de
-    control tiene que poder levantarse aunque la base de lectura todavía no
-    esté conectada.
-    """
+    `motor_lectura` es opcional: sin él, cuarentena/embudo responden 503 en vez de romper."""
     raices = tuple(raiz.resolve() for raiz in raices_autorizadas)
 
     def aplicacion(entorno: dict[str, object], iniciar_respuesta: InicioRespuesta) -> Iterable[bytes]:
@@ -53,12 +47,8 @@ def crear_aplicacion_corridas(
             return _crear_corrida(entorno, iniciar_respuesta, raices, servicio)
         if metodo == "GET" and ruta == "/cuarentena":
             return _reporte_cuarentena(iniciar_respuesta, motor_lectura)
-        # Tiene que evaluarse ANTES de la rama genérica de abajo: un GET acá
-        # es un `/corridas/...` cualquiera, y `_consultar_corrida` rechaza
-        # cualquier identificador con `/` -- sin esta comprobación primero,
-        # `/corridas/{id}/embudo` cae en esa rama y da 404 (design.md, "Orden
-        # de despacho, o el 404 asegurado"). NO afecta a `/reintentar`
-        # (abajo): esa rama exige POST, y ésta exige GET.
+        # Debe evaluarse antes de la rama genérica: _consultar_corrida rechaza cualquier
+        # id con "/", así que /corridas/{id}/embudo caería en 404 si no se prioriza acá.
         if metodo == "GET" and ruta.startswith("/corridas/") and ruta.endswith("/embudo"):
             id_corrida = ruta.removeprefix("/corridas/").removesuffix("/embudo").rstrip("/")
             return _embudo_corrida(iniciar_respuesta, motor_lectura, id_corrida)
@@ -89,21 +79,13 @@ def _crear_corrida(
     ruta = Path(solicitud["ruta"]).resolve()
     if not any(_esta_dentro_de(ruta, raiz) for raiz in raices):
         return _responder(iniciar_respuesta, "403 Forbidden", {"codigo": "ruta_no_autorizada"})
-    # `CorridaEnCursoError` vive en `ingesta/lanzador_corrida.py` (revisión
-    # adversarial ronda 3: es el gate a nivel de BASE, no sólo del panel --
-    # `LanzadorCorrida.lanzar()` es quien la lanza de verdad). Import a nivel
-    # de módulo acá sería seguro (no hay ciclo con `ingesta`), pero se
-    # mantiene diferido por coherencia con el resto de los imports
-    # perezosos de este módulo (`_embudo_corrida`/`_panel_corrida` más abajo).
+    # Import diferido, coherente con el resto de imports perezosos de este módulo.
     from anonimizacion.ingesta.lanzador_corrida import CorridaEnCursoError
 
     try:
         return _responder(iniciar_respuesta, "202 Accepted", servicio.crear_corrida(str(ruta)))
     except CorridaEnCursoError as error:
-        # Decisión "dos corridas a la vez" (feature `despachador-desde-el-panel`):
-        # `409`, no un `202` que prometería un despacho que el gate acaba de
-        # rechazar -- el operador ve CUÁL corrida sigue activa, no sólo que
-        # algo salió mal.
+        # 409, no 202: el gate de "una corrida a la vez" vive a nivel de base.
         return _responder(
             iniciar_respuesta,
             "409 Conflict",
@@ -149,21 +131,8 @@ def _responder(
 def _reintentar_corrida(
     entorno: dict[str, object], iniciar_respuesta: InicioRespuesta, servicio: ServicioCorridas, id_corrida: str
 ) -> Iterable[bytes]:
-    """202 con el desglose reintentados/descartados (feature `reanudacion-de-corridas`).
-
-    Mismo chequeo de `Content-Type: application/json` que `_crear_corrida`
-    (revisión de seguridad, feature `acceso-al-panel`): sin esto, un
-    `<form>` sin una línea de JavaScript (Basic Auth cacheado por el
-    navegador, ver `autenticacion_panel.py`) podría disparar un reintento
-    real sin que ningún preflight CORS lo frene.
-
-    `CorridaEnCursoError`/`CorridaNoEncontradaError` viven en
-    `ingesta/lanzador_corrida.py` -- import diferido, misma razón que en
-    `_crear_corrida`. `NotImplementedError` se conserva por compatibilidad
-    con implementaciones de `ServicioCorridas` que todavía no reintenten de
-    verdad (ver `tests/web/test_rutas_corridas.py`, el doble que la sigue
-    lanzando a propósito).
-    """
+    """202 con el desglose reintentados/descartados. Mismo chequeo de Content-Type que
+    `_crear_corrida`: sin esto, un `<form>` sin JS podría disparar un reintento real."""
     if str(entorno.get("CONTENT_TYPE", "")).split(";", 1)[0] != "application/json":
         return _responder(iniciar_respuesta, "415 Unsupported Media Type", {"codigo": "tipo_de_contenido_no_admitido"})
 
@@ -203,12 +172,8 @@ def _embudo_corrida(
 def _panel_corrida(
     iniciar_respuesta: InicioRespuesta, motor_lectura: Engine | None, id_corrida: str
 ) -> Iterable[bytes]:
-    """Sirve la página del panel con el embudo ya calculado (design.md, "Las rutas").
-
-    Hereda la guarda de 9.11 (503 sin base de lectura) y reusa el mismo
-    payload que sirve `GET /corridas/{id}/embudo`: el primer pintado y cada
-    refresco posterior parten de la misma forma exacta.
-    """
+    """Sirve la página del panel, reusando el mismo payload que
+    `GET /corridas/{id}/embudo` para que el primer pintado y cada refresco coincidan."""
     if not id_corrida or "/" in id_corrida:
         return _responder(iniciar_respuesta, "404 Not Found", {"codigo": "ruta_no_encontrada"})
     if motor_lectura is None:

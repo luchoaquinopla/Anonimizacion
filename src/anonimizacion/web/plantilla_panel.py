@@ -1,59 +1,6 @@
-"""Renderiza el panel de operación como HTML, sin dependencias (Tramo 5).
-
-Mismo criterio de forma que `plantilla_reporte.py`: para un puñado de cifras
-titulares la forma correcta es fichas más tabla, no un gráfico -- siete
-etapas no justifican ejes. El embudo por etapa se dibuja como barras
-proporcionales en HTML/CSS puro dentro de la tabla, nunca con una biblioteca
-de gráficos.
-
-Mismo criterio de color: la paleta de ESTADO es la de `reporte_cuarentena.py`
-(fija, no temática) -- los mismos cuatro valores, sin agregar ninguno nuevo.
-En superficie clara, dos de sus pasos quedan por debajo de 3:1 de contraste a
-propósito; la mitigación obligatoria es que el color NUNCA viaja solo: cada
-estado lleva también símbolo (`aria-hidden="true"`, decorativo) y etiqueta en
-texto. El texto usa tokens de tinta, nunca el color del estado.
-
-La diferencia central con el reporte de cuarentena: ACÁ el `<script>` es un
-requisito, no un accidente. Una corrida dura horas; el operador no debería
-tener que recargar la página para ver el avance. El polling va **en línea**
-(cero `<script src>`, cero URLs absolutas) y escribe con **`textContent`**,
-nunca `innerHTML` -- así la página no puede convertirse en vector de
-inyección ni aunque un código de cuarentena llegara con marcado, sin
-necesidad de escapar del lado del cliente porque nada se interpreta como
-HTML. El primer pintado ya trae los números calculados por el servidor: la
-pantalla es útil antes de que corra un solo `fetch`, y sigue siendo legible
-si el JavaScript está deshabilitado.
-
-Se rotula por lo que la persona necesita entender, no por el nombre de la
-variable ni por el código interno (mismo criterio que `reporte_cuarentena.py`
-aplicó a los códigos de cuarentena, aplicado ACÁ TAMBIÉN, no sólo declarado):
-`residuo` es el nombre del campo en el JSON -- lo consumen programas --, pero
-en pantalla se llama "En proceso", con una nota que explica qué significa.
-Lo mismo para "Apartados": lleva una nota que dice que requieren revisión y
-linkea al reporte de cuarentena. El estado de la corrida (`procesando`,
-`completada_con_cuarentena`, ...) se traduce con `_ETIQUETA_ESTADO`, y los
-códigos de la columna "Motivos" del embudo reusan -- **no copian** --
-`codigos_cuarentena.EXPLICACION_POR_CODIGO`, la misma tabla que
-`reporte_cuarentena.py` ya usa para su detalle por documento: dos tablas
-iguales en dos módulos se desincronizan sin falta, y ahí tendríamos dos
-pantallas diciendo cosas distintas del mismo código de error. Un código o un
-estado sin traducción no se descarta ni rompe nada: se muestra crudo como
-último recurso (misma decisión que `reporte_cuarentena.py` tomó con
-`AccionRequerida.SIN_CLASIFICAR`) -- perder el dato es peor que mostrarlo
-feo.
-
-Un residuo negativo (design.md, Decisión 9) nunca se muestra como un cero:
-se dibuja como su propia ficha de descuadre, con símbolo, etiqueta y
-explicación -- el cierre visual del residuo con signo que calcula
-`embudo_corrida.py`. Las fichas "En proceso" y "Descuadre" son mutuamente
-excluyentes según `cierra`; la que no aplica queda **oculta con CSS**
-(`display: none`), no omitida del marcado -- decisión deliberada, no un
-descuido: ningún dato sensible viaja ahí (son conteos administrativos, ya
-derivados de tablas sin PII), y mantener el nodo listo en el DOM permite que
-el `<script>` alterne su visibilidad con un simple cambio de `style` más
-`textContent`, sin depender de `innerHTML` para crear elementos nuevos si un
-refresco posterior cambia de estado.
-"""
+"""Renderiza el panel de operación como HTML sin dependencias. El polling en línea
+escribe con `textContent`, nunca `innerHTML`: ningún código de cuarentena puede
+convertirse en vector de inyección."""
 
 from __future__ import annotations
 
@@ -75,11 +22,8 @@ _ETIQUETA_ETAPA: dict[str, str] = {
     "salida": "Salida",
 }
 
-# Los mismos cuatro valores de `reporte_cuarentena.PRESENTACION` -- no se
-# agrega ningún color nuevo. Se repiten acá (en vez de importarse) porque
-# esa paleta describe ACCIONES sobre cuarentena, y ésta describe la MARCHA
-# de una corrida: son dominios distintos que comparten la misma paleta fija
-# de estado, no el mismo vocabulario.
+# Mismos cuatro colores de reporte_cuarentena.PRESENTACION, repetidos (no importados):
+# describen MARCHA de una corrida, no acciones sobre cuarentena -- vocabulario distinto.
 _COLOR_NEUTRO = "#898781"  # SIN_CLASIFICAR
 _COLOR_ADVERTENCIA = "#fab219"  # PEDIR_MATERIAL
 _COLOR_CRITICO = "#d03b3b"  # REVISAR_A_MANO
@@ -92,10 +36,7 @@ _PRESENTACION_MARCHA: dict[str, tuple[str, str, str]] = {
     "descuadre": (_COLOR_CRITICO, "■", "Descuadre"),
 }
 
-#: `dominio.estados_corrida.EstadoCorrida` (más "desconocida", el fallback de
-#: `ServicioCorridasReal` cuando la corrida no tiene fila) traducido a texto
-#: llano -- el mismo criterio que la columna "Motivos": nada de snake_case
-#: crudo en la primera línea que lee el operador.
+#: `EstadoCorrida` (+ "desconocida") traducido a texto llano.
 _ETIQUETA_ESTADO: dict[str, str] = {
     "creada": "Creada",
     "inventariando": "Inventariando",
@@ -122,12 +63,8 @@ def _etiqueta_codigo(codigo: str) -> str:
 
 
 def _texto_motivos(codigos: Mapping[str, int]) -> str:
-    """"{cantidad} — {texto llano}" por código, nunca el código crudo salvo
-    que no haya traducción (ver `_etiqueta_codigo`). El texto humano final
-    se escapa en el llamador junto con el resto de la celda -- acá se arma
-    sin marcado propio para que el mismo string sirva tanto para el primer
-    pintado (celda de tabla) como para el refresco (`element.textContent`,
-    sin `innerHTML`)."""
+    """"{cantidad} — {texto llano}" por código, nunca el crudo salvo sin traducción.
+    Sin marcado propio: sirve igual para el primer pintado y para `textContent`."""
     if not codigos:
         return "—"
     return "; ".join(f"{cantidad} — {_etiqueta_codigo(str(codigo))}" for codigo, cantidad in codigos.items())
@@ -257,14 +194,8 @@ def _ficha_marcha(marcha: str) -> str:
 
 
 def _ficha_en_proceso(residuo: int, *, visible: bool) -> str:
-    """"En proceso", no "Residuo": ese es el nombre de la VARIABLE, no algo
-    que la persona que mira la pantalla pueda interpretar sola. El nombre
-    técnico sigue viviendo en el JSON (`residuo`), que consumen programas.
-
-    Mutuamente excluyente con `_ficha_descuadre` según `cierra` -- ver el
-    docstring del módulo sobre por qué la que no aplica queda oculta con CSS
-    en vez de omitida del marcado.
-    """
+    """"En proceso": nombre legible de `residuo` (nombre técnico del JSON).
+    Mutuamente excluyente con `_ficha_descuadre` según `cierra`, oculta con CSS."""
     estilo = "" if visible else ' style="display: none"'
     return f"""
     <article class="ficha" id="ficha-en-proceso"{estilo}>
@@ -278,12 +209,8 @@ def _ficha_en_proceso(residuo: int, *, visible: bool) -> str:
 
 
 def _ficha_descuadre(residuo: int, *, visible: bool) -> str:
-    """La ficha propia del descuadre (design.md, Decisión 9). Nunca un cero.
-
-    Mutuamente excluyente con `_ficha_en_proceso` según `cierra` -- ver el
-    docstring del módulo sobre por qué la que no aplica queda oculta con CSS
-    en vez de omitida del marcado.
-    """
+    """La ficha propia del descuadre. Nunca un cero. Mutuamente excluyente con
+    `_ficha_en_proceso` según `cierra`, oculta con CSS."""
     color, simbolo, _etiqueta = _PRESENTACION_MARCHA["descuadre"]
     cantidad = abs(residuo)
     estilo = "" if visible else ' style="display: none"'
@@ -301,15 +228,8 @@ def _ficha_descuadre(residuo: int, *, visible: bool) -> str:
 
 
 def _fila_etapa(etapa: Mapping[str, Any], max_apartados: int) -> str:
-    """La barra mide la PÉRDIDA relativa a la peor etapa, no `llegaron /
-    entraron`. Con una corrida a mitad de camino, `llegaron / entraron` da
-    prácticamente el mismo número (~la mitad) en las siete etapas: siete
-    barras casi idénticas no comunican nada, y sugieren que no hay pérdida
-    en ningún punto cuando sí la hay. La pregunta que la pantalla tiene que
-    responder es DÓNDE se caen los documentos -- eso varía por etapa, y esta
-    barra lo hace visible de un vistazo: la fila con más apartados es la
-    barra más larga.
-    """
+    """La barra mide la pérdida relativa a la peor etapa, no `llegaron/entraron`
+    (que daría siete barras casi idénticas y no mostraría dónde se caen los documentos)."""
     nombre = str(etapa["etapa"])
     etiqueta = _ETIQUETA_ETAPA.get(nombre, nombre)
     llegaron = int(etapa["llegaron"])
@@ -332,36 +252,9 @@ def _fila_etapa(etapa: Mapping[str, Any], max_apartados: int) -> str:
 
 
 def _json_para_script(valor: object) -> str:
-    """`json.dumps` + escapar las secuencias que rompen el contexto HTML
-    `<script>...</script>` (NO el contexto de un literal de JavaScript, que
-    `json.dumps` ya cubre bien: comillas, barras invertidas, unicode).
-
-    Lo que SÍ cubre este escape, y por qué hace falta cada uno:
-
-    - `</` -> `<\\/`: un valor con `</script>` cerraría la etiqueta real en
-      medio del literal, y el resto del `<script>` legítimo quedaría
-      interpretado como HTML plano.
-    - `<!--` -> lo mismo escapado: dentro de un elemento `<script>`, el
-      tokenizador de HTML5 entra en el estado "script data escaped" al ver
-      `<!--`. Si no aparece un `-->` de cierre, el `</script>` REAL de esta
-      plantilla deja de interpretarse como cierre de etiqueta -- el resto
-      del documento se trata como texto de script. Se escapa también `-->`
-      por simetría, aunque sin el `<!--` de apertura no alcanza sola para
-      producir el problema.
-
-    Lo que este escape NO pretende cubrir, porque no rompe el contexto
-    `<script>` (aunque suene parecido): `<script` sin cierre, o `]]>`
-    (relevante para XML/CDATA, no para HTML). Ninguno de los dos altera
-    cómo el tokenizador de HTML5 interpreta el resto del documento.
-
-    Hoy `corrida_id` siempre es un `uuid4()` (`LanzadorCorrida.lanzar`) y la
-    ruta rechaza cualquier identificador con `/` antes de llegar al render
-    (`rutas_corridas._panel_corrida`), así que ninguna de estas secuencias
-    aparece en la práctica -- pero esa es una protección INCIDENTAL de otro
-    módulo, no defensa propia de esta plantilla. Si el día de mañana se
-    reusa esta función desde una ruta sin ese filtro, la plantilla se
-    defiende sola.
-    """
+    """`json.dumps` + escapa `</`, `<!--` y `-->`: secuencias que rompen el contexto
+    HTML `<script>...</script>` (no el de JavaScript, que `json.dumps` ya cubre).
+    Defensa propia de esta plantilla, no depende de que el llamador filtre el valor."""
     texto = json.dumps(valor)
     texto = texto.replace("</", "<\\/")
     texto = texto.replace("<!--", "<\\!--")
@@ -370,20 +263,8 @@ def _json_para_script(valor: object) -> str:
 
 
 def _script_polling(corrida_id: str) -> str:
-    """El polling en línea (Requisito 7 de la spec, design.md "El punto de entrada").
-
-    Los valores dinámicos se embeben con `_json_para_script` -- no con
-    `escape()` -- porque el contexto acá es un literal de JavaScript dentro
-    de un elemento `<script>` HTML, no un atributo HTML; `json.dumps` cubre
-    el escape de JavaScript (comillas, barras invertidas), y el `</` extra
-    cubre el escape del contexto `<script>` que `json.dumps` no conoce (ver
-    `_json_para_script`).
-
-    Refresco vía `fetch`/`setInterval`, todo relativo (`/corridas/...`): cero
-    `http://`, cero `https://`, cero `<script src>`. Cada valor dinámico se
-    escribe con `element.textContent`, nunca con `innerHTML` -- el motivo
-    exacto por el que no hace falta escapar nada del lado del cliente.
-    """
+    """El polling en línea. Valores dinámicos embebidos con `_json_para_script`, nunca
+    `escape()` (el contexto es JS dentro de `<script>`, no un atributo HTML)."""
     corrida_id_js = _json_para_script(corrida_id)
     explicacion_js = _json_para_script(_EXPLICACION_DESCUADRE)
     etiquetas_estado_js = _json_para_script(_ETIQUETA_ESTADO)
@@ -511,14 +392,8 @@ def _script_polling(corrida_id: str) -> str:
 
 
 def renderizar_panel(payload: Mapping[str, Any]) -> str:
-    """Devuelve la página completa a partir del contrato JSON del embudo.
-
-    `payload` tiene exactamente la forma que sirve `GET
-    /corridas/{id}/embudo` (`servicio_corridas.construir_payload_embudo`):
-    reusar la misma forma para el primer pintado y para cada refresco es lo
-    que garantiza que la página sea útil ANTES de que corra un solo `fetch`
-    (design.md, "La pantalla y su polling").
-    """
+    """Devuelve la página completa a partir del contrato JSON del embudo -- misma
+    forma que sirve `GET /corridas/{id}/embudo`, para el primer pintado y el refresco."""
     corrida_id = str(payload["corrida_id"])
     etapas: Sequence[Mapping[str, Any]] = payload.get("etapas") or []
     cierra = bool(payload["cierra"])
@@ -527,19 +402,14 @@ def renderizar_panel(payload: Mapping[str, Any]) -> str:
     estimacion = payload.get("estimacion") or {}
     texto_estimacion = _texto_estimacion(estimacion)
 
-    # "En proceso" (`cierra=true`) y "Descuadre" (`cierra=false`) son
-    # mutuamente excluyentes: la que no aplica queda oculta con CSS, no
-    # omitida -- ver el docstring del módulo.
+    # Mutuamente excluyentes por `cierra`; la que no aplica queda oculta con CSS.
     ficha_en_proceso = _ficha_en_proceso(residuo, visible=cierra)
     ficha_descuadre = _ficha_descuadre(residuo, visible=not cierra)
 
     max_apartados = max((int(etapa["apartados"]) for etapa in etapas), default=0)
     filas_etapas = "\n".join(_fila_etapa(etapa, max_apartados) for etapa in etapas)
 
-    # El throughput es una tasa OBSERVADA, no una promesa de tiempo restante:
-    # mostrarla junto a "no se puede estimar" (situación "descuadre")
-    # contradice ese mensaje. Se oculta la línea entera mientras dure el
-    # descuadre, y el `<script>` hace lo mismo en cada refresco.
+    # Tasa observada, no promesa de tiempo restante: se oculta con "descuadre".
     situacion = estimacion.get("situacion")
     estilo_throughput = "" if situacion != "descuadre" else ' style="display: none"'
 

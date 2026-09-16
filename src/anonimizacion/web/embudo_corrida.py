@@ -1,27 +1,7 @@
-"""Modelo de lectura del embudo de una corrida: cuenta lo que el pipeline ya escribió.
-
-El panel no mide -- lee `documento_corrida` (el denominador), `estudio` (los
-publicados) y `cuarentena` (los apartados) con tres consultas agregadas
-(design.md, "Consultas del panel"). Ningún `count(*)` trae una fila entera al
-proceso, y ninguna de las tres proyecta `ruta_autorizada` ni `huella_contenido`
-(Requisito 6 de la spec: el panel no expone PII).
-
-Este módulo NO renderiza: la presentación vive en `plantilla_panel.py`
-(Tramo 5), igual que `reporte_cuarentena.py`/`plantilla_reporte.py` ya separan
-datos de HTML.
-
-La línea que no se cruza (design.md, Decisión 5): este módulo **nunca** lee
-`documento_corrida.estado`. El vocabulario de estados modelado (`CREADA`,
-`INVENTARIANDO`, ...) no describe el recorrido real del pipeline; leerlo
-mostraría 100% "inventariado" para siempre. `calcular_embudo` recibe conteos
-ya agregados y no ve ninguna fila cruda, así que no hay ninguna columna
-`estado` que consultar por accidente.
-
-El residuo va SIEMPRE con signo (design.md, Decisión 9): `residuo = entraron
-- (publicados + apartados)`, `cierra = residuo >= 0`. Ningún `max(0, ...)` en
-ningún punto del cálculo -- un residuo negativo es la única señal disponible
-de que un documento quedó contado en más de un destino.
-"""
+"""Modelo de lectura del embudo de una corrida: cuenta lo que el pipeline ya escribió,
+sin exponer PII (Requisito 6) ni leer `documento_corrida.estado` (no renderiza, eso vive
+en `plantilla_panel.py`). El residuo va siempre con signo -- nunca `max(0, ...)` -- porque
+un residuo negativo es la única señal de que un documento quedó contado dos veces."""
 
 from __future__ import annotations
 
@@ -39,29 +19,10 @@ from sqlalchemy.orm import Session
 from anonimizacion.pipeline.etapas import Etapa
 from anonimizacion.salida.modelos_orm import Cuarentena, DocumentoCorridaOrm, Estudio
 
-#: Orden de EJECUCIÓN real (design.md, Decisión 8/D4) -- NO el orden de
-#: declaración de `Etapa` (`pipeline/etapas.py`), que declara `COORDINACION`
-#: entre `RECONCILIACION` y `DETECCION_PII`. El recorrido real de un
-#: documento termina en pseudonimización y recién después corre
-#: `_coordinar_resueltos`. `DETECCION` y `DETECCION_PII` quedan fuera:
-#: ninguna de las dos produce cuarentena (Requisito 2 de la spec
-#: `vocabulario-etapas-pipeline`) -- ver la lista de exclusión más abajo.
-#: `DESPACHO` (openspec `paralelismo-de-procesamiento` PR 3, hallazgo de
-#: revisión adversarial): un documento ya inventariado cuyo proceso hijo
-#: murió antes de llegar a EXTRACCION. Va justo después de `INGESTA` porque
-#: es el único punto del recorrido donde ese documento pudo haberse
-#: detenido -- nunca llegó a ninguna etapa posterior del pipeline. Antes de
-#: agregarla, `despacho_paralelo.py` apartaba con un `etapa` fuera de este
-#: vocabulario fijo: `calcular_embudo` sí lo sumaba al total global
-#: (`apartados`), pero el desglose por etapa de más abajo lo saltaba
-#: silenciosamente -- el `for etapa in ETAPAS_EMBUDO` nunca lo visitaba, así
-#: que `llegaron` nunca restaba esos apartados en ningún punto del recorrido
-#: y el desglose quedaba inflado a partir de esa etapa en adelante, aunque
-#: el total (`residuo`/`cierra`) siguiera cerrando bien.
-#:
-#: Deliberadamente explícito y no derivado del orden de declaración de
-#: `Etapa`: agregar un miembro al enum unificado no debe reordenar esta
-#: vista sin una decisión editada acá mismo (spec Requisito 4, Escenario 1).
+#: Orden de EJECUCIÓN real (design.md D4), no el de declaración de `Etapa` -- deliberadamente
+#: explícito para que agregar un miembro al enum no reordene esta vista sin decisión editada
+#: acá. `DESPACHO` va justo después de `INGESTA`: es el único punto donde un documento ya
+#: inventariado pudo detenerse sin llegar a ninguna etapa posterior.
 ORDEN_EMBUDO: tuple[Etapa, ...] = (
     Etapa.INGESTA,
     Etapa.DESPACHO,
@@ -73,10 +34,7 @@ ORDEN_EMBUDO: tuple[Etapa, ...] = (
     Etapa.SALIDA,
 )
 
-#: Miembros del enum unificado que a propósito no aparecen en `ORDEN_EMBUDO`,
-#: con su motivo (spec Requisito 4, "cobertura del desglose"). Ninguna de las
-#: dos produce cuarentena, así que sumarlas al desglose sólo agregaría filas
-#: con `llegaron = apartados = 0`.
+#: Excluidas a propósito de `ORDEN_EMBUDO`: ninguna produce cuarentena.
 ETAPAS_EXCLUIDAS_DEL_EMBUDO: tuple[Etapa, ...] = (
     Etapa.DETECCION,
     Etapa.DETECCION_PII,
@@ -100,10 +58,7 @@ def _ahora_utc() -> datetime:
 @dataclass(frozen=True)
 class PerdidaEtapa:
     """Cuántos documentos llegaron a esta etapa y cuántos se apartaron acá.
-
-    `codigos` es la apertura por motivo (design.md, consulta 3): abierta a
-    propósito, sin PII -- son los mismos códigos de `CodigoErrorDocumento`.
-    """
+    `codigos` abre por motivo, sin PII (mismos códigos de `CodigoErrorDocumento`)."""
 
     etapa: str
     llegaron: int
@@ -135,12 +90,8 @@ class Embudo:
     etapas: tuple[PerdidaEtapa, ...]
     throughput_por_hora: Mapping[str, float]
     estimacion: Estimacion
-    # Requisito "que un campo nuevo no rompa el parseo, sino que sea un
-    # aviso": de los `publicados`, cuántos llevan la marca de completitud en
-    # `False` (`salida/modelos_orm.py::Estudio.completo`) y por qué `id_campo`
-    # (vocabulario cerrado, nunca texto libre -- mismo criterio de
-    # `codigos` en `PerdidaEtapa`). Default `0`/`{}`: ningún llamador
-    # existente que todavía no pasa estos agregados queda roto.
+    # De los publicados, cuántos quedaron incompletos y por qué id_campo (vocabulario
+    # cerrado). Default 0/{}: no rompe llamadores existentes que no pasan estos agregados.
     publicados_incompletos: int = 0
     campos_no_extraidos: Mapping[str, int] = field(default_factory=dict)
 
@@ -163,13 +114,8 @@ def _estimar(
     primero: datetime | None,
     ultimo: datetime | None,
 ) -> tuple[Estimacion, dict[str, float]]:
-    """Las dos cotas del rango de tiempo restante y sus seis bordes (design.md).
-
-    Orden de las comprobaciones, de la más a la menos severa -- design.md no
-    fija una prioridad explícita entre "restante < 0" y "ventana vacía", así
-    que se resuelve a favor de reportar primero lo más grave: un descuadre
-    importa más que la ausencia de avance reciente.
-    """
+    """Las dos cotas del rango de tiempo restante (design.md). Orden de mayor a menor
+    severidad: un descuadre importa más que la ausencia de avance reciente."""
     throughput = {"optimista": 0.0, "pesimista": 0.0}
 
     if entraron == 0:
@@ -195,9 +141,7 @@ def _estimar(
     if terminados_en_ventana == 0:
         return Estimacion(situacion="sin_avance"), throughput
     if tasa_optimista_seg <= 0 or tasa_pesimista_seg <= 0:
-        # No debería alcanzarse con los guardas de arriba (terminados >= 200 y
-        # ventana no vacía ya implican tasas positivas), pero evita un
-        # ZeroDivisionError si algún llamador futuro los rodea.
+        # Guarda contra ZeroDivisionError si algún llamador futuro rodea los checks de arriba.
         return Estimacion(situacion="sin_avance"), throughput
 
     return (
@@ -223,24 +167,9 @@ def calcular_embudo(
     publicados_incompletos: int = 0,
     campos_no_extraidos: Mapping[str, int] = MappingProxyType({}),
 ) -> Embudo:
-    """La aritmética pura del embudo -- sin motor, sin I/O (design.md, Decisión 8 y 9).
-
-    `perdidas` es `{etapa: {codigo: cantidad}}`, ya agregado -- la forma que
-    entrega la consulta (3) del diseño agrupada por `etapa, codigo`.
-    `terminados_en_ventana`/`primero`/`ultimo` ya excluyen
-    `artefacto_sobretamano` (Requisito 4): ese documento nunca se leyó, así
-    que no participa del throughput ni de la serie de tiempo.
-
-    `publicados_incompletos`/`campos_no_extraidos` (requisito "que un campo
-    nuevo no rompa el parseo, sino que sea un aviso"): agregados ya
-    calculados por `construir_embudo` sobre `estudio.completo`/
-    `.campos_no_extraidos` -- esta función no los deriva, sólo los expone.
-    NO participan de `apartados`/`residuo`/`cierra`: un publicado incompleto
-    sigue siendo un publicado (`CAMPO_NO_EXTRAIDO` nunca llega a
-    `cuarentena`), así que no puede restar de `llegaron` en ninguna etapa ni
-    aparecer en `perdidas` -- ver el comentario de `ETAPAS_EMBUDO` sobre el
-    antecedente de conteos que se perdían con un código fuera de vocabulario.
-    """
+    """La aritmética pura del embudo -- sin motor, sin I/O (design.md). `perdidas` es
+    `{etapa: {codigo: cantidad}}` ya agregado; un publicado incompleto sigue siendo
+    publicado y no resta de `llegaron` ni aparece en `perdidas`."""
     apartados = sum(sum(codigos.values()) for codigos in perdidas.values())
     apartados_sobretamano = perdidas.get("ingesta", {}).get(_CODIGO_SOBRETAMANO, 0)
     con_desenlace = publicados + apartados
@@ -281,25 +210,8 @@ def calcular_embudo(
     )
 
 
-#: Memoización de un segundo por `corrida_id` (design.md, "Plan de acceso a
-#: 100.000 documentos y 1-2 s"): cinco espectadores refrescando pasan a costar
-#: lo mismo que uno. Clave = `corrida_id`, valor = `(marca de reloj monotónico,
-#: Embudo)`. Los tests que necesitan bypassear la memoización llaman
-#: `_CACHE.clear()` -- acceso directo deliberado, no una API pública nueva sin
-#: llamador real.
-#:
-#: `design.md` fija el TTL pero no dice nada de purgar -- completándolo, no
-#: contradiciéndolo: un plano de control que corre meses sin reiniciarse
-#: acumularía una entrada MUERTA por cada `corrida_id` que alguna vez se
-#: consultó, para siempre, si nada la sacara. Se eligió purgar las entradas
-#: vencidas en cada lectura (`_purgar_vencidas`, llamada al principio de
-#: `construir_embudo`) en vez de un tope de tamaño con desalojo LRU: el TTL ya
-#: es de un segundo, así que el costo de purgar es barrer un dict con a lo
-#: sumo "corridas distintas consultadas en el último segundo" entradas --
-#: nunca más que eso, porque cualquier entrada más vieja ya se purgó en la
-#: lectura anterior. Un tope de tamaño exigiría además una política de
-#: desalojo (LRU u otra) para decidir CUÁL corrida sacar bajo presión, y acá
-#: no hace falta: el TTL ya acota el tamaño solo.
+#: Memoización de 1s por `corrida_id` (design.md): purga en cada lectura en vez de
+#: LRU con tope de tamaño -- el TTL corto ya acota cuánto puede crecer el dict.
 _CACHE: dict[str, tuple[float, Embudo]] = {}
 
 
@@ -336,19 +248,8 @@ def construir_embudo(
     ahora: datetime | None = None,
     reloj: Callable[[], float] = time.monotonic,
 ) -> Embudo:
-    """Lee las tres consultas agregadas del diseño y arma el embudo real.
-
-    Nunca proyecta `ruta_autorizada` ni `huella_contenido` (Requisito 6):
-    `documento_corrida` sólo aporta un `count(*)`, y `estudio`/`cuarentena`
-    sólo aportan columnas de conteo y de tiempo, nunca la fila completa.
-    Nunca lee `documento_corrida.estado` (Decisión 5): el `count(*)` no
-    proyecta esa columna.
-
-    `reloj` es inyectable (mismo patrón que `dormir` en
-    `pipeline/ejecutor.py`): en producción es `time.monotonic`, y los tests
-    que necesitan simular el paso del tiempo -- por ejemplo, para confirmar
-    que `_CACHE` purga entradas vencidas -- pasan uno propio.
-    """
+    """Lee las tres consultas agregadas del diseño y arma el embudo real, sin proyectar
+    PII ni `estado`. `reloj` es inyectable para que los tests simulen el paso del tiempo."""
     momento = ahora if ahora is not None else _ahora_utc()
     marca = reloj()
     _purgar_vencidas(marca)
@@ -392,15 +293,8 @@ def construir_embudo(
             .group_by(Cuarentena.etapa, Cuarentena.codigo)
         ).all()
 
-        # Requisito "que un campo nuevo no rompa el parseo, sino que sea un
-        # aviso": sólo dos columnas de conteo/vocabulario cerrado (Requisito 6,
-        # igual que el resto de este módulo) -- nunca una fila completa ni
-        # nada que identifique el documento. `campos_no_extraidos` es JSON
-        # (lista de `id_campo`), así que no se puede agregar de forma
-        # portable en SQL (SQLite vs. Postgres) -- se agrega en Python, mismo
-        # criterio que `filas_cuarentena` arriba, sólo que ya no hace falta
-        # `group_by` porque el valor a contar vive DENTRO del JSON, no en una
-        # columna.
+        # campos_no_extraidos es JSON (lista de id_campo): no se agrega en SQL portable
+        # (SQLite vs Postgres), se agrega en Python más abajo.
         filas_incompletas = sesion.execute(
             sa.select(Estudio.campos_no_extraidos)
             .where(Estudio.corrida_id == corrida_id, Estudio.completo.is_(False))
@@ -413,8 +307,7 @@ def construir_embudo(
     for etapa, codigo, caidos, primero_grp, ultimo_grp, en_ventana_grp in filas_cuarentena:
         perdidas.setdefault(etapa, {})[codigo] = caidos
         if codigo == _CODIGO_SOBRETAMANO:
-            # Cuenta en la barra de la etapa (arriba) pero no en la serie de
-            # tiempo ni en la ventana: nunca se leyó (Requisito 4).
+            # Cuenta en la barra de la etapa pero no en throughput/ventana: nunca se leyó.
             continue
         primero_apt = _min_opcional(primero_apt, primero_grp)
         ultimo_apt = _max_opcional(ultimo_apt, ultimo_grp)
