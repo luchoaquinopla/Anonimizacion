@@ -36,6 +36,24 @@ _CARPETAS_ALCANCE = ("src", "tests", "migrations", "scripts", ":(exclude)tests/p
 _REF_POR_DEFECTO = "feat/auditoria-y-poda"
 
 
+def _ejecutar_git(
+    args: list[str], raiz_repo: Path, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Wrapper único de `git` para toda la compuerta: sin `git` en el PATH, saltea con
+    motivo claro en vez de dejar pasar un `FileNotFoundError` crudo."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=raiz_repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=check,
+        )
+    except FileNotFoundError as error:
+        pytest.skip(f"'git' no está disponible en el PATH: {error}")
+
+
 class RefCompuertaInvalida(Exception):
     """`COMPUERTA_AST_REF` fue definida a mano y no existe en este checkout."""
 
@@ -63,11 +81,7 @@ def _resolver_ref(
 
 
 def _ref_existe(ref: str, raiz_repo: Path = _RAIZ_REPO) -> bool:
-    resultado = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", ref],
-        cwd=raiz_repo,
-        capture_output=True,
-    )
+    resultado = _ejecutar_git(["rev-parse", "--verify", "--quiet", ref], raiz_repo, check=False)
     return resultado.returncode == 0
 
 
@@ -75,13 +89,8 @@ def _estado_archivos_python(ref: str, raiz_repo: Path = _RAIZ_REPO) -> list[tupl
     """(estado, ruta) de cada .py bajo _CARPETAS_ALCANCE que difiere entre `ref` y el working
     tree. `--no-renames`: un `git mv` con --no-renames aparece como D (viejo) + A (nuevo),
     nunca como R -- así un renombre no puede colarse como 'sin cambios'."""
-    resultado = subprocess.run(
-        ["git", "diff", "--name-status", "--no-renames", ref, "--", *_CARPETAS_ALCANCE],
-        cwd=raiz_repo,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
+    resultado = _ejecutar_git(
+        ["diff", "--name-status", "--no-renames", ref, "--", *_CARPETAS_ALCANCE], raiz_repo
     )
     salida: list[tuple[str, str]] = []
     for linea in resultado.stdout.splitlines():
@@ -92,14 +101,7 @@ def _estado_archivos_python(ref: str, raiz_repo: Path = _RAIZ_REPO) -> list[tupl
 
 
 def _contenido_en_ref(ref: str, ruta_relativa: str, raiz_repo: Path = _RAIZ_REPO) -> str:
-    resultado = subprocess.run(
-        ["git", "show", f"{ref}:{ruta_relativa}"],
-        cwd=raiz_repo,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
+    resultado = _ejecutar_git(["show", f"{ref}:{ruta_relativa}"], raiz_repo)
     return resultado.stdout
 
 
