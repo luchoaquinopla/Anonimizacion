@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from enum import Enum
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -410,6 +411,50 @@ def test_episodio_sin_ecg_no_se_descarta_y_queda_marcado_incompleto(motor, tmp_p
     assert fila["completo"] is False
     # no se descarta: sigue habiendo una fila de laboratorio
     assert pq.read_table(tmp_path / "laboratorio.parquet").num_rows == 1
+
+
+# --- Requisito 1 (extensibilidad-tipo-documento), mismo patrón que postgres.py --
+#
+# 4to tipo de documento simulado: `Estudio.tipo_documento` es una columna
+# `String` (no un enum de SQLAlchemy), así que alcanza con el `.value` de un
+# `str, Enum` propio -- mismo mecanismo que ya se validó en
+# `tests/salida/destinos/test_postgres.py`/`tests/pipeline/test_coordinador_episodios.py`.
+
+
+class _TipoDocumentoDePrueba(str, Enum):
+    RESONANCIA_MAGNETICA = "resonancia_magnetica"
+
+
+def test_un_4to_tipo_sin_procesador_registrado_lanza_excepcion_explicita_y_no_cae_en_eco(
+    motor, tmp_path
+) -> None:
+    """`_procesar_pagina` despachaba por `if/elif/else` -- cualquier
+    `tipo_documento` que no fuera "ecg"/"laboratorio" caía en el `else` mudo
+    y se exportaba como fila de `eco.parquet`, con `mediciones_eco.get()`
+    devolviendo `None` (fila de nulos indistinguible de un eco real sin
+    mediciones) -- contamina en silencio el dataset que consume el modelo.
+    RED contra el código de hoy: no levanta excepción y la fila aparece en
+    `eco.parquet`."""
+    with sa.orm.Session(motor) as sesion, sesion.begin():
+        sesion.add(Episodio(id_episodio="ep-4to-tipo", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10)))
+        sesion.add(
+            Estudio(
+                id_episodio="ep-4to-tipo",
+                tipo_documento=_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA.value,
+                fecha_estudio=date(2024, 1, 10),
+                precision_hora="ausente",
+                completo=True,
+                campos_no_extraidos=[],
+            )
+        )
+
+    with pytest.raises(Exception):
+        exportar_dataset(motor, tmp_path)
+
+    # Escritura atómica (`.tmp` + rename al final): si la excepción se
+    # propagó de verdad, el archivo final nunca se crea -- ninguna fila
+    # de nulos queda persistida a medio camino.
+    assert not (tmp_path / "eco.parquet").exists()
 
 
 # --- no mutación de la base --------------------------------------------------
