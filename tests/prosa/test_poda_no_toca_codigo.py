@@ -29,7 +29,10 @@ from pathlib import Path
 import pytest
 
 _RAIZ_REPO = Path(__file__).resolve().parents[2]
-_CARPETA_FUENTE = "src/anonimizacion"
+# La poda de prosa toca .py bajo estas 4 carpetas -- única constante de alcance.
+# `tests/prosa` (la propia compuerta) se excluye: auditarse a sí misma no tiene sentido,
+# y este mismo módulo es un archivo nuevo que PR6a agrega (no una poda).
+_CARPETAS_ALCANCE = ("src", "tests", "migrations", "scripts", ":(exclude)tests/prosa")
 _REF_POR_DEFECTO = "feat/auditoria-y-poda"
 
 
@@ -47,11 +50,11 @@ def _ref_existe(ref: str, raiz_repo: Path = _RAIZ_REPO) -> bool:
 
 
 def _estado_archivos_python(ref: str, raiz_repo: Path = _RAIZ_REPO) -> list[tuple[str, str]]:
-    """(estado, ruta) de cada .py bajo _CARPETA_FUENTE que difiere entre `ref` y el working
+    """(estado, ruta) de cada .py bajo _CARPETAS_ALCANCE que difiere entre `ref` y el working
     tree. `--no-renames`: un `git mv` con --no-renames aparece como D (viejo) + A (nuevo),
     nunca como R -- así un renombre no puede colarse como 'sin cambios'."""
     resultado = subprocess.run(
-        ["git", "diff", "--name-status", "--no-renames", ref, "--", _CARPETA_FUENTE],
+        ["git", "diff", "--name-status", "--no-renames", ref, "--", *_CARPETAS_ALCANCE],
         cwd=raiz_repo,
         capture_output=True,
         text=True,
