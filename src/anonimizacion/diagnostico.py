@@ -1,26 +1,5 @@
-"""Asistente de primer arranque (`arranque-para-el-instituto`).
-
-Un médico sin experiencia en línea de comandos no puede interpretar un
-traceback de SQLAlchemy ni de `argparse`. Este módulo verifica, ANTES de
-tocar un solo PDF, todo lo que hoy fallaba a mitad de una corrida o disfrazado
-de otro error:
-
-- el pepper HMAC (`pseudonimizacion/almacen_pepper.py`),
-- el secreto del panel, sólo si hace falta (`web/secreto_panel.py`),
-- que Postgres esté encendido y accesible,
-- que las migraciones de Alembic estén al día (y detecta cuando el propio
-  repositorio tiene más de una migración 'head' a la vez, un problema del
-  código, no de la base),
-- que no haya una corrida trabada bloqueando el gate de "una corrida a la
-  vez" -- recupera sola una corrida abandonada (sin evidencia reciente,
-  misma lógica que `servir_panel.py` usa en cada arranque) en vez de pedirle
-  al operador que espere algo que no va a terminar,
-- que la carpeta a procesar exista, sea una carpeta y se pueda leer.
-
-Cada chequeo devuelve un `Hallazgo` con un mensaje en castellano llano: qué
-pasó y qué hacer -- nunca un traceback, nunca el valor de un secreto (mismo
-criterio que `web/codigos_cuarentena.py`).
-"""
+"""Asistente de primer arranque: verifica pepper, secreto, Postgres, migraciones y carpeta.
+Cada chequeo devuelve un `Hallazgo` en castellano llano, nunca un traceback ni un secreto."""
 
 from __future__ import annotations
 
@@ -81,16 +60,7 @@ def _diagnosticar_secreto_panel(*, requiere_red: bool) -> Hallazgo:
 
 
 def _diagnosticar_conexion_db(db_url: str) -> tuple[Hallazgo, bool]:
-    """Revisión adversarial, CRÍTICO 2: `make_url(db_url)` ANTES vivía fuera
-    de este `try` -- una URL mal escrita en el archivo de configuración
-    (falta el driver, faltan las "//", etc.) hacía que
-    `sqlalchemy.exc.ArgumentError` se propagara crudo, con traceback completo
-    y rutas de `site-packages`, en los tres subcomandos (los tres llaman a
-    `diagnosticar()` antes de cualquier otra cosa). `url_para_mostrar`
-    arranca en el propio `db_url` sin procesar -- si ni siquiera se puede
-    interpretar como URL, no hay estructura de credenciales que enmascarar:
-    mostrar el texto tal cual no filtra nada que el operador no haya
-    escrito él mismo en su propio archivo."""
+    """`make_url` vive DENTRO del `try`: una URL mal escrita no debe propagar traceback crudo."""
     url_para_mostrar = db_url
     engine = None
     try:
@@ -115,16 +85,7 @@ def _diagnosticar_conexion_db(db_url: str) -> tuple[Hallazgo, bool]:
 
 
 def _diagnosticar_migraciones(db_url: str) -> Hallazgo:
-    """Revisión adversarial, MAYOR 4 -- reproducido con dos heads reales
-    (este repositorio tuvo, a la vez, `migrations/versions/0009_corrida_una_activa.py`
-    en `main` y un `0009_episodio_tipo_unico.py` en otra rama): antes de este
-    cambio, dos heads en el REPOSITORIO (no en la base) se confundían con
-    "la base no tiene las últimas migraciones", y la instrucción sugerida
-    (`alembic upgrade head`) fallaba con otro error ('Multiple head revisions
-    are present'), en inglés, sin ninguna pista de que el problema real es
-    del código, no de esta base. Esto se verifica ANTES de tocar la base:
-    con dos heads, ningún estado de la base puede estar "al día" -- la
-    pregunta ni siquiera tiene sentido todavía."""
+    """Detecta más de un head en el REPOSITORIO antes de comparar contra la base."""
     try:
         cfg = Config(str(_RAIZ_REPO / "alembic.ini"))
         cfg.set_main_option("script_location", str(_RAIZ_REPO / "migrations"))
@@ -165,23 +126,8 @@ def _diagnosticar_migraciones(db_url: str) -> Hallazgo:
 
 
 def _diagnosticar_corrida_activa(db_url: str, *, ahora: datetime | None = None) -> Hallazgo:
-    """Revisión adversarial, CRÍTICO 1: `scripts/procesar_carpeta.py` no
-    cerraba sus corridas (arreglado en el mismo cambio), y el gate de "una
-    corrida a la vez" (`ux_corrida_una_activa`) puede quedar trabado por
-    CUALQUIER causa externa a este comando -- un `kill -9`, un corte de luz,
-    un proceso que quedó colgado. Antes de reportar, se reutiliza la MISMA
-    lógica que `servir_panel.py` ya usa en cada arranque
-    (`recuperar_corridas_abandonadas`): una corrida sin evidencia reciente
-    (>15 min, `MARGEN_INACTIVIDAD_DEFAULT`) se cierra sola como `FALLIDA` --
-    no tiene sentido decirle al operador "esperá a que termine" algo que ya
-    no va a terminar. Sólo una corrida con evidencia RECIENTE (genuinamente
-    en curso, en el panel o en otra invocación de este mismo comando) se
-    reporta como error -- y ahí sí es honesto pedir que se espere.
-
-    `ahora` (default `None` = reloj real): mismo patrón inyectable que
-    `recuperar_corridas_abandonadas`, sólo para que los tests puedan simular
-    una corrida abandonada sin dormir 15 minutos de verdad.
-    """
+    """Recupera sola una corrida sin evidencia reciente (>15 min) antes de reportarla trabada.
+    `ahora` inyectable para tests, default reloj real."""
     engine = None
     try:
         engine = construir_engine_postgres(db_url)
@@ -224,15 +170,8 @@ def _diagnosticar_carpeta_entrada(entrada: Path | None) -> Hallazgo:
 def diagnosticar(
     config: ConfiguracionOperador, *, requiere_entrada: bool, requiere_red: bool
 ) -> list[Hallazgo]:
-    """Corre todos los chequeos aplicables y devuelve TODOS los hallazgos --
-    ok y error -- para que el operador vea de una vez todo lo que falta, no
-    un problema a la vez en sucesivas corridas fallidas.
-
-    Las migraciones sólo se verifican si la base respondió: sin conexión no
-    hay forma de saber su estado, y reportarlo como error aparte sólo
-    duplicaría el mensaje de "Base de datos" con otro peor (una excepción de
-    conexión disfrazada de problema de migraciones).
-    """
+    """Corre todos los chequeos y devuelve todos los hallazgos, no uno a la vez.
+    Migraciones sólo se verifican si la base respondió."""
     hallazgos = [_diagnosticar_pepper(), _diagnosticar_secreto_panel(requiere_red=requiere_red)]
 
     hallazgo_db, base_responde = _diagnosticar_conexion_db(config.db_url)

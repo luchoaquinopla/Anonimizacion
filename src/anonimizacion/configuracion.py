@@ -1,33 +1,5 @@
-"""Configuración del operador (`arranque-para-el-instituto`, composition root).
-
-Antes de este módulo, `scripts/procesar_carpeta.py` y `scripts/servir_panel.py`
-exponían cada uno su propio `argparse`, cada uno con su propia URL de base por
-defecto (duplicada, no compartida) -- un médico sin experiencia en línea de
-comandos tenía que recordar banderas distintas para cada script. Este módulo
-reemplaza esas banderas sueltas por UN archivo de configuración (`*.toml`,
-formato legible sin entrenamiento) con los valores NO secretos que hacían
-falta para operar: URL de Postgres, carpeta a procesar, puerto y raíz del
-panel, grado de concurrencia.
-
-Los SECRETOS (pepper HMAC, secreto del panel) están deliberadamente FUERA del
-esquema de este archivo -- ver `ErrorConfiguracionSecretoEnArchivo`. Sólo
-pueden venir de `ANONIMIZACION_PEPPER`/`ANONIMIZACION_PEPPER_ARCHIVO`
-(`pseudonimizacion/almacen_pepper.py`) y
-`ANONIMIZACION_PANEL_SECRETO`/`ANONIMIZACION_PANEL_SECRETO_ARCHIVO`
-(`web/secreto_panel.py`), exactamente como hoy: un archivo de configuración
-puede terminar compartido con otra persona o versionado por error -- un
-secreto ahí es un secreto filtrado.
-
-Fuente de la ruta del archivo, en orden de precedencia:
-
-1. Argumento explícito (`--config` en la CLI).
-2. Variable de entorno `ANONIMIZACION_CONFIG`.
-3. `./anonimizacion.toml` (relativo al directorio desde donde se invoca el
-   comando) -- si NO existe en esta ruta por defecto, no es un error: se
-   usan los valores de producción que ya traían los scripts. Si la ruta
-   viene de (1) o (2) y no existe, sí es un error (el operador pidió un
-   archivo puntual que no está).
-"""
+"""Configuración del operador: valores NO secretos para operar el pipeline (`*.toml`).
+Precedencia de ruta: `--config` explícito > `ANONIMIZACION_CONFIG` > `./anonimizacion.toml`."""
 
 from __future__ import annotations
 
@@ -42,21 +14,14 @@ VAR_ENV_RUTA_CONFIG = "ANONIMIZACION_CONFIG"
 
 RUTA_CONFIG_DEFAULT = Path("anonimizacion.toml")
 
-# Única fuente de este valor (auditoria-y-poda, E4): antes estaba
-# triplicado, un literal idéntico en este módulo y en cada uno de los dos
-# scripts sueltos. `comandos/procesar.py` y `comandos/servir.py` lo importan
-# de acá -- ver spec `punto-entrada-instalable`, Requisito 3.
+# Única fuente de este valor; comandos/procesar.py y comandos/servir.py lo importan de acá.
 _DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
 _PUERTO_DEFAULT = 8000
 
-# Único esquema válido de este archivo -- cualquier otra clave es un error
-# fuerte (typo de operador o, peor, un secreto que no debería estar acá).
+# Único esquema válido de este archivo; cualquier otra clave es un error fuerte.
 _CLAVES_VALIDAS = {"db_url", "entrada", "raiz", "puerto", "procesos", "escuchar_red"}
 
-# Nombres que un operador razonablemente escribiría para un secreto. No hace
-# falta que sea exhaustivo: es una red de contención adicional sobre el
-# allowlist de arriba (que ya rechaza CUALQUIER clave no reconocida) para dar
-# un mensaje más específico cuando el error probable es justamente ese.
+# Red de contención adicional sobre _CLAVES_VALIDAS para dar un mensaje más específico.
 _CLAVES_DE_SECRETOS = {
     "pepper",
     "secreto",
@@ -71,13 +36,7 @@ _CLAVES_DE_SECRETOS = {
 
 
 class ErrorConfiguracion(RuntimeError):
-    """Base común de los errores de configuración del operador.
-
-    `anonimizacion.cli` captura esta clase para fallar temprano con un
-    mensaje en castellano llano, sin traceback, antes de tocar Postgres ni
-    ningún PDF -- mismo criterio que `ErrorPepperNoConfigurado`/
-    `ErrorSecretoPanel`.
-    """
+    """Base común; `cli.py` la captura para fallar temprano sin traceback."""
 
 
 class ErrorConfiguracionNoEncontrada(ErrorConfiguracion):
@@ -130,11 +89,7 @@ class ErrorConfiguracionTipoInvalido(ErrorConfiguracion):
 @dataclass(frozen=True)
 class ConfiguracionOperador:
     """Valores NO secretos que hacen falta para operar el pipeline.
-
-    `entrada=None` significa "no se indicó ninguna carpeta a procesar
-    todavía" -- válido para `anonimizacion servir` (no la necesita) o para un
-    primer `anonimizacion diagnosticar` antes de decidir qué procesar.
-    """
+    `entrada=None`: no se indicó ninguna carpeta a procesar todavía."""
 
     db_url: str = _DB_URL_DEFAULT
     entrada: Path | None = None
@@ -145,12 +100,7 @@ class ConfiguracionOperador:
 
 
 def _resolver_ruta(ruta: Path | None) -> tuple[Path | None, bool]:
-    """Devuelve `(ruta_a_intentar, fue_pedida_explicitamente)`.
-
-    `fue_pedida_explicitamente=True` (argumento o variable de entorno)
-    convierte "el archivo no existe" en un error -- `False` (ruta por
-    defecto) lo convierte en "usar los valores de producción".
-    """
+    """Devuelve `(ruta_a_intentar, fue_pedida_explicitamente)`; explícita = error si no existe."""
     if ruta is not None:
         return ruta, True
 
@@ -198,9 +148,7 @@ def _validar_claves(datos: dict, ruta: Path) -> None:
 
 
 def cargar_configuracion(ruta: Path | None = None) -> ConfiguracionOperador:
-    """Carga la configuración del operador desde `ruta` (ver el docstring del
-    módulo para la precedencia). Nunca lee ni valida secretos -- ver
-    `ErrorConfiguracionSecretoEnArchivo`."""
+    """Carga la configuración del operador desde `ruta`. Nunca lee ni valida secretos."""
     ruta_a_intentar, es_explicita = _resolver_ruta(ruta)
     assert ruta_a_intentar is not None  # _resolver_ruta siempre devuelve una ruta concreta
 

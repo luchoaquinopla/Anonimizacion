@@ -1,9 +1,5 @@
 """Modelos tipados del dominio.
-
-`contenido`/`fuentes` de `DocumentoParseado` quedan como `Any` en esta fase:
-los tipos concretos (`ContenidoEcg`, `ReferenciaFuente`, etc.) se agregan en
-Fase 2 (ingesta) y Fase 4 (parseo) sin romper este contrato.
-"""
+`contenido`/`fuentes` de `DocumentoParseado` quedan como `Any`: se tipan en fases futuras."""
 
 from __future__ import annotations
 
@@ -27,7 +23,7 @@ class IdentidadCruda(BaseModel):
     nombre: SecretStr
     dni: SecretStr | None = None  # el ECG no trae DNI
     fecha_nac: SecretStr | None = None
-    ids_internos: tuple[SecretStr, ...] = Field(default_factory=tuple)  # cuasi-identificadores; tupla: frozen real, no solo de nombre
+    ids_internos: tuple[SecretStr, ...] = Field(default_factory=tuple)  # cuasi-identificadores
 
     def __repr__(self) -> str:  # nunca exponer PII, ni siquiera por accidente
         return "IdentidadCruda(**redactado**)"
@@ -46,9 +42,7 @@ class DocumentoParseado:
     contenido: Any  # ContenidoEcg | ContenidoLaboratorio | ContenidoEco (Fase 4)
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     fuentes: tuple[ReferenciaCampo, ...] = field(default_factory=tuple)
-    # Hora del estudio, separada de `fecha_estudio` (spec `momento-del-estudio`).
-    # Default `None`/`AUSENTE`: no romper construcciones existentes de otras
-    # fases del pipeline que todavía no pasan estos dos campos.
+    # None/AUSENTE por defecto: no romper construcciones que aún no pasan estos campos.
     hora_estudio: time | None = None
     precision_hora: PrecisionHora = PrecisionHora.AUSENTE
 
@@ -81,28 +75,10 @@ class RegistroAnonimizado:
     adicionales: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     hora_estudio: time | None = None
     precision_hora: PrecisionHora = PrecisionHora.AUSENTE
-    # Identidad estable del documento (spec `escritura-idempotente`); opcional
-    # en el dataclass -- las filas legadas y los fixtures sintéticos de otras
-    # fases no la traen y no deben romperse. `construir_registro` la exige.
+    # None por compatibilidad con filas legadas y fixtures que no la traen.
     clave_documento: str | None = None
-    # Corrida que produjo este registro (spec `trazabilidad-por-corrida`,
-    # Requisito 1). Opcional al final, mismo precedente que `clave_documento`:
-    # nace `None` para no romper fixtures ni llamadores existentes que todavía
-    # no conocen su corrida. `procesar_lote`/`procesar_grupo` lo propagan
-    # (Tramo 2 de `panel-de-operacion`, fuera de alcance de este cambio).
     corrida_id: str | None = None
-    # Marca de completitud (requisito "que un campo nuevo no rompa el
-    # parseo, sino que sea un aviso"): `campos_no_extraidos` son los
-    # `id_campo` (vocabulario cerrado, `dominio/referencias.py`) que el PDF
-    # traía y el parser no citó -- devueltos por
-    # `ReconciliadorDocumento.reconciliar` (ver `reconciliacion/base.py` y
-    # `CodigoErrorDocumento.CAMPO_NO_EXTRAIDO`). NUNCA texto libre ni
-    # contenido del documento, sólo estos identificadores ya validados.
-    # Puede repetir un `id_campo` (una ocurrencia por instancia faltante,
-    # p.ej. varias filas de `laboratorio.resultado`), así que no es un
-    # `frozenset`. Default `()`: un registro sin marca es, por definición,
-    # un registro completo -- ningún llamador existente que todavía no
-    # conoce esta marca queda roto.
+    # `id_campo` que el PDF traía y el parser no citó; puede repetirse, nunca texto libre.
     campos_no_extraidos: tuple[str, ...] = field(default_factory=tuple)
 
     @property
