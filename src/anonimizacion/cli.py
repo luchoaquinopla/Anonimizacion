@@ -17,52 +17,35 @@ un servicio de Windows. Este comando sigue asumiendo una instalación editable
 del repositorio clonado (`pip install -e .`) -- IT hace ese paso una vez;
 después el operador sólo usa este comando y un archivo de configuración.
 
-Por qué se cargan los scripts viejos por RUTA (`_cargar_script`) en vez de
-importarlos como paquete o migrar su lógica a `src/`: `scripts/` no forma
-parte del wheel instalado (`pyproject.toml`,
-`[tool.hatch.build.targets.wheel]` sólo empaqueta `src/anonimizacion`) y hay
-un PR abierto (#40, `feat/acceso-al-panel`) tocando
-`scripts/servir_panel.py` -- mover su lógica acá hoy sería conflicto
-garantizado para cero beneficio real. Este módulo reutiliza exactamente el
-mismo patrón que ya usan `tests/scripts/test_procesar_carpeta.py` y
-`test_servir_panel.py` (`importlib.util.spec_from_file_location`) para cargar
-el script por ruta absoluta y traduce la configuración resuelta (archivo +
-banderas) al mismo `sys.argv` que esos scripts ya interpretan -- CERO cambios
-a `scripts/procesar_carpeta.py` ni a `scripts/servir_panel.py`. Cuando el PR
-#40 mergee y la superficie de `servir_panel.py` se estabilice, migrar su
-composición a `src/anonimizacion/web/` deja de tener el costo de conflicto
-que tiene hoy -- pero eso es una decisión para otro cambio, no para éste.
-"""
+`procesar`/`servir` (auditoria-y-poda, E4): la lógica que antes vivía en
+`scripts/procesar_carpeta.py`/`scripts/servir_panel.py` -- cargados por RUTA
+con `importlib.util.spec_from_file_location`, porque `scripts/` nunca formó
+parte del wheel instalado -- se movió a `comandos/procesar.py` y
+`comandos/servir.py` (paquete real, sí empaquetado). Este módulo ya no carga
+nada por ruta ni re-parsea `sys.argv` con un segundo `argparse`: resuelve
+banderas/config y llama a `comandos.procesar.ejecutar(...)`/
+`comandos.servir.servir(...)` con argumentos con nombre (design.md D3,
+`punto-entrada-instalable`)."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import sys
 from dataclasses import replace
 from pathlib import Path
-from types import ModuleType
 
+from anonimizacion.comandos import procesar as comandos_procesar
+from anonimizacion.comandos import servir as comandos_servir
 from anonimizacion.configuracion import ConfiguracionOperador, ErrorConfiguracion, cargar_configuracion
 from anonimizacion.diagnostico import Hallazgo, diagnosticar
 from anonimizacion.dominio.errores import ErrorParseo
 from anonimizacion.esqueleto import Esqueleto, FixtureParseable, generar_esqueleto, generar_fixture_parseable
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
+from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.exportacion import TAMANO_PAGINA_DEFECTO, exportar_dataset
-
-_RAIZ_REPO = Path(__file__).resolve().parents[2]
-
-
-def _cargar_script(nombre_archivo: str) -> ModuleType:
-    """Carga `scripts/<nombre_archivo>` por ruta -- ver el docstring del módulo."""
-    ruta = _RAIZ_REPO / "scripts" / nombre_archivo
-    spec = importlib.util.spec_from_file_location(f"_anonimizacion_cli_{ruta.stem}", ruta)
-    if spec is None or spec.loader is None:  # pragma: no cover -- sólo si el archivo desaparece
-        raise RuntimeError(f"No se pudo cargar '{ruta}': revisar que el archivo exista.")
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
-    return modulo
+from anonimizacion.trabajadores.despacho_paralelo import validar_grado_concurrencia
 
 
 def _reportar_diagnostico(hallazgos: list[Hallazgo]) -> bool:
@@ -80,6 +63,14 @@ def _reportar_diagnostico(hallazgos: list[Hallazgo]) -> bool:
 
 def _resolver(valor_cli: object, valor_config: object) -> object:
     return valor_cli if valor_cli is not None else valor_config
+
+
+def _tipo_procesos(valor: str) -> int:
+    """`type=` de argparse para `--procesos`: valida contra el tope duro ACÁ
+    (antes duplicado en `scripts/procesar_carpeta.py` y `scripts/servir_panel.py`,
+    ahora aplicado una sola vez) para que un valor inválido falle con un
+    mensaje de `argparse` claro antes de tocar Postgres/spaCy."""
+    return validar_grado_concurrencia(int(valor))
 
 
 def _cargar_config_o_none(ruta: Path | None) -> ConfiguracionOperador | None:
@@ -115,7 +106,9 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_procesar = subparsers.add_parser("procesar", help="Procesa una carpeta de PDFs de punta a punta.")
     _agregar_argumentos_comunes(p_procesar)
     p_procesar.add_argument("--entrada", type=Path, default=None, help="carpeta con los PDFs a procesar")
-    p_procesar.add_argument("--procesos", type=int, default=None, help="grado de concurrencia")
+    p_procesar.add_argument(
+        "--procesos", type=_tipo_procesos, default=None, help="grado de concurrencia (tope duro validado acá)"
+    )
 
     p_esqueleto = subparsers.add_parser(
         "esqueleto",
@@ -159,7 +152,9 @@ def _construir_parser() -> argparse.ArgumentParser:
     _agregar_argumentos_comunes(p_servir)
     p_servir.add_argument("--puerto", type=int, default=None)
     p_servir.add_argument("--raiz", type=Path, default=None, help="raíz autorizada para lanzar corridas nuevas")
-    p_servir.add_argument("--procesos", type=int, default=None, help="grado de concurrencia de cada corrida")
+    p_servir.add_argument(
+        "--procesos", type=_tipo_procesos, default=None, help="grado de concurrencia de cada corrida (tope duro validado acá)"
+    )
     p_servir.add_argument(
         "--escuchar-red",
         action="store_true",
@@ -201,22 +196,35 @@ def _comando_procesar(args: argparse.Namespace) -> int:
         print("No se puede procesar: resolver lo anterior antes de reintentar.", file=sys.stderr)
         return 1
 
-    modulo = _cargar_script("procesar_carpeta.py")
-    argv = [
-        "procesar_carpeta.py",
-        "--entrada",
-        str(entrada),
-        "--db-url",
-        str(db_url),
-        "--procesos",
-        str(procesos),
-    ]
-    argv_original = sys.argv
-    sys.argv = argv
-    try:
-        return modulo.main()
-    finally:
-        sys.argv = argv_original
+    print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
+    pepper = obtener_pepper()
+
+    # `motor` sólo se carga en este proceso para el camino SECUENCIAL
+    # (`procesos<=1`): con `procesos>1` cada hijo del `ProcessPoolExecutor`
+    # arma su PROPIO `MotorPii()` -- cargarlo también acá sería una copia de
+    # más (~875 MB medidos, ver `despacho_paralelo.py`) que este proceso
+    # nunca usaría para procesar nada.
+    motor: MotorPii | None = None
+    if procesos <= 1:
+        print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
+        motor = MotorPii()
+    else:
+        print(
+            f"Motor de PII: se carga en cada uno de los {procesos} procesos hijos, no en este proceso.",
+            file=sys.stderr,
+        )
+
+    print(f"Conectando a Postgres: {db_url}", file=sys.stderr)
+    engine = construir_engine_postgres(str(db_url))
+
+    return comandos_procesar.ejecutar(
+        entrada=entrada,
+        engine=engine,
+        motor=motor,
+        pepper=pepper,
+        procesos=procesos,
+        db_url=str(db_url),
+    )
 
 
 def _comando_esqueleto(args: argparse.Namespace) -> int:
@@ -293,26 +301,13 @@ def _comando_servir(args: argparse.Namespace) -> int:
         print("No se puede levantar el panel: resolver lo anterior antes de reintentar.", file=sys.stderr)
         return 1
 
-    modulo = _cargar_script("servir_panel.py")
-    argv = [
-        "servir_panel.py",
-        "--db-url",
-        str(db_url),
-        "--puerto",
-        str(puerto),
-        "--raiz",
-        str(raiz),
-        "--procesos",
-        str(procesos),
-    ]
-    if escuchar_red:
-        argv.append("--escuchar-red")
-    argv_original = sys.argv
-    sys.argv = argv
-    try:
-        return modulo.main()
-    finally:
-        sys.argv = argv_original
+    return comandos_servir.servir(
+        db_url=str(db_url),
+        puerto=puerto,
+        raiz=Path(raiz),
+        procesos=procesos,
+        escuchar_red=escuchar_red,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -3,17 +3,22 @@
 Fija, sobre Postgres real y efímero (`engine_caracterizacion`), las filas que
 el sistema HOY escribe en `episodio`/`estudio`/`cuarentena` para un corpus
 sintético con un episodio completo, uno incompleto, uno ambiguo y un
-documento en cuarentena (layout no reconocido). Reusa `procesar_carpeta.py`
-por ruta -- mismo patrón que `tests/scripts/test_procesar_carpeta.py` -- para
-ejercitar el composition root real, no una llamada aislada a una etapa.
+documento en cuarentena (layout no reconocido). Reusa
+`anonimizacion.comandos.procesar::ejecutar()` -- mismo patrón que
+`tests/comandos/test_procesar.py` -- para ejercitar el composition root
+real, no una llamada aislada a una etapa.
 
 No caracteriza NADA del universo de un 4to tipo de documento (`design.md`,
 D1): sólo los 3 `TipoDocumento` alcanzables hoy en `main`.
+
+Corrección mecánica (auditoria-y-poda, E4): mismo caso que
+`test_codigos_cuarentena.py`/`test_reporte_corrida.py` -- el módulo se movió
+de `scripts/` (cargado por ruta) a `anonimizacion.comandos.procesar`
+(paquete real); ninguna aserción de abajo cambia.
 """
 
 from __future__ import annotations
 
-import importlib.util
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -38,15 +43,13 @@ from ..fixtures.v1 import documentos
 
 pytestmark = [pytest.mark.caracterizacion, pytest.mark.postgres]
 
-_RUTA_SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "procesar_carpeta.py"
 PEPPER = b"pepper-caracterizacion-e0-nunca-real"
 
 
 def _cargar_script() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("_procesar_carpeta_caracterizacion", _RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
+    """Import normal -- ver nota de corrección mecánica arriba."""
+    from anonimizacion.comandos import procesar as modulo
+
     return modulo
 
 
@@ -218,7 +221,7 @@ def _procesar_lab_y_ecg_con_puente(tmp_path: Path, motor: MotorPii, engine: sa.E
     """Un laboratorio (con DNI) + un ECG (sin DNI) del MISMO paciente, en el
     MISMO lote -- el laboratorio registra el puente `id_alt_paciente ->
     id_paciente` que el ECG necesita para resolver su identidad
-    (`ResolutorClaves`, ver `tests/scripts/test_procesar_carpeta.py`,
+    (`ResolutorClaves`, ver `tests/comandos/test_procesar.py`,
     `_grupo_completo`). Sin el puente, el ECG se aparta en pseudonimización
     (`CLAVE_PII_NO_RESUELTA`) ANTES de llegar a reconciliación -- lo que
     enmascararía el resultado que este test quiere fijar.

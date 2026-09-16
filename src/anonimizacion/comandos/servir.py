@@ -1,7 +1,6 @@
-"""Punto de entrada WSGI del panel de operación (design.md, "El punto de entrada").
-
-Uso:
-    python scripts/servir_panel.py --db-url postgresql+psycopg://... --puerto 8000 --raiz ./mis_pdfs
+"""Composición del subcomando `anonimizacion servir` (`cli.py` es quien
+resuelve banderas/config y llama a `servir()` con argumentos con nombre --
+ver design.md D3, `punto-entrada-instalable`).
 
 Por defecto escucha SÓLO en `127.0.0.1` -- no en todas las interfaces. Este
 panel muestra datos operativos de una corrida clínica sin autenticación y
@@ -36,11 +35,11 @@ lock nuevo -- ya era cierto para `_ServidorConHilos`, y se sigue cumpliendo.
 Este punto de entrada agrega, para esa misma feature:
 
 - `--procesos`: grado de concurrencia de CADA corrida despachada (mismo
-  significado y mismo default que `scripts/procesar_carpeta.py --procesos`).
+  significado y mismo default que `procesar --procesos`).
 - Verificación temprana del pepper (`ANONIMIZACION_PEPPER`): sin él, cada
   proceso hijo fallaría recién al arrancar
   (`despacho_paralelo.inicializar_trabajador`), a mitad de una corrida ya
-  aceptada, disfrazado de `PROCESO_INTERRUMPIDO` en cuarentena -- `main()`
+  aceptada, disfrazado de `PROCESO_INTERRUMPIDO` en cuarentena -- `servir()`
   lo verifica ANTES de conectar a Postgres o de aceptar ningún `POST /corridas`.
 - Recuperación de arranque (`lanzador_corrida.recuperar_corridas_abandonadas`):
   toda corrida no terminal al construir la aplicación es necesariamente una
@@ -65,7 +64,7 @@ Autenticación (feature `acceso-al-panel`, ver el docstring de
 contra un secreto compartido (`ANONIMIZACION_PANEL_SECRETO` /
 `ANONIMIZACION_PANEL_SECRETO_ARCHIVO`), protegiendo TODO el panel -- no sólo
 `POST /corridas`. Sin ese secreto configurado, `--escuchar-red` NO arranca
-(falla temprano en `main()`, antes de conectar a Postgres): exponer el panel
+(falla temprano en `servir()`, antes de conectar a Postgres): exponer el panel
 a toda la red del instituto sin autenticación es exactamente el agujero que
 esto cierra. Sólo en `127.0.0.1` se tolera arrancar sin secreto configurado,
 para no romper el uso local/de desarrollo que ya existía. TLS sigue fuera de
@@ -75,7 +74,6 @@ abierto y bajo qué condiciones es aceptable).
 
 from __future__ import annotations
 
-import argparse
 import socketserver
 import sys
 from datetime import datetime, timedelta
@@ -84,6 +82,7 @@ from wsgiref.simple_server import WSGIServer, make_server
 
 from sqlalchemy import Engine
 
+from anonimizacion.configuracion import _DB_URL_DEFAULT
 from anonimizacion.ingesta.lanzador_corrida import (
     MARGEN_INACTIVIDAD_DEFAULT,
     LanzadorCorrida,
@@ -94,7 +93,6 @@ from anonimizacion.pseudonimizacion.almacen_pepper import ErrorPepperNoConfigura
 from anonimizacion.salida.cuarentena import EscritorCuarentena
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.modelos_orm import Base
-from anonimizacion.trabajadores import despacho_paralelo
 from anonimizacion.web.autenticacion_panel import exigir_autenticacion
 from anonimizacion.web.rutas_corridas import AplicacionWsgi, crear_aplicacion_corridas
 from anonimizacion.web.secreto_panel import (
@@ -104,7 +102,8 @@ from anonimizacion.web.secreto_panel import (
 )
 from anonimizacion.web.servicio_corridas import ServicioCorridasReal
 
-_DB_URL_DEFAULT = "postgresql+psycopg://anonimizacion:anonimizacion_dev@localhost:5433/anonimizacion"
+__all__ = ["construir_aplicacion", "servir", "_DB_URL_DEFAULT"]
+
 _PUERTO_DEFAULT = 8000
 _HOST_LOCAL = "127.0.0.1"
 _HOST_TODAS_LAS_INTERFACES = ""  # equivalente a 0.0.0.0 -- sólo con --escuchar-red
@@ -113,14 +112,6 @@ _HOST_TODAS_LAS_INTERFACES = ""  # equivalente a 0.0.0.0 -- sólo con --escuchar
 # (segundos a bajas decenas de segundos por grupo, ver `despacho_paralelo.py`)
 # sin dejar al operador esperando indefinidamente si algo se cuelga de verdad.
 _TIMEOUT_APAGADO_SEG = 120
-
-
-def _tipo_procesos(valor: str) -> int:
-    """`type=` de argparse para `--procesos`: mismo patrón que
-    `scripts/procesar_carpeta.py::_tipo_procesos` -- valida contra el tope
-    duro ACÁ, no en `construir_aplicacion`, para que un valor inválido falle
-    con un mensaje de `argparse` claro antes de tocar Postgres."""
-    return despacho_paralelo.validar_grado_concurrencia(int(valor))
 
 
 class _ServidorConHilos(socketserver.ThreadingMixIn, WSGIServer):
@@ -144,14 +135,14 @@ def construir_aplicacion(
 ) -> tuple[AplicacionWsgi, ServicioCorridasReal]:
     """Arma la aplicación WSGI real: `ServicioCorridasReal` sobre `engine`.
 
-    Separado de `main()` para poder ejercitarlo en tests
-    (`tests/scripts/test_servir_panel.py`) sin pasar por argparse ni por
-    Postgres real -- mismo patrón que `scripts/procesar_carpeta.py::ejecutar`.
+    Separado de `servir()` para poder ejercitarlo en tests
+    (`tests/comandos/test_servir.py`) sin pasar por argparse ni por
+    Postgres real -- mismo patrón que `comandos/procesar.py::ejecutar`.
 
     Devuelve `(aplicacion, servicio)`, no sólo `aplicacion` (revisión
-    adversarial crítico 2): `main()` necesita el `servicio` para poder
+    adversarial crítico 2): `servir()` necesita el `servicio` para poder
     pedirle `solicitar_apagado()`/`esperar_despachos_en_curso()` ante
-    `KeyboardInterrupt` -- devolver sólo la app WSGI dejaba a `main()` sin
+    `KeyboardInterrupt` -- devolver sólo la app WSGI dejaba a `servir()` sin
     forma de alcanzar los hilos de despacho que lanzó.
 
     `db_url`/`procesos` viajan hasta `ServicioCorridasReal`: cada corrida
@@ -164,7 +155,7 @@ def construir_aplicacion(
     WSGI devuelta se envuelve ENTERA con `autenticacion_panel.exigir_autenticacion`
     -- toda ruta, incluidas las que sólo leen, exige HTTP Basic Auth contra
     ese secreto. `None` (default) preserva el wiring previo sin autenticar,
-    tal como lo siguen usando los tests que no pasan `secreto` -- `main()`
+    tal como lo siguen usando los tests que no pasan `secreto` -- `servir()`
     es quien decide, según el modo de arranque, si hay `secreto` para pasar
     acá (ver `_resolver_secreto_para_arranque`).
 
@@ -174,7 +165,7 @@ def construir_aplicacion(
     ver `lanzador_corrida.recuperar_corridas_abandonadas` (revisión
     adversarial crítico 1: la versión anterior asumía que CUALQUIER corrida
     no terminal estaba abandonada, lo cual es falso mientras
-    `scripts/procesar_carpeta.py` siga corriendo contra la misma base).
+    `comandos.procesar.ejecutar` siga corriendo contra la misma base).
     `margen_inactividad`/`ahora` son un passthrough para tests (mismo patrón
     que `reloj` en `embudo_corrida.construir_embudo`); producción usa el
     default y el reloj real.
@@ -201,41 +192,10 @@ def construir_aplicacion(
     return aplicacion, servicio
 
 
-def _parsear_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db-url", default=_DB_URL_DEFAULT, help=f"URL de Postgres (default: {_DB_URL_DEFAULT})")
-    parser.add_argument("--puerto", type=int, default=_PUERTO_DEFAULT)
-    parser.add_argument(
-        "--raiz",
-        type=Path,
-        default=Path("."),
-        help="raíz autorizada para lanzar corridas nuevas vía POST /corridas",
-    )
-    parser.add_argument(
-        "--procesos",
-        type=_tipo_procesos,
-        default=despacho_paralelo.grado_de_concurrencia_por_defecto(),
-        help=(
-            "grado de concurrencia de CADA corrida despachada desde el panel "
-            "(ProcessPoolExecutor); mismo default y mismo tope duro que "
-            "scripts/procesar_carpeta.py --procesos"
-        ),
-    )
-    parser.add_argument(
-        "--escuchar-red",
-        action="store_true",
-        help=(
-            "expone el panel a toda la red del instituto (bindea a todas las interfaces) "
-            "en vez de sólo a 127.0.0.1. Sin autenticación ni TLS -- pedirlo a propósito."
-        ),
-    )
-    return parser.parse_args()
-
-
 def _resolver_host(*, escuchar_red: bool) -> str:
     """Sólo `127.0.0.1` salvo pedido explícito -- ver el docstring del módulo.
 
-    Separada de `main()` para poder fijar la decisión con un test unitario
+    Separada de `servir()` para poder fijar la decisión con un test unitario
     sin levantar ningún servidor real.
     """
     return _HOST_TODAS_LAS_INTERFACES if escuchar_red else _HOST_LOCAL
@@ -253,7 +213,7 @@ def _resolver_secreto_para_arranque(*, escuchar_red: bool) -> bytes | None:
       el panel a toda la red del instituto sin autenticación configurada
       es EXACTAMENTE el agujero que esta feature cierra (`POST /corridas`
       puede lanzar horas de CPU sobre cualquier ruta bajo `--raiz`) -- se
-      relanza la excepción para que `main()` falle ANTES de conectar a
+      relanza la excepción para que `servir()` falle ANTES de conectar a
       Postgres, mismo criterio que ya usa con el pepper.
     - **Una fuente SÍ está configurada pero mal** (`ErrorSecretoPanelInvalido`
       -- secreto por debajo del piso mínimo, revisión de seguridad
@@ -261,10 +221,10 @@ def _resolver_secreto_para_arranque(*, escuchar_red: bool) -> bytes | None:
       tolera, tenga o no `--escuchar-red`. Degradarlo a "arrancar sin
       autenticación" sería peor que fallar: quien configuró un secreto
       (aunque sea uno inválido) cree que el panel está protegido. No se
-      captura acá a propósito -- se deja propagar para que `main()` la
+      captura acá a propósito -- se deja propagar para que `servir()` la
       trate igual que cualquier otro error de configuración fuerte.
 
-    Separada de `main()` para poder fijar la decisión con un test unitario
+    Separada de `servir()` para poder fijar la decisión con un test unitario
     sin levantar ningún servidor real (mismo patrón que `_resolver_host`).
     """
     try:
@@ -275,9 +235,12 @@ def _resolver_secreto_para_arranque(*, escuchar_red: bool) -> bytes | None:
         return None
 
 
-def main() -> int:
-    args = _parsear_args()
-
+def servir(*, db_url: str, puerto: int, raiz: Path, procesos: int, escuchar_red: bool) -> int:
+    """Composición completa del panel -- antes vivía en un `servir()` propio de
+    este módulo, con su propio `argparse`. `cli.py::_comando_servir` ya
+    resolvió banderas/config antes de llamar a esta función; acá sólo queda
+    la composición real (pepper, secreto, engine, servidor WSGI).
+    """
     # Decisión "el pepper HMAC" (feature `despachador-desde-el-panel`): se
     # verifica ACÁ, antes de tocar Postgres, y no se guarda el valor en
     # ningún lado -- cada proceso hijo lo vuelve a leer de su propio entorno
@@ -308,7 +271,7 @@ def main() -> int:
         file=sys.stderr,
     )
     try:
-        secreto = _resolver_secreto_para_arranque(escuchar_red=args.escuchar_red)
+        secreto = _resolver_secreto_para_arranque(escuchar_red=escuchar_red)
     except ErrorSecretoPanel as error:
         print(
             f"No se puede arrancar el panel: {error}",
@@ -316,26 +279,26 @@ def main() -> int:
         )
         return 1
 
-    print(f"Conectando a Postgres: {args.db_url}", file=sys.stderr)
+    print(f"Conectando a Postgres: {db_url}", file=sys.stderr)
     # `construir_engine_postgres` (openspec `paralelismo-de-procesamiento` PR 1)
     # arma el pool con `pool_pre_ping`/`pool_recycle` contra RDS -- este panel
     # es un proceso de larga vida, exactamente el perfil que una conexión
     # muerta del pool afecta (ver docstring de esa función).
-    engine = construir_engine_postgres(args.db_url)
+    engine = construir_engine_postgres(db_url)
     aplicacion, servicio = construir_aplicacion(
-        engine, args.raiz, db_url=args.db_url, procesos=args.procesos, secreto=secreto
+        engine, raiz, db_url=db_url, procesos=procesos, secreto=secreto
     )
 
-    host = _resolver_host(escuchar_red=args.escuchar_red)
-    servidor = make_server(host, args.puerto, aplicacion, server_class=_ServidorConHilos)
-    if args.escuchar_red:
+    host = _resolver_host(escuchar_red=escuchar_red)
+    servidor = make_server(host, puerto, aplicacion, server_class=_ServidorConHilos)
+    if escuchar_red:
         print(
-            f"Panel sirviendo en TODA la red en el puerto {args.puerto} -- "
+            f"Panel sirviendo en TODA la red en el puerto {puerto} -- "
             "sin autenticación ni TLS (--escuchar-red)",
             file=sys.stderr,
         )
     else:
-        print(f"Panel sirviendo en http://127.0.0.1:{args.puerto}/panel/{{id_corrida}}", file=sys.stderr)
+        print(f"Panel sirviendo en http://127.0.0.1:{puerto}/panel/{{id_corrida}}", file=sys.stderr)
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
@@ -380,7 +343,3 @@ def main() -> int:
     finally:
         servidor.server_close()
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -1,16 +1,20 @@
 """Caracterización de la salida del reporte de corrida (Entrega 0, Requisito 5).
 
-Fija el texto exacto que `scripts/procesar_carpeta.py::_despachar_grupos` (el
-camino `procesos > 1`) imprime al leer `MetricasDespacho`
+Fija el texto exacto que `anonimizacion.comandos.procesar::_despachar_grupos`
+(el camino `procesos > 1`) imprime al leer `MetricasDespacho`
 (`despacho_paralelo.py:330`) -- distinto del OTRO sistema de métricas
 (`observabilidad/metricas.py`), que E5 retira (`design.md`, "Cuidado" en la
 propuesta). Monkeypatchea `despachar_en_paralelo` para simular
 recreaciones/reprocesos conocidos sin levantar `ProcessPoolExecutor` real.
+
+Corrección mecánica (auditoria-y-poda, E4): mismo caso que
+`test_codigos_cuarentena.py` -- el módulo se movió de `scripts/` (cargado
+por ruta) a `anonimizacion.comandos.procesar` (paquete real); ninguna
+aserción de abajo cambia.
 """
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from types import ModuleType
 
@@ -18,14 +22,11 @@ import pytest
 
 pytestmark = pytest.mark.caracterizacion
 
-_RUTA_SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "procesar_carpeta.py"
-
 
 def _cargar_script() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("_procesar_carpeta_reporte", _RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
+    """Import normal -- ver nota de corrección mecánica arriba."""
+    from anonimizacion.comandos import procesar as modulo
+
     return modulo
 
 

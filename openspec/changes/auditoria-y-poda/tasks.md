@@ -250,43 +250,105 @@ su propia base) evitan ese patrón; el archivo existente **no se toca** acá.
       `ruff check .` → All checks passed. No superó 400 líneas (ver tamaño real en
       apply-progress), no hizo falta partir en PR3a/PR3b.
 
-## Fase 4 — Entrega 4: CLI instalable por wheel (PR4a `procesar`, PR4b `servir`)
+## Fase 4 — Entrega 4: CLI instalable por wheel (PR4, consolidado desde PR4a/PR4b)
 
-- [ ] 4.1 `tests/empaquetado/test_wheel_instalado.py`: fixture de sesión `uv build --wheel` +
-      `uv venv --system-site-packages` + `uv pip install --no-deps`; test de guarda de
-      honestidad (subproceso confirma `anonimizacion.__file__` y `shutil.which` dentro del venv
-      efímero, ninguno en el checkout).
-- [ ] 4.2 Test estático de empaquetado: el `RECORD` del wheel incluye módulos de `comandos/`
-      y ningún `scripts/`.
-- [ ] 4.3 RED — OBLIGATORIA: subproceso en el venv que **stubea `diagnosticar`** (hallazgos OK)
-      **y `ejecutar`** (stub retorna 0), llama `anonimizacion.cli.main(["procesar", ...])`;
-      afirma código 0 y stub invocado. DEBE fallar hoy: sin el stub de `diagnosticar`,
-      `_reportar_diagnostico` corta en `cli.py:201` y nunca llega a `_cargar_script`
-      (`cli.py:204`), dando falso verde con el defecto vivo.
-- [ ] 4.4 Marcar 4.1/4.2/4.3 con `empaquetado`, incluido por defecto en `-m "not postgres"`.
-- [ ] 4.5 `git mv` puro (0 líneas por `git diff -M`, commit separado): `scripts/procesar_carpeta.py`
-      → `src/anonimizacion/comandos/procesar.py`; `tests/scripts/test_procesar_carpeta.py` →
-      `tests/comandos/test_procesar.py`.
-- [ ] 4.6 GREEN — editar `comandos/procesar.py`: quitar segundo `argparse`, monkeypatch de
-      `sys.argv`; importar `_DB_URL_DEFAULT` desde `configuracion.py`; `cli.py` reemplaza
-      `_cargar_script`/`spec_from_file_location` por import directo + `comandos.procesar.ejecutar(...)`
-      con argumentos con nombre.
-- [ ] 4.7 Adaptar `tests/comandos/test_procesar.py`: `spec_from_file_location` → import normal
-      (mismo cuerpo de test, sin reescritura).
-- [ ] 4.8 `git mv` puro: `scripts/servir_panel.py` → `src/anonimizacion/comandos/servir.py`;
-      `tests/scripts/test_servir_panel.py` → `tests/comandos/test_servir.py`.
-- [ ] 4.9 GREEN — editar `comandos/servir.py` análogo a 4.6; `cli.py` despacha a
+- [x] 4.0 (no en el plan original, prerrequisito bloqueante) — commit `889a36d`: corregidos 2
+      tests de `tests/caracterizacion/test_contrato_cli.py` (`test_procesar_sin_banderas_...`,
+      `test_procesar_devuelve_1_sin_llegar_a_cargar_script_...`) que monkeypatcheaban
+      `cli._cargar_script` y afirmaban sobre el `argv` armado para `sys.argv` -- el MECANISMO
+      que esta entrega elimina, no la superficie observable que D1 de `design.md` exige y que
+      el propio docstring del archivo ya declaraba (defecto de PR0, no visto por la revisión
+      adversarial). Reescritos para afirmar sobre los valores efectivos de
+      `ConfiguracionOperador` que llegan a `diagnosticar()` y sobre el código/mensaje de salida
+      -- ningún assert depende de `_cargar_script`/`sys.argv`. RED confirmado por mutación
+      (rompiendo `_resolver`/el corte temprano de `_comando_procesar`), revertido antes del
+      commit. Los 7 tests del archivo siguen en verde.
+- [x] 4.1 `tests/empaquetado/test_wheel_instalado.py` (commit `8d4866b`): fixture de sesión
+      `uv build --wheel` + `uv venv --system-site-packages` + `uv pip install --no-deps`; test
+      de guarda de honestidad (subproceso confirma `anonimizacion.__file__` y `shutil.which`
+      dentro del venv efímero, ninguno en el checkout).
+- [x] 4.2 Test estático de empaquetado: el wheel (inspeccionado por `zipfile`, no el `RECORD`)
+      incluye `anonimizacion/comandos/procesar.py`/`servir.py` y ningún archivo bajo `scripts/`.
+- [x] 4.3 RED — OBLIGATORIA: subproceso en el venv que stubea `diagnosticar` (hallazgos OK) y
+      `cli.comandos_procesar.ejecutar` (stub retorna 0), llama
+      `anonimizacion.cli.main(["procesar", ...])`; afirma código 0 y stub invocado 1 vez.
+      Confirmado en ROJO contra el código anterior a esta entrega: wheel construido desde el
+      commit `ad9521c` (worktree efímero), mismo mecanismo de venv, mismo subproceso sin
+      mockear `comandos_procesar` (no existía) -- `FileNotFoundError` en `_cargar_script`
+      buscando `scripts/procesar_carpeta.py` dentro del venv, exit code 1. Evidencia completa
+      en Engram `sdd/auditoria-y-poda/apply-progress`.
+- [x] 4.4 Marcador `empaquetado` agregado a `pyproject.toml`, incluido por defecto en
+      `-m "not postgres"` (confirmado: 1039 tests seleccionados, 28 deselected = sólo postgres).
+      Costo medido: 3 tests en ~5.3s (build ~1s, venv ~0.1s, install ~0.9s, subprocesos
+      ~0.1-4s) -- bien por debajo del techo de ~45s de `design.md`.
+- [x] 4.5 `git mv` puro (commit `a420c8e`, 0 líneas por `git diff -M --summary`, 100% rename):
+      `scripts/procesar_carpeta.py` → `src/anonimizacion/comandos/procesar.py`;
+      `scripts/servir_panel.py` → `src/anonimizacion/comandos/servir.py`;
+      `tests/scripts/test_procesar_carpeta.py` → `tests/comandos/test_procesar.py`;
+      `tests/scripts/test_servir_panel.py` → `tests/comandos/test_servir.py` (ambos módulos y
+      ambos tests en el mismo commit de mudanza pura, per consolidación de PR4a/PR4b indicada
+      por el orquestador).
+- [x] 4.6 GREEN (commit `270f77e`) — `comandos/procesar.py`: quitado `_parsear_args`/
+      `_tipo_procesos`/`main()` (el segundo `argparse`); importa `_DB_URL_DEFAULT` desde
+      `configuracion.py`. `cli.py` reemplaza `_cargar_script`/`spec_from_file_location` por
+      `from anonimizacion.comandos import procesar as comandos_procesar` +
+      `comandos_procesar.ejecutar(...)` con argumentos con nombre; la composición que hacía
+      `main()` (pepper, `MotorPii`, `construir_engine_postgres`) se mudó a
+      `cli.py::_comando_procesar`. `_tipo_procesos` (validación del tope duro) se aplica una
+      sola vez, en el `argparse` de `cli.py`, para `procesar` y `servir`.
+- [x] 4.7 Adaptado `tests/comandos/test_procesar.py` (commit `270f77e`): `_cargar_script()` pasa
+      a import normal; mismo cuerpo en los 12 tests que llaman `modulo.ejecutar(...)` directo
+      (sin reescritura). El único test que ejercitaba `main()`
+      (`test_main_usa_construir_engine_postgres_no_create_engine_pelado`) se retiró de este
+      archivo -- esa composición ya no vive en `comandos/procesar.py` -- y su garantía se
+      recreó en `tests/test_cli.py::test_procesar_usa_construir_engine_postgres_no_create_engine_pelado`.
+- [x] 4.8 `git mv` puro -- ver 4.5 (mismo commit, ambos módulos juntos).
+- [x] 4.9 GREEN (commit `270f77e`) — `comandos/servir.py`: `main()`/`_parsear_args`/
+      `_tipo_procesos` reemplazados por `servir(*, db_url, puerto, raiz, procesos,
+      escuchar_red)` con argumentos con nombre (misma composición interna: pepper, secreto,
+      `construir_aplicacion`, servidor WSGI, apagado cooperativo). `cli.py` despacha a
       `comandos.servir.servir(...)`.
-- [ ] 4.10 Adaptar `tests/comandos/test_servir.py`, los 5 `monkeypatch.setattr(cli, "_cargar_script", ...)`
-      de `tests/test_cli.py` (mockear la función de comando, no el cargador), y
-      `tests/test_configuracion.py:144-164`.
-- [ ] 4.11 Confirmar `_DB_URL_DEFAULT` en un solo lugar (`configuracion.py:52`); las copias de
-      `procesar_carpeta.py:80`/`servir_panel.py:107` mueren con la mudanza.
-- [ ] 4.12 Eliminar la excepción `per-file-ignores` de `pyproject.toml:74-78` si el import sin
-      uso se va con la mudanza.
-- [ ] 4.13 Verificación PR4a/4b: `uv run pytest -q -m "not postgres"`, `-m postgres` y
-      `-m empaquetado` verdes; 4.3 pasa (antes fallaba); el test de contrato del CLI de E0
-      (0.5) sigue pasando **sin modificarse**.
+- [x] 4.10 Adaptados (commit `270f77e`):
+      - `tests/comandos/test_servir.py`: `_cargar_script()` → import normal; los 14 tests que
+        llamaban `modulo.main()` con `monkeypatch.setattr("sys.argv", ...)` pasan a llamar
+        `modulo.servir(...)` con argumentos con nombre; retirados los 3 tests que ejercitaban
+        el `argparse` propio del módulo (`test_parsear_args_expone_procesos_...`,
+        `test_parsear_args_rechaza_procesos_...`, `test_el_flag_escuchar_red_es_explicito_...`)
+        -- ese `argparse` ya no existe ahí, vive en `cli.py`.
+      - `tests/test_cli.py`: los 4 `monkeypatch.setattr(cli, "_cargar_script", ...)` (no 5 --
+        uno de los 5 originales vivía en `test_contrato_cli.py`, corregido en 4.0) pasan a
+        mockear `cli.comandos_procesar.ejecutar`/`cli.comandos_servir.servir` (la función de
+        comando, no el cargador); se agregan las 3 garantías movidas desde
+        `tests/comandos/test_servir.py`/`test_procesar.py` (tope duro de `--procesos` para
+        `procesar` y `servir`, default de `--escuchar-red`, `construir_engine_postgres` no
+        `create_engine` pelado).
+      - `tests/test_configuracion.py:144-164`: el centinela de `_DB_URL_DEFAULT` pasa de cargar
+        los 2 scripts por ruta a importar `anonimizacion.comandos.{procesar,servir}` normal y
+        confirmar identidad (`is`, no sólo `==`) contra `configuracion._DB_URL_DEFAULT` -- la
+        triplicación ya es estructuralmente imposible, no sólo no observada todavía.
+      - **Hallazgo no previsto en el plan** (commit `270f77e`): 3 archivos de
+        `tests/caracterizacion/` (`test_codigos_cuarentena.py`, `test_pipeline_punta_a_punta.py`,
+        `test_reporte_corrida.py`) también cargaban `scripts/procesar_carpeta.py` por ruta como
+        fixture para llegar a `ejecutar()` real -- corrección puramente mecánica del `import`
+        (mismo patrón que 4.7), CERO líneas de aserción de comportamiento tocadas (confirmado
+        con `git diff`: sólo cambian el loader, imports y prosa de docstring). No estaba en el
+        alcance original de 4.10 porque el plan asumía que sólo `test_contrato_cli.py` refería
+        a los scripts viejos; verificado que no es así. `git diff feat/auditoria-y-poda --stat
+        -- tests/caracterizacion/` por lo tanto NO queda vacío -- toca 4 archivos (los 3 de
+        arriba + `test_contrato_cli.py` de 4.0) -- documentado explícitamente, no ocultado.
+- [x] 4.11 Confirmado `_DB_URL_DEFAULT` en un solo lugar: `rg "^_DB_URL_DEFAULT\s*=" src/` →
+      un solo resultado, `configuracion.py:49`.
+- [x] 4.12 Eliminada la excepción `per-file-ignores` de `pyproject.toml` (commit `270f77e`): el
+      F401 que la justificaba (import sin uso en `tests/scripts/test_servir_panel.py`) se fue
+      con la mudanza; confirmado con `ruff check --select F401 tests/comandos/test_servir.py`.
+- [x] 4.13 Verificación PR4: `uv run pytest -q -m "not postgres"` → 1038 passed, 1 skipped
+      (symlink Windows, preexistente), 0 failed (el flake preexistente
+      `test_despachar_en_paralelo_..._distintos` NO se manifestó en esta corrida -- confirmado
+      aislado y dentro de `tests/trabajadores/test_despacho_paralelo.py` completo, 15/15,
+      pickling real verificado empíricamente tras la mudanza). `-m postgres` → 28 passed.
+      `-m empaquetado` → 3 passed (incluidos en el conteo de `not postgres`). `ruff check .` →
+      All checks passed. El test de contrato del CLI de E0 (0.5) sigue pasando, con la
+      corrección de 4.0 documentada como prerrequisito, no como excepción silenciosa.
 
 ## Fase 5 — Entrega 5: retiro de Celery/Redis y métricas muertas (PR5)
 
