@@ -467,27 +467,50 @@ antes de cualquier poda**, en `04 - Desarrollo/pipeline de anonimizacion` (bitá
 arquitectura, formato del vault existente):
 
 - [ ] 6.1 Migrar invariante 1/8: 875 MB RSS por `MotorPii` (ctypes) — evidencia
-      `despacho_paralelo.py:79-80,217,339,752`.
+      `despacho_paralelo.py:79-80,217,339,752`. **Borrador redactado y verificado contra el
+      código actual** (líneas reales al 2026-09-16: `79-87,217,337,748`), pendiente de
+      aprobación humana para pegarlo en el vault — ver PR6a, apply-progress.
 - [ ] 6.2 Migrar invariante 2/8: razonamiento de concurrencia (2x núcleos; umbral de grupo
-      tóxico 3→4) — `despacho_paralelo.py:68-117,160,171,179`.
+      tóxico 3→4) — `despacho_paralelo.py:68-117,160,171,179`. **Borrador redactado.**
+      **Corrección de precisión encontrada**: el código corrige el conteo de cargas de
+      3 A 2, no de 3 a 4 (el "4" real en el código es `--procesos 4` de una reproducción de
+      un bug DISTINTO de atribución causal). El borrador documenta el número correcto (2) y
+      señala la imprecisión de este enunciado de `spec.md` — no se corrigió la spec en este
+      batch (fuera de alcance de `sdd-apply`); requiere decisión del orquestador/usuario.
 - [ ] 6.3 Migrar invariante 3/8: motivo de cada `noqa: C901` — `pyproject.toml:56-72`.
+      **Borrador redactado y verificado** (6 funciones exentas en 4 archivos, confirmado
+      contra el código).
 - [ ] 6.4 Migrar invariante 4/8: cartel anti-espejo esquema Arrow —
-      `tests/salida/test_esquema_arrow_de_exportacion.py:1-13`.
+      `tests/salida/test_esquema_arrow_de_exportacion.py:1-13`. **Borrador redactado y
+      verificado**, líneas vigentes sin cambios.
 - [ ] 6.5 Migrar invariante 5/8: cartel anti-espejo codec de señal —
-      `tests/salida/test_codec_senal.py`.
+      `tests/salida/test_codec_senal.py`. **Borrador redactado y verificado**, vigente.
 - [ ] 6.6 Migrar invariante 6/8: latencias medidas Postgres (54,9 ms / ~366 ms) + timeout 5s —
-      `salida/destinos/postgres.py:87-135`.
+      `salida/destinos/postgres.py:87-135`. **Borrador redactado y verificado**, vigente
+      (bloque real `57-165`, el rango citado en la spec cae dentro de ese bloque).
 - [ ] 6.7 Migrar invariante 7/8: constantes de calibración ECG (`_ANCHO_TRAZO_PT=0.43`, r=1,000,
       umbral de ruido) — `extraccion/trazos_pymupdf.py:22`, `extraccion/senal_ecg.py:10-85`.
+      **Borrador redactado y verificado**, vigente.
 - [ ] 6.8 Migrar invariante 8/8: trade-off del piso de confianza del DNI —
-      `pii/reconocedores/dni_ar.py:43`.
+      `pii/reconocedores/dni_ar.py:43`. **Borrador redactado y verificado**, vigente.
 - [ ] 6.9 Verificación de migración: 8 notas existen y enlazadas; listar los 8 punteros
       (`# ... -- ver D-0XX en Obsidian`) antes de tocar código. Compuerta de aceptación previa
-      a abrir cualquier PR de poda.
-- [ ] 6.10 GREEN — compuerta mecánica `tests/prosa/test_poda_no_toca_codigo.py` (ast antes/
+      a abrir cualquier PR de poda. **No cumplida todavía a propósito**: los 8 borradores
+      están listos y verificados contra el código (ver apply-progress y
+      `scratchpad/obsidian_borradores/`), pero NINGUNO se escribió en el vault real — la
+      escritura requiere aprobación explícita de un integrante del equipo (AGENTS.md,
+      restricción del prompt de esta sesión). Además, el vault no usa hoy una convención de
+      IDs `D-0XX`: los punteros de los borradores referencian el TÍTULO de la nota, no un ID
+      -- decisión a confirmar con el equipo antes de insertar los punteros reales en PR6b-f.
+- [x] 6.10 GREEN — compuerta mecánica `tests/prosa/test_poda_no_toca_codigo.py` (ast antes/
       después, normalizar quitando docstrings iniciales, `ast.dump(include_attributes=False)`).
       RED de control: aplicar un cambio de prueba que altera código (ej. renombrar variable),
-      confirmar rojo, revertir.
+      confirmar rojo, revertir. Commit `2633f1e` en `pr6a/compuerta-ast` (desde
+      `feat/auditoria-y-poda`@`8964a72`). Demostrado en las DOS direcciones (evidencia
+      completa en apply-progress): (a) recorte de un docstring real en `cli.py` → compuerta
+      PASA; (b) mutación de un operador real (`is not None` → `is None`) en el mismo archivo
+      → compuerta FALLA, reportando el módulo. `src/` restaurado y confirmado limpio
+      (`git status --porcelain -- src/` vacío) después de ambas demostraciones.
 - [ ] 6.11 PR6a — grupo 1 (`dominio/`, `ingesta/` salvo `lanzador_corrida.py`,
       `configuracion.py`): docstrings ≤2 líneas; compuerta AST verde.
 - [ ] 6.12 PR6b — grupo 2 (`extraccion/`, `deteccion/`, `parseo/`): recortar; insertar puntero
