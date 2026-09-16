@@ -6,6 +6,8 @@ hijo `spawn` -- rompe el pool ENTERO (`BrokenProcessPool`), no sólo esa tarea. 
 todo lo que cruza el límite de proceso vive acá, a nivel de módulo, nunca
 closures/lambdas (tampoco picklables)."""
 
+# Procesos del SO y no una cola (Celery+Redis, retirada): nada pasa por un broker y el
+# operador es un médico. Ver docs/pipeline.md, "Concurrencia".
 from __future__ import annotations
 
 import itertools
