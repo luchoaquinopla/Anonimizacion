@@ -274,10 +274,10 @@ def inicializar_trabajador(
 
 def procesar_grupo_en_trabajador(corrida_id: str, grupo: Grupo) -> list[dict[str, object]]:
     """Función de MÓDULO (picklable) que un hijo ya inicializado ejecuta por
-    grupo. Delega en `tareas.procesar_grupo` -- la MISMA tarea Celery real
-    que ya invoca `scripts/procesar_carpeta.py` en el camino secuencial, sin
-    reimplementar nada del procesamiento en sí. Un closure/lambda acá NO
-    funcionaría: pickle no puede serializarlos."""
+    grupo. Delega en `tareas.procesar_grupo` -- la MISMA función que ya
+    invoca `comandos/procesar.py` en el camino secuencial, sin reimplementar
+    nada del procesamiento en sí. Un closure/lambda acá NO funcionaría:
+    pickle no puede serializarlos."""
     from anonimizacion.trabajadores import tareas
 
     return tareas.procesar_grupo(corrida_id, grupo)
@@ -329,11 +329,9 @@ def _error_grupo_perdido(referencia: Referencia, corrida_id: str) -> ErrorDocume
 @dataclass
 class MetricasDespacho:
     """Contadores de eventos de RECUPERACIÓN del despachador -- ni documentos
-    ni etapas del pipeline (eso ya lo cubre
-    `observabilidad/metricas.py::ColectorMetricas`, con su propio vocabulario
-    de `Etapa`/`CodigoErrorDocumento`, y vive por proceso HIJO, no en el
-    padre; los eventos de acá son de la capa de orquestación de procesos, en
-    el padre, y no tienen equivalente ahí).
+    ni etapas del pipeline (eso es responsabilidad del ejecutor; los eventos
+    de acá son de la capa de orquestación de procesos, en el padre, y no
+    tienen equivalente ahí).
 
     ALTO 1 de revisión adversarial: la recuperación tiene un costo real en
     recargas completas de `MotorPii` (~875 MB medidos cada una) que antes no
@@ -345,11 +343,9 @@ class MetricasDespacho:
     `despachar_en_paralelo`, sección "Costo real de la recuperación", para
     la explicación completa de por qué el costo es tan alto.
 
-    Mismo patrón que `MetricasEnMemoria`: contadores simples, expuestos vía
-    `snapshot()`, sin lock -- a diferencia de `MetricasEnMemoria` (que
-    corre en un worker de Celery con tareas concurrentes en el mismo
-    proceso), `_EstadoDespacho` es de un solo hilo en el proceso PADRE, así
-    que no hace falta sincronización.
+    Contadores simples, expuestos vía `snapshot()`, sin lock: `_EstadoDespacho`
+    es de un solo hilo en el proceso PADRE, así que no hace falta
+    sincronización.
     """
 
     recreaciones_de_pool_principal: int = 0

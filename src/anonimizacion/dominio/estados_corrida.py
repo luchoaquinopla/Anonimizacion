@@ -25,7 +25,7 @@ Los estados intermedios de documento (`CLASIFICADO`, `EXTRAIDO_MINIMO`,
 etapas que sí se implementó (`configurar_extractor` en `trabajadores/tareas.py`)
 pero se eliminó en este mismo cambio: la unidad de trabajo real es el GRUPO
 completo procesado en una sola llamada síncrona, no un documento avanzando
-etapa por etapa entre tareas Celery separadas -- ver
+etapa por etapa entre tareas separadas -- ver
 `openspec/changes/procesamiento-por-grupo/exploration.md`. Si la reanudación
 por grupo se construye, decidir ahí si estos estados intermedios siguen
 teniendo sentido o si conviene colapsarlos a una granularidad más gruesa.
