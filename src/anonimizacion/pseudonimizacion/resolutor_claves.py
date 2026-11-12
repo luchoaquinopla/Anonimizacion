@@ -1,48 +1,12 @@
-"""Resolución de claves de identidad -- el laboratorio como puente (spec `patient-pseudonymization`).
+"""Resolución de claves de identidad -- el laboratorio como puente. El ECG no trae DNI, así que
+`resolver_claves` calcula sólo `id_alt_paciente` (nombre+fecha_nac) y busca el puente que el
+laboratorio del mismo paciente ya registró; sin puente, `CLAVE_PII_NO_RESUELTA` a cuarentena
+(recomputable en batch reprocesando).
 
-Ver design.md, decisión "Pseudonimización con HMAC y doble clave de
-identidad". Problema que resuelve este módulo: el ECG no trae DNI (solo un ID
-interno de estudio), así que no puede calcular `id_paciente` directamente.
-Pero el laboratorio SÍ trae nombre + DNI + fecha de nacimiento, y por lo
-tanto puede calcular ambas claves de un mismo paciente y dejar registrado el
-puente `id_alt_paciente -> id_paciente`.
-
-Flujo real:
-
-1. Llega el laboratorio de un paciente -> `resolver_claves` calcula
-   `id_paciente` (vía DNI) y `id_alt_paciente` (vía nombre+fecha_nac), y
-   registra el puente en `ResolutorClaves`.
-2. Llega el ECG del mismo paciente (antes o después no importa) -> como no
-   tiene DNI, `resolver_claves` calcula solo `id_alt_paciente` y busca el
-   puente. Si el lab de ese paciente YA se procesó, lo encuentra y devuelve
-   el `id_paciente` real.
-3. Si el ECG llega ANTES que el lab de ese paciente (o el lab nunca llega),
-   no hay puente que buscar -> no hay ninguna clave resoluble ->
-   `ErrorParseo(CLAVE_PII_NO_RESUELTA)` -> el documento va a cuarentena.
-   El linkage se recomputa en batch (design.md, "Migration / Rollout"), así
-   que reprocesar ese mismo ECG más tarde (una vez que el lab ya se
-   proceso) es idempotente y ahora sí resuelve.
-
-`ResolutorClaves` es la tabla de resolución en memoria para esta fase (PR5).
-En Fase 7 (`salida/`, ver tasks.md 7.1) se respalda con la tabla Postgres
-`vinculo_paciente(id_alt_paciente, id_paciente)` (design.md, decisión Q1) --
-`EscritorPostgres` (`salida/destinos/postgres.py`) implementa esa tabla real
-con `registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`.
-
-Fix post-merge (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
-persistencia del puente id_alt_paciente en Postgres entre corridas"):
-durante un largo tiempo `EscritorPostgres` implementó ese respaldo, pero
-NADA en el flujo real (`EjecutorPipeline`, `scripts/procesar_carpeta.py`) lo
-usaba -- el ejecutor siempre recibía un `ResolutorClaves()` en memoria,
-vacío en cada corrida del programa. `ResolutorClavesPostgres` (más abajo) es
-el adaptador que cierra ese gap: implementa el MISMO contrato
-(`registrar_puente`/`resolver`/`es_ambiguo`) que `ResolutorClaves`, pero
-delegando cada llamada directo a un `EscritorPostgres` inyectado -- sin
-caché propia, cada llamada golpea la tabla `vinculo_paciente` (trabajo por
-lote, no algo sensible a latencia). `resolver_claves` (la función libre de
-este módulo) acepta cualquier objeto que cumpla `ResolutorClavesProtocol`,
-así que funciona igual de bien con cualquiera de las dos implementaciones
-sin necesitar saber cuál es.
+Fix: `ResolutorClavesPostgres` (ver `sdd/pdf-pii-anonymization/apply-progress`, sección "Fix:
+persistencia del puente id_alt_paciente en Postgres entre corridas") cierra el gap de que nada
+en el flujo real usaba el respaldo Postgres del puente -- delega a `EscritorPostgres` inyectado,
+mismo contrato que `ResolutorClaves` (en memoria), sin caché propia.
 """
 
 from __future__ import annotations
@@ -59,13 +23,8 @@ from anonimizacion.pseudonimizacion.claves import (
 
 
 class ResolutorClavesProtocol(Protocol):
-    """Contrato duck-typed que `resolver_claves` necesita del puente `id_alt_paciente -> id_paciente`.
-
-    Implementado por `ResolutorClaves` (en memoria, ver más abajo) y por
-    `ResolutorClavesPostgres` (persistente, ver más abajo) -- misma firma,
-    dos backends distintos, sin que `resolver_claves` tenga que conocer cuál
-    de los dos recibió.
-    """
+    """Contrato duck-typed del puente `id_alt_paciente -> id_paciente`; implementado por
+    `ResolutorClaves` (memoria) y `ResolutorClavesPostgres` (persistente), misma firma."""
 
     def registrar_puente(self, id_alt_paciente: str, id_paciente: str) -> None: ...
 
@@ -75,38 +34,11 @@ class ResolutorClavesProtocol(Protocol):
 
 
 class ResolutorClaves:
-    """Tabla de resolución `id_alt_paciente -> id_paciente` (puente vía laboratorio).
-
-    Implementación en memoria para PR5; el contrato (`registrar_puente` /
-    `resolver`) es el que Fase 7 respalda con la tabla Postgres
-    `vinculo_paciente`.
-
-    Homónimos y ambigüedad (fix post-PR5): `id_alt_paciente` se deriva SOLO
-    de nombre+fecha_nac (ver `claves.py`), no es un identificador único de
-    persona real. Dos pacientes reales distintos con el mismo nombre y la
-    misma fecha de nacimiento producen el MISMO `id_alt_paciente`. Si eso
-    pasa, `registrar_puente` NO sobrescribe en silencio: marca ese
-    `id_alt_paciente` como ambiguo, y un `id_alt_paciente` ambiguo nunca
-    vuelve a resolver (`resolver` devuelve `None` permanentemente para él,
-    incluso si un registro posterior "desempataría" -- no hay forma
-    automática segura de saber cuál `id_paciente` es el correcto sin
-    intervención humana). Registrar el mismo `id_alt_paciente` con el MISMO
-    `id_paciente` más de una vez (reprocesar el mismo laboratorio) es
-    idempotente y NO dispara ambigüedad.
-
-    Nota de diseño para Fase 7 (tabla Postgres `vinculo_paciente`, ver
-    design.md decisión Q1, tasks.md 7.1): la implementación que respalde
-    esta clase con una tabla real TIENE que preservar esta misma semántica
-    al persistir el puente -- por ejemplo, guardando múltiples filas
-    candidatas por `id_alt_paciente` con un flag `ambiguo` (o tabla de
-    conflictos separada), o una restricción/trigger que detecte en el
-    INSERT que ya existe una fila con el mismo `id_alt_paciente` pero
-    distinto `id_paciente` y marque ambigüedad en vez de pisar la fila
-    existente. Un simple `UPSERT ... ON CONFLICT (id_alt_paciente) DO
-    UPDATE` reintroduciría exactamente este bug (pisaría el puente
-    anterior en silencio) -- quien implemente PR6 no debe usar ese patrón
-    para esta tabla sin resolver primero la detección de conflicto.
-    """
+    """Tabla de resolución `id_alt_paciente -> id_paciente` en memoria. Homónimos reales (mismo
+    nombre+fecha_nac, `id_paciente` distinto) marcan el puente como ambiguo permanentemente --
+    `resolver` nunca vuelve a devolverlo, sin intervención humana; reprocesar el mismo par es
+    idempotente. `EscritorPostgres.registrar_vinculo` MUST preservar esta semántica: un
+    `UPSERT ... ON CONFLICT DO UPDATE` simple pisaría el puente anterior en silencio."""
 
     def __init__(self) -> None:
         self._puentes: dict[str, str] = {}
@@ -137,28 +69,9 @@ class ResolutorClaves:
 
 
 class ResolutorClavesPostgres:
-    """Puente `id_alt_paciente -> id_paciente` persistente (fix post-merge, ver docstring del módulo).
-
-    Implementa `ResolutorClavesProtocol` (mismas firmas que `ResolutorClaves`)
-    delegando cada llamada directo a un `EscritorPostgres` inyectado
-    (`registrar_vinculo`/`resolver_vinculo`/`es_ambiguo`, `salida/destinos/
-    postgres.py`). Deliberadamente SIN caché en memoria propia: cada llamada
-    habla directo con la tabla `vinculo_paciente` -- esto es trabajo por
-    lote, no algo sensible a latencia, y evita tener que mantener
-    sincronizadas dos copias del mismo estado (una en este objeto, otra en
-    la tabla real).
-
-    La semántica de ambigüedad de homónimos (ver docstring de
-    `ResolutorClaves`) ya la implementa `EscritorPostgres.registrar_vinculo`
-    contra la tabla real -- esta clase es un adaptador fino, no reimplementa
-    esa lógica.
-
-    No se tipa el parámetro `escritor` contra `EscritorPostgres` para evitar
-    un import de `salida.destinos.postgres` al cargar este módulo (capa
-    `pseudonimizacion` por debajo de `salida` en la dependencia del
-    pipeline) -- basta con que cumpla `registrar_vinculo`/`resolver_vinculo`/
-    `es_ambiguo`.
-    """
+    """Puente `id_alt_paciente -> id_paciente` persistente (ver docstring del módulo): delega a
+    un `EscritorPostgres` inyectado, sin caché propia. No se tipa contra `EscritorPostgres`
+    directamente para evitar el import cruzado desde `pseudonimizacion` hacia `salida`."""
 
     def __init__(self, escritor: _EscritorVinculoProtocol) -> None:
         self._escritor = escritor
@@ -174,7 +87,7 @@ class ResolutorClavesPostgres:
 
 
 class _EscritorVinculoProtocol(Protocol):
-    """Lo único que `ResolutorClavesPostgres` necesita de `EscritorPostgres` (evita el import cruzado, ver arriba)."""
+    """Lo único que `ResolutorClavesPostgres` necesita de `EscritorPostgres` (evita el import cruzado)."""
 
     def registrar_vinculo(self, id_alt_paciente: str, id_paciente: str) -> None: ...
 
@@ -192,11 +105,7 @@ def resolver_claves(
     etapa: str,
 ) -> ClavesPaciente:
     """Resuelve `ClavesPaciente` para un documento; lanza `CLAVE_PII_NO_RESUELTA` si no se puede.
-
-    `id_documento` no se usa en el cálculo -- se recibe para que quien
-    capture `ErrorParseo` pueda enriquecer el `ErrorDocumento` resultante
-    con el id sin que este módulo tenga que conocer esa estructura.
-    """
+    `id_documento` no se usa en el cálculo, sólo para que el llamador enriquezca el error."""
     del id_documento  # ver docstring: reservado para quien capture la excepción
 
     dni = identidad.dni.get_secret_value() if identidad.dni is not None else None
@@ -225,8 +134,7 @@ def resolver_claves(
                 version_clave=VERSION_CLAVE_ACTUAL,
             )
         if resolutor.es_ambiguo(id_alt_paciente):
-            # hay candidatos, pero son conflictivos (homónimos) -- reprocesar
-            # no lo arregla solo, a diferencia de CLAVE_PII_NO_RESUELTA.
+            # Candidatos conflictivos (homónimos): a diferencia de CLAVE_PII_NO_RESUELTA, reprocesar no lo arregla.
             raise ErrorParseo(CodigoErrorDocumento.CLAVE_PII_AMBIGUA, etapa=etapa)
 
     raise ErrorParseo(CodigoErrorDocumento.CLAVE_PII_NO_RESUELTA, etapa=etapa)

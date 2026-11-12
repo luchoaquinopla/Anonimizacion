@@ -1,9 +1,10 @@
-"""Tests de `scripts/procesar_carpeta.py` (tasks.md 6.8-6.9, PR 2.5).
+"""Tests de `anonimizacion.comandos.procesar` (tasks.md 6.8-6.9, PR 2.5;
+auditoria-y-poda E4).
 
 Confirma que el script ya no arma `FuenteLocal`/`ItemLote` a mano ni llama
 `ejecutor.procesar_lote(items)` sin corrida: usa `LanzadorCorrida` para
-inventariar y `trabajadores.tareas.procesar_grupo` -- la misma tarea Celery
-real que despachara producción (design.md, "Recorrido":
+inventariar y `trabajadores.tareas.procesar_grupo` -- la misma función que
+invoca el despacho paralelo en producción (design.md, "Recorrido":
 `LanzadorCorrida.lanzar` -> `procesar_grupo(corrida_id, referencias)` ->
 `procesar_lote(items, corrida_id=...)`) -- para procesar. Sin este cambio
 `LanzadorCorrida`/`CuarentenaDeCorrida` (Fase 6.4-6.7, ya mergeadas) no
@@ -17,7 +18,6 @@ que nunca puede inventariarse -- igual queda atribuido a su corrida.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import socket
 from pathlib import Path
@@ -35,8 +35,6 @@ from anonimizacion.trabajadores import tareas
 
 from ..fixtures.v1 import documentos
 
-_RUTA_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "procesar_carpeta.py"
-
 PEPPER = b"pepper-test-procesar-carpeta-nunca-real"
 
 # Ver `tests/integracion/test_postgres_carrera_real.py` para el porqué de
@@ -48,11 +46,11 @@ _URL_POSTGRES_REAL = "postgresql+psycopg://anonimizacion:anonimizacion_dev@local
 
 
 def _cargar_script():
-    """Carga `scripts/procesar_carpeta.py` por ruta -- `scripts/` no es un paquete instalado."""
-    spec = importlib.util.spec_from_file_location("_procesar_carpeta_bajo_prueba", _RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
+    """Import normal -- `comandos/procesar.py` es un módulo real del paquete
+    instalado (E4); ya no hace falta cargarlo por ruta como cuando vivía en
+    `scripts/`, fuera del wheel."""
+    from anonimizacion.comandos import procesar as modulo
+
     return modulo
 
 
@@ -488,31 +486,10 @@ def test_el_script_despacha_el_primer_grupo_antes_de_inventariar_los_siguientes(
     )
 
 
-def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
-    """openspec `paralelismo-de-procesamiento` PR 1: `main()` llamaba
-    `sa.create_engine(args.db_url)` pelado, sin `pool_pre_ping` ni
-    `pool_recycle` -- ver el docstring de `postgres.py::construir_engine_postgres`
-    para el riesgo contra RDS. Wiring de `main()`, no de `ejecutar()`: `ejecutar()`
-    ya recibe el `Engine` inyectado y no ejercita esta línea (por eso los tests
-    de arriba no la hubieran detectado)."""
-    modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["procesar_carpeta.py", "--entrada", "carpeta-cualquiera"])
-    monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-pool-nunca-real")
-    monkeypatch.setattr(modulo, "MotorPii", lambda: object())
-
-    llamadas: list[str] = []
-
-    def _engine_espia(url: str) -> sa.Engine:
-        llamadas.append(url)
-        return sa.create_engine("sqlite:///:memory:")
-
-    monkeypatch.setattr(modulo, "construir_engine_postgres", _engine_espia, raising=False)
-    monkeypatch.setattr(modulo, "ejecutar", lambda **kwargs: 0)
-
-    codigo = modulo.main()
-
-    assert codigo == 0
-    assert llamadas == [modulo._DB_URL_DEFAULT]
+# La composición que armaba el Engine con `construir_engine_postgres` (no un
+# `sa.create_engine` pelado) vivía en `main()` de este módulo -- ver ahora
+# `test_cli.py::test_procesar_usa_construir_engine_postgres_no_create_engine_pelado`,
+# porque esa composición se mudó a `cli.py::_comando_procesar` (E4).
 
 
 def test_el_apartado_por_sobretamano_antes_de_la_huella_queda_atribuido_a_la_corrida(

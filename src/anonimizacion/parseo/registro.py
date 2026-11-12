@@ -1,9 +1,5 @@
 """Registro `TipoDocumento -> ParseadorDocumento`.
-
-Mismo patrón Strategy+registro que `deteccion/firmas` (Fase 3): agregar un
-layout nuevo es una entrada más en `_REGISTRO`, no un cambio en el ejecutor
-del pipeline (Fase 8), que solo conoce `obtener_parseador`.
-"""
+Agregar un layout nuevo es una entrada más en `_REGISTRO`, no un cambio en el ejecutor."""
 
 from __future__ import annotations
 
@@ -26,11 +22,7 @@ _REGISTRO: dict[TipoDocumento, ParseadorDocumento] = {
 
 def obtener_parseador(tipo: TipoDocumento) -> ParseadorDocumento:
     """Devuelve el parser registrado para `tipo`.
-
-    Lanza `ErrorParseo(TIPO_NO_RECONOCIDO)` si no hay parser registrado — el
-    caso esperado es `tipo == TipoDocumento.TIPO_NO_RECONOCIDO`, que llega
-    acá cuando la Fase 3 no reconoció ningún layout conocido.
-    """
+    Lanza `ErrorParseo(TIPO_NO_RECONOCIDO)` si no hay parser registrado."""
     parseador = _REGISTRO.get(tipo)
     if parseador is None:
         raise ErrorParseo(codigo=CodigoErrorDocumento.TIPO_NO_RECONOCIDO, etapa=_ETAPA)

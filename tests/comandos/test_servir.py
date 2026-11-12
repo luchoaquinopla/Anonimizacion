@@ -1,13 +1,17 @@
-"""Tests de `scripts/servir_panel.py` (tasks.md 10.10-10.11).
+"""Tests de `anonimizacion.comandos.servir` (tasks.md 10.10-10.11, auditoria-y-poda E4).
 
 Confirma que el punto de entrada levanta un `wsgiref.simple_server` real con
 `socketserver.ThreadingMixIn` (design.md, "El punto de entrada") y responde
 a una petición HTTP real -- no un doble de la aplicación WSGI.
+
+Los tests de `argparse` de este módulo (default/tope duro de `--procesos`,
+default de `--escuchar-red`) se movieron a `tests/test_cli.py`: ese parsing
+ahora vive en `cli.py`, no acá (E4, design.md D3) -- `servir()` recibe
+argumentos con nombre, ya resueltos.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import socket
 import socketserver
 import threading
@@ -50,42 +54,14 @@ from anonimizacion.salida.modelos_orm import Base, CorridaOrm, Estudio
 # se importó primero.
 _CONNECT_REAL = socket.socket.connect
 
-_RUTA_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "servir_panel.py"
-
 
 def _cargar_script():
-    """Carga `scripts/servir_panel.py` por ruta -- `scripts/` no es un paquete instalado."""
-    spec = importlib.util.spec_from_file_location("_servir_panel_bajo_prueba", _RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
+    """Import normal -- `comandos/servir.py` es un módulo real del paquete
+    instalado (E4); ya no hace falta cargarlo por ruta como cuando vivía en
+    `scripts/`, fuera del wheel."""
+    from anonimizacion.comandos import servir as modulo
+
     return modulo
-
-
-def test_parsear_args_expone_procesos_con_default_conservador(monkeypatch) -> None:
-    """Feature `despachador-desde-el-panel`: mismo flag que `--procesos` en
-    `scripts/procesar_carpeta.py`, mismo default (`despacho_paralelo.grado_de_concurrencia_por_defecto`)
-    -- el despachador desde el panel usa el mismo grado de concurrencia que
-    el script."""
-    from anonimizacion.trabajadores import despacho_paralelo
-
-    modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
-
-    args = modulo._parsear_args()
-
-    assert args.procesos == despacho_paralelo.grado_de_concurrencia_por_defecto()
-
-
-def test_parsear_args_rechaza_procesos_por_encima_del_tope_duro(monkeypatch) -> None:
-    from anonimizacion.trabajadores import despacho_paralelo
-
-    modulo = _cargar_script()
-    tope = despacho_paralelo.tope_duro_concurrencia()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--procesos", str(tope + 1)])
-
-    with pytest.raises(SystemExit):
-        modulo._parsear_args()
 
 
 def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> None:
@@ -100,7 +76,6 @@ def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> No
     from anonimizacion.pseudonimizacion.almacen_pepper import ErrorPepperNoConfigurado
 
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: (_ for _ in ()).throw(ErrorPepperNoConfigurado()))
 
     llamadas: list[str] = []
@@ -108,7 +83,7 @@ def test_main_verifica_el_pepper_antes_de_conectar_a_postgres(monkeypatch) -> No
         modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
     )
 
-    codigo = modulo.main()
+    codigo = modulo.servir(db_url=modulo._DB_URL_DEFAULT, puerto=modulo._PUERTO_DEFAULT, raiz=Path("."), procesos=1, escuchar_red=False)
 
     assert codigo == 1
     assert llamadas == [], "no debe conectar a Postgres si el pepper no esta configurado"
@@ -142,7 +117,6 @@ class _ServicioEspia:
 
 def _preparar_main_con_servicio_espia(monkeypatch: pytest.MonkeyPatch, servicio_espia, llamadas: list[str]):
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite:///:memory:"), raising=False
@@ -178,7 +152,7 @@ def test_keyboardinterrupt_pide_apagado_cooperativo_antes_de_cerrar(monkeypatch)
     servicio_espia = _ServicioEspia(sigue_en_curso_tras_cooperativo=False)
     modulo = _preparar_main_con_servicio_espia(monkeypatch, servicio_espia, servicio_espia.llamadas)
 
-    codigo = modulo.main()
+    codigo = modulo.servir(db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=False)
 
     assert codigo == 0
     # Orden: pedir apagado ANTES de esperar, y cerrar el servidor AL FINAL --
@@ -206,7 +180,7 @@ def test_keyboardinterrupt_escala_a_terminacion_forzada_si_el_cooperativo_se_ago
     servicio_espia = _ServicioEspia(sigue_en_curso_tras_cooperativo=True)
     modulo = _preparar_main_con_servicio_espia(monkeypatch, servicio_espia, servicio_espia.llamadas)
 
-    codigo = modulo.main()
+    codigo = modulo.servir(db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=False)
 
     assert codigo == 0
     assert servicio_espia.llamadas == [
@@ -238,22 +212,12 @@ def test_por_defecto_escucha_solo_en_localhost() -> None:
     assert modulo._resolver_host(escuchar_red=True) == ""
 
 
-def test_el_flag_escuchar_red_es_explicito_y_apagado_por_defecto(monkeypatch) -> None:
-    modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
-
-    args = modulo._parsear_args()
-
-    assert args.escuchar_red is False
-
-
 def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch) -> None:
-    """openspec `paralelismo-de-procesamiento` PR 1: `main()` llamaba
-    `sa.create_engine(args.db_url)` pelado -- ver
+    """openspec `paralelismo-de-procesamiento` PR 1: `servir()` llamaba
+    `sa.create_engine(db_url)` pelado -- ver
     `postgres.py::construir_engine_postgres` para el porqué eso importa
     contra un panel de larga vida hablando con RDS."""
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
 
     llamadas: list[str] = []
@@ -273,7 +237,9 @@ def test_main_usa_construir_engine_postgres_no_create_engine_pelado(monkeypatch)
 
     monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
 
-    codigo = modulo.main()
+    codigo = modulo.servir(
+        db_url=modulo._DB_URL_DEFAULT, puerto=modulo._PUERTO_DEFAULT, raiz=Path("."), procesos=1, escuchar_red=False
+    )
 
     assert codigo == 0
     assert llamadas == [modulo._DB_URL_DEFAULT]
@@ -339,7 +305,6 @@ def test_main_falla_temprano_si_escuchar_red_sin_secreto_configurado(monkeypatch
     from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
 
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--escuchar-red"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
@@ -350,7 +315,7 @@ def test_main_falla_temprano_si_escuchar_red_sin_secreto_configurado(monkeypatch
         modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
     )
 
-    codigo = modulo.main()
+    codigo = modulo.servir(db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=True)
 
     assert codigo == 1
     assert llamadas == [], "no debe conectar a Postgres si --escuchar-red no tiene secreto configurado"
@@ -360,14 +325,13 @@ def test_main_falla_temprano_no_filtra_el_secreto_ni_rutas_del_sistema(monkeypat
     from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
 
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py", "--escuchar-red"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
     )
     monkeypatch.setattr(modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite://"))
 
-    modulo.main()
+    modulo.servir(db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=True)
 
     salida_error = capsys.readouterr().err
     assert "ANONIMIZACION_PANEL_SECRETO" in salida_error  # el NOMBRE de la variable no es secreto
@@ -381,7 +345,6 @@ def test_main_sin_escuchar_red_y_sin_secreto_arranca_igual(monkeypatch) -> None:
     from anonimizacion.web.secreto_panel import ErrorSecretoPanelNoConfigurado
 
     modulo = _cargar_script()
-    monkeypatch.setattr("sys.argv", ["servir_panel.py"])
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelNoConfigurado())
@@ -399,7 +362,7 @@ def test_main_sin_escuchar_red_y_sin_secreto_arranca_igual(monkeypatch) -> None:
 
     monkeypatch.setattr(modulo, "make_server", lambda *args, **kwargs: _ServidorFalso())
 
-    codigo = modulo.main()
+    codigo = modulo.servir(db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=False)
 
     assert codigo == 0
 
@@ -416,8 +379,6 @@ def test_main_falla_siempre_con_secreto_invalido_tenga_o_no_escuchar_red(monkeyp
     from anonimizacion.web.secreto_panel import ErrorSecretoPanelInvalido
 
     modulo = _cargar_script()
-    argv = ["servir_panel.py", "--escuchar-red"] if escuchar_red else ["servir_panel.py"]
-    monkeypatch.setattr("sys.argv", argv)
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo, "obtener_secreto_panel", lambda: (_ for _ in ()).throw(ErrorSecretoPanelInvalido())
@@ -428,7 +389,9 @@ def test_main_falla_siempre_con_secreto_invalido_tenga_o_no_escuchar_red(monkeyp
         modulo, "construir_engine_postgres", lambda url: llamadas.append(url) or sa.create_engine("sqlite://")
     )
 
-    codigo = modulo.main()
+    codigo = modulo.servir(
+        db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=escuchar_red
+    )
 
     assert codigo == 1
     assert llamadas == [], "un secreto invalido nunca debe dejar conectar a Postgres, con o sin --escuchar-red"
@@ -442,8 +405,6 @@ def test_main_falla_siempre_con_archivo_de_secreto_ilegible(monkeypatch, escucha
     from anonimizacion.web.secreto_panel import ErrorSecretoPanelArchivoIlegible
 
     modulo = _cargar_script()
-    argv = ["servir_panel.py", "--escuchar-red"] if escuchar_red else ["servir_panel.py"]
-    monkeypatch.setattr("sys.argv", argv)
     monkeypatch.setattr(modulo, "obtener_pepper", lambda: b"pepper-wiring-nunca-real")
     monkeypatch.setattr(
         modulo,
@@ -452,7 +413,9 @@ def test_main_falla_siempre_con_archivo_de_secreto_ilegible(monkeypatch, escucha
     )
     monkeypatch.setattr(modulo, "construir_engine_postgres", lambda url: sa.create_engine("sqlite://"))
 
-    codigo = modulo.main()
+    codigo = modulo.servir(
+        db_url="postgresql+psycopg://x/y", puerto=8000, raiz=Path("."), procesos=1, escuchar_red=escuchar_red
+    )
 
     assert codigo == 1
 

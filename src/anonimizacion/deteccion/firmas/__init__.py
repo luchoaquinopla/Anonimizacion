@@ -1,8 +1,5 @@
 """Registro de firmas: una por cada tipo de documento conocido.
-
-Cada layout nuevo se suma acá (un módulo + una entrada en `FIRMAS`); el
-detector (`detector_tipo.py`) no cambia.
-"""
+Cada layout nuevo se suma acá (un módulo + una entrada en `FIRMAS`); el detector no cambia."""
 
 from __future__ import annotations
 

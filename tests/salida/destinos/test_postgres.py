@@ -26,6 +26,7 @@ from __future__ import annotations
 import socket
 from dataclasses import replace
 from datetime import date, time
+from enum import Enum
 
 import numpy as np
 import pytest
@@ -44,6 +45,7 @@ from anonimizacion.pseudonimizacion.claves import generar_clave_documento
 from anonimizacion.salida.constructor_registro import construir_registro
 from anonimizacion.salida.destinos import postgres as destinos_postgres
 from anonimizacion.salida.destinos.postgres import POOL_RECYCLE_SEGUNDOS, POOL_SIZE, EscritorPostgres, construir_engine_postgres
+from anonimizacion.salida.modelos_salida import ContenidoEcoSalida
 from anonimizacion.dominio.precision_hora import PrecisionHora
 from anonimizacion.salida.codec_senal import decodificar_mascara, decodificar_muestras
 from anonimizacion.salida.modelos_orm import Base, Episodio, Estudio, MedicionEco, MedicionEcg, ResultadoLaboratorio as FilaOrmResultadoLaboratorio, SenalEcgOrm, TextoSeccionEco, VinculoPaciente
@@ -202,6 +204,83 @@ def test_escribir_registro_ecg_crea_fila_ancha(escritor: EscritorPostgres, motor
     assert len(filas) == 1
     assert filas[0].vent_rate == "72"
     assert filas[0].id_episodio == "ep-1"
+
+
+# --- Requisito 1 (extensibilidad-tipo-documento): whitelist y despacho como
+# LA MISMA estructura (`_escritores_por_tipo`) -------------------------------
+#
+# 4to tipo simulado (Requisito 4): `RegistroAnonimizado.tipo_documento` no
+# valida en runtime que sea un miembro de `TipoDocumento` -- alcanza un
+# `str, Enum` propio con el mismo mixin, sin monkeypatchear el enum real.
+
+
+class _TipoDocumentoDePrueba(str, Enum):
+    RESONANCIA_MAGNETICA = "resonancia_magnetica"
+
+
+def _contenido_eco_de_prueba() -> ContenidoEcoSalida:
+    return ContenidoEcoSalida(
+        id_medico_solicitante=None, id_medico_informante=None, id_matricula_informante=None,
+        medidas=(), secciones_texto=(),
+    )
+
+
+def test_un_4to_tipo_sin_escritor_registrado_lanza_excepcion_explicita_y_no_escribe_en_eco(
+    escritor: EscritorPostgres, motor
+) -> None:
+    """Requisito 1, Escenario 1. RED contra el código de hoy (if/elif/else,
+    `postgres.py:386-391`): cualquier tipo que no sea LABORATORIO/ECG cae en
+    el `else` mudo y escribe en `medicion_eco`, sin importar si es un 4to
+    tipo real o inexistente -- el defecto sólo se manifiesta SI ese tipo
+    llegara a pasar la whitelist de `escribir_registro` (que hoy sí rechaza
+    tipos desconocidos). Se llama a `_insertar` directo para bypasear esa
+    whitelist y ejercitar el `else` en aislamiento, tal como quedaría
+    expuesto si algún día un tipo pasara ese chequeo sin tener despacho."""
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = RegistroAnonimizado(
+        id_paciente="pid-1",
+        id_episodio="ep-1",
+        tipo_documento=_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA,
+        version_esquema=1,
+        fecha_estudio=date(2024, 1, 10),
+        contenido=_contenido_eco_de_prueba(),
+    )
+
+    with pytest.raises(Exception):
+        with sa.orm.Session(motor) as sesion:
+            with sesion.begin():
+                escritor._insertar(registro, sesion)
+
+    assert _leer_todas(motor, MedicionEco) == []
+    assert _leer_todas(motor, Estudio) == []
+
+
+def test_un_4to_tipo_con_escritor_registrado_despacha_al_escritor_correspondiente(
+    escritor: EscritorPostgres, motor
+) -> None:
+    """Requisito 1, Escenario 2 (GREEN): agregar una entrada nueva a
+    `_escritores_por_tipo` (whitelist == despacho, misma estructura) basta
+    para que un 4to tipo despache a SU escritor -- sin tocar ninguna otra
+    rama ni caer en `_escribir_eco`."""
+    llamadas: list[RegistroAnonimizado] = []
+    escritor._escritores_por_tipo[_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA] = (
+        lambda registro, sesion, id_estudio: llamadas.append(registro)
+    )
+    escritor.escribir_episodio(id_episodio="ep-1", id_paciente="pid-1", fecha_ancla=date(2024, 1, 10))
+    registro = RegistroAnonimizado(
+        id_paciente="pid-1",
+        id_episodio="ep-1",
+        tipo_documento=_TipoDocumentoDePrueba.RESONANCIA_MAGNETICA,
+        version_esquema=1,
+        fecha_estudio=date(2024, 1, 10),
+        contenido=_contenido_eco_de_prueba(),
+    )
+
+    escritor.escribir_registro(registro)
+
+    assert len(llamadas) == 1
+    assert llamadas[0] is registro
+    assert _leer_todas(motor, MedicionEco) == []  # no cayó en el escritor de eco
 
 
 # --- senal_ecg: satélite 1:1 de estudio (openspec `senal-ecg-y-dataset-vinculado`) --

@@ -1,17 +1,6 @@
-"""Modelo de lectura del plan de reintento de una corrida (feature `reanudacion-de-corridas`).
-
-`POST /corridas/{id}/reintentar` (`web/rutas_corridas.py`) sólo debe reencolar
-los documentos apartados con código **reintentable** de esa corrida -- los
-determinísticos no se tocan: reprocesarlos sin cambios produce el mismo
-fallo, y quema CPU real para llegar al mismo resultado. La única definición de
-qué código es reintentable vive en `dominio.errores.es_reintentable`; este
-módulo NUNCA duplica esa lista, sólo la consulta.
-
-Separación de responsabilidades, mismo corte que `embudo_corrida.py`: este
-módulo LEE y arma el plan (qué reencolar, qué se descarta y por qué), nunca
-despacha nada -- eso lo hace `web/servicio_corridas.py::ServicioCorridasReal.reintentar_corrida`,
-reusando el mismo camino de despacho que `crear_corrida` (`_despachar_y_cerrar`).
-"""
+"""Modelo de lectura del plan de reintento de una corrida: sólo reencola apartados con
+código reintentable (`dominio.errores.es_reintentable`, única fuente); nunca despacha,
+eso lo hace `web/servicio_corridas.py::ServicioCorridasReal.reintentar_corrida`."""
 
 from __future__ import annotations
 
@@ -32,12 +21,7 @@ ReferenciaDocumento = Mapping[str, str]
 @dataclass(frozen=True)
 class PlanDeReintento:
     """Resultado de clasificar los apartados de una corrida.
-
-    `ruta_autorizada` puede ser `None` para corridas creadas antes de la
-    migración `0011` (sin backfill) -- si `reintentables` no está vacío en
-    ese caso, `ServicioCorridasReal.reintentar_corrida` no puede reencolar
-    nada y lo señala como error, no como cero silencioso.
-    """
+    `ruta_autorizada` puede ser `None` en corridas previas a la migración `0011` (sin backfill)."""
 
     corrida_id: str
     ruta_autorizada: str | None
@@ -50,15 +34,8 @@ class PlanDeReintento:
 
 
 def construir_plan_reintento(motor: Engine, id_corrida: str) -> PlanDeReintento | None:
-    """`None` si `id_corrida` no existe -- el llamador lo traduce a un error explícito.
-
-    Dos consultas agregadas, ninguna trae más filas de las estrictamente
-    necesarias para decidir: primero `(id_documento, codigo)` de `cuarentena`
-    para clasificar; recién si hay al menos un reintentable, una segunda
-    consulta a `documento_corrida` para reconstruir la `uri` original de
-    ESOS documentos (nunca se lee `ruta_autorizada` de los descartados: no
-    hace falta, y es justo el campo que puede llevar PII de carpeta).
-    """
+    """`None` si `id_corrida` no existe. Sólo consulta `ruta_autorizada` de los
+    reintentables (nunca de los descartados): ese campo puede llevar PII de carpeta."""
     with Session(motor) as sesion:
         corrida = sesion.get(CorridaOrm, id_corrida)
         if corrida is None:
@@ -87,15 +64,8 @@ def construir_plan_reintento(motor: Engine, id_corrida: str) -> PlanDeReintento 
             uri_por_huella = dict(filas_documento)
             faltantes = [huella for huella in ids_reintentables if huella not in uri_por_huella]
             if faltantes:
-                # No debería pasar nunca en operación normal: todo código
-                # reintentable ocurre DESPUÉS del inventario (ver el
-                # docstring del módulo `ingesta/lanzador_corrida.py` sobre
-                # cuándo se persiste `documento_corrida`), así que para
-                # cuando la corrida llega a un estado terminal el inventario
-                # ya está completo. Si esto se dispara, es corrupción real
-                # (una fila de `documento_corrida` borrada, o un `id_documento`
-                # de cuarentena que nunca vino de esta corrida) -- fallar
-                # ruidoso en vez de reintentar con una `uri` inventada.
+                # No debería pasar en operación normal (todo reintentable ocurre después
+                # del inventario); si se dispara es corrupción real -- fallar ruidoso.
                 raise RuntimeError(
                     f"reintentar_corrida: {len(faltantes)} documento(s) reintentable(s) de "
                     f"{id_corrida} no tienen fila en documento_corrida -- no se puede "

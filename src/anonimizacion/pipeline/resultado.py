@@ -1,24 +1,6 @@
-"""Resultado de procesar UN documento: unión discriminada éxito/fallo (tasks.md 8.1).
-
-Spec `batch-processing`, requirement "Trazabilidad sin PII": cada resultado
-(éxito o fallo) tiene que poder loguearse con SOLO metadata no sensible (id
-de documento, tipo, estado, timestamp). `resumen_trazable()` es la ÚNICA
-superficie pensada para eso: por construcción devuelve un `dict` con un
-conjunto fijo y acotado de claves -- mismo principio que `ErrorDocumento`
-(`dominio/errores.py`): campos explícitos, nunca un dump genérico de la
-excepción o del documento. No hace falta un módulo de bitácora separado acá
-(eso es `observabilidad/bitacora_segura.py`, cableado en
-`pipeline/ejecutor.py::procesar_lote` desde el Tramo 3 de `panel-de-operacion`)
--- alcanza con que lo que este módulo expone ya sea imposible de que
-contenga PII.
-
-`ExitoDocumento`/`FalloDocumento` son dos dataclasses distintas unidas por
-`ResultadoDocumento` (no una excepción atrapada en silencio, no un booleano
-`ok: bool` con campos opcionales): quien recibe un `ResultadoDocumento` hace
-`isinstance` para bifurcar, y el tipo de cada rama solo tiene los campos que
-tiene sentido que tenga (un éxito no puede "tener" un `error` a medio
-llenar; un fallo no puede "tener" un `id_paciente` a medias).
-"""
+"""Resultado de procesar UN documento: unión discriminada éxito/fallo, cada rama con sólo los
+campos que tiene sentido que tenga. `resumen_trazable()` es la única superficie de log: whitelist
+fija de metadata no sensible, nunca un dump genérico de la excepción o del documento."""
 
 from __future__ import annotations
 

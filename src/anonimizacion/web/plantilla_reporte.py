@@ -1,20 +1,5 @@
-"""Renderiza el reporte de cuarentena como HTML, sin dependencias.
-
-Por qué HTML servido y no una aplicación de página única: este panel corre en la
-máquina del instituto, donde el pipeline es 100 % offline. Un framework con paso
-de compilación agrega fricción de instalación y una superficie de red que el
-proyecto no quiere, para una pantalla que no la necesita. Todo el CSS va en línea
-por la misma razón --- no hay red de la que traer una hoja de estilos.
-
-Sobre la forma: para un puñado de números titulares la forma correcta es una fila
-de fichas más una tabla, no un gráfico de barras. Tres categorías no justifican
-ejes.
-
-Sobre el color: se usa la paleta de ESTADO, que es fija y no temática. En
-superficie clara dos de sus pasos quedan por debajo de 3:1 de contraste a
-propósito, y la mitigación es que el color NUNCA viaja solo: cada grupo lleva
-símbolo y etiqueta. El texto usa tokens de tinta, nunca el color del estado.
-"""
+"""Renderiza el reporte de cuarentena como HTML, sin dependencias ni CSS externo
+(panel offline). El color de estado nunca viaja solo: cada grupo lleva símbolo y etiqueta."""
 
 from __future__ import annotations
 

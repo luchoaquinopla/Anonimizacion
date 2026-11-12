@@ -132,7 +132,9 @@ def test_inventario_ecg_aprueba_headers_y_medidas_con_destino_unico() -> None:
     texto = TextoExtraido((
         "Persona Sintetica~, ID:ESTUDIO-1 05-JUN-2025 10:00:00\nVent. rate 68 BPM\nPR interval 160",
     ))
-    ReconciliadorEcgMortara().reconciliar(documento, texto)
+    resultado = ReconciliadorEcgMortara().reconciliar(documento, texto)
+
+    assert resultado == ("ecg.senal",)
 
 
 def test_inventario_ecg_cubre_el_modelo_generado_por_el_parseador() -> None:
@@ -143,4 +145,6 @@ def test_inventario_ecg_cubre_el_modelo_generado_por_el_parseador() -> None:
     ))
     documento = ParseadorEcgMortara().parsear(texto)
 
-    ReconciliadorEcgMortara().reconciliar(documento, texto)
+    resultado = ReconciliadorEcgMortara().reconciliar(documento, texto)
+
+    assert resultado == ("ecg.senal",)

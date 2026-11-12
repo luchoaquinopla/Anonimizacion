@@ -56,7 +56,9 @@ def test_reconciliar_no_agrega_ecg_senal_cuando_la_senal_es_valida() -> None:
 
 def test_aprueba_medida_ecg_con_espacios_equivalentes() -> None:
     fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
-    ReconciliadorEcgMortara().reconciliar(_documento(fuentes=(fuente,)), TextoExtraido(("Vent. rate  68   BPM",)))
+    resultado = ReconciliadorEcgMortara().reconciliar(_documento(fuentes=(fuente,)), TextoExtraido(("Vent. rate  68   BPM",)))
+
+    assert resultado == ("ecg.senal",)  # sin señal capturada: ver docstring de `reconciliar`
 
 
 @pytest.mark.parametrize(("valor", "texto", "codigo"), [("68 BPM", "Vent. rate 70 BPM", CodigoErrorDocumento.VALOR_DISCREPANTE), ("68 BPM", "sin medida", CodigoErrorDocumento.EVIDENCIA_AUSENTE)])
@@ -77,7 +79,9 @@ def test_rechaza_evidencia_ambigua_ecg() -> None:
 def test_reconcilia_fecha_nacimiento_ecg() -> None:
     fuente = ReferenciaCampo("ecg.fecha_nacimiento", 1, "ecg.fecha_nacimiento")
     documento = DocumentoParseado(TipoDocumento.ECG, 1, IdentidadCruda(nombre=SecretStr("Persona"), fecha_nac=SecretStr("1975-12-12")), date(2025, 6, 5), ContenidoEcg(None, None, None, None, None), fuentes=(fuente,))
-    ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido(("12-DEC-1975 (49 yr)",)))
+    resultado = ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido(("12-DEC-1975 (49 yr)",)))
+
+    assert resultado == ("ecg.senal",)
 
 
 def test_rechaza_medidas_ecg_asignadas_a_etiquetas_cruzadas() -> None:
@@ -115,20 +119,24 @@ def test_aprueba_medida_ecg_en_linea_vecina_a_su_etiqueta() -> None:
         fuentes=(fuente,),
     )
 
-    ReconciliadorEcgMortara().reconciliar(
+    resultado = ReconciliadorEcgMortara().reconciliar(
         documento,
         TextoExtraido(("160\nPR interval",)),
     )
+
+    assert resultado == ("ecg.senal",)
 
 
 def test_aprueba_medida_asociada_aunque_el_numero_aparezca_en_otro_campo() -> None:
     fuente = ReferenciaCampo("ecg.vent_rate", 1, "ecg.vent_rate")
     documento = _documento("68", (fuente,))
 
-    ReconciliadorEcgMortara().reconciliar(
+    resultado = ReconciliadorEcgMortara().reconciliar(
         documento,
         TextoExtraido(("Codigo auxiliar 6800\nVent. rate 68",)),
     )
+
+    assert resultado == ("ecg.senal",)
 
 
 _HEADER_CON_TIMESTAMP = (
@@ -196,7 +204,9 @@ def test_reconcilia_hora_estudio_anclada_al_timestamp_completo() -> None:
         hora_estudio=time(10, 22, 31),
     )
 
-    ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido((_HEADER_CON_TIMESTAMP,)))
+    resultado = ReconciliadorEcgMortara().reconciliar(documento, TextoExtraido((_HEADER_CON_TIMESTAMP,)))
+
+    assert resultado == ("ecg.senal",)
 
 
 def test_rechaza_hora_estudio_discrepante() -> None:
@@ -228,7 +238,9 @@ def test_aprueba_ejes_ecg_en_lineas_posteriores_a_la_etiqueta() -> None:
         fuentes=(fuente,),
     )
 
-    ReconciliadorEcgMortara().reconciliar(
+    resultado = ReconciliadorEcgMortara().reconciliar(
         documento,
         TextoExtraido(("P-R-T axes\n10\n20\n30",)),
     )
+
+    assert resultado == ("ecg.senal",)

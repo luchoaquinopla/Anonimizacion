@@ -1,15 +1,6 @@
 """Captura de trazos vectoriales negros de una página (extracción del ECG).
-
-Fijado por `tests/extraccion/test_trazos_pymupdf.py` (decisión #1 del
-diseño, openspec `senal-ecg-y-dataset-vinculado`): `get_drawings()` ya
-entrega las coordenadas SIN ROTAR (espacio del `mediabox`), donde el tiempo
-corre por el eje vertical -- aplicar `page.derotation_matrix` o
-`page.rotation_matrix` estropea ese eje. Por eso este módulo NO transforma
-ninguna coordenada: usa la salida de `get_drawings()` directa, sólo
-convertida de puntos PDF a milímetros.
-
-Nunca lee texto -- sólo geometría (design.md, decisión #2).
-"""
+`get_drawings()` entrega coordenadas sin rotar; nunca lee texto, sólo geometría.
+No aplicar `derotation_matrix`/`rotation_matrix`: estropea el eje del tiempo."""
 
 from __future__ import annotations
 
@@ -19,8 +10,10 @@ import pymupdf
 
 _NEGRO = (0.0, 0.0, 0.0)
 _PT_A_MM = 25.4 / 72
-_ANCHO_TRAZO_PT = 0.43  # medido contra el ECG real
-_TOLERANCIA_ANCHO = 0.20  # ±20%: margen por redondeo del renderer, spec `extraccion-senal-ecg`
+# Ancho de trazo medido contra el ECG real, con margen ±20% por redondeo del renderer.
+# Invariante: «Calibración del trazado del ECG» (Obsidian, Invariantes medidos).
+_ANCHO_TRAZO_PT = 0.43
+_TOLERANCIA_ANCHO = 0.20
 
 Punto = tuple[float, float]
 Trazo = tuple[Punto, ...]
@@ -28,14 +21,8 @@ CapturadorDePagina = Callable[[pymupdf.Page], tuple[Trazo, ...]]
 
 
 def capturar_trazos(pagina: pymupdf.Page) -> tuple[Trazo, ...]:
-    """Trazos negros (0,0,0), sin relleno, de ancho ≈0,43pt (spec
-    `extraccion-senal-ecg`: "MUST validar que los trazos sean negros con
-    ancho aproximado 0,43") de `pagina`, en mm.
-
-    Cada trazo es una tupla de puntos `(x_mm, y_mm)` en el orden dibujado.
-    Ignora cualquier dibujo con color, relleno o ancho distinto (p. ej. la
-    grilla rosa del ECG, que usa otro color Y otro ancho).
-    """
+    """Trazos negros, sin relleno, de ancho ≈0,43pt de `pagina`, en mm.
+    Ignora cualquier dibujo con color/relleno/ancho distinto (p. ej. la grilla rosa)."""
     trazos: list[Trazo] = []
     for dibujo in pagina.get_drawings():
         if dibujo.get("color") != _NEGRO or dibujo.get("fill") is not None:
@@ -50,9 +37,7 @@ def capturar_trazos(pagina: pymupdf.Page) -> tuple[Trazo, ...]:
 
 
 def _puntos_de_items(items: list[tuple]) -> list[pymupdf.Point]:
-    """Reconstruye la secuencia de puntos de un trazo a partir de sus
-    segmentos de línea (`'l'`). Otros tipos de item (curvas, rectángulos) no
-    aplican a un trazado de ECG y se ignoran."""
+    """Reconstruye la secuencia de puntos de un trazo a partir de sus segmentos de línea ('l')."""
     puntos: list[pymupdf.Point] = []
     for item in items:
         tipo, *coords = item

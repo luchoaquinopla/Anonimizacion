@@ -1,11 +1,5 @@
 """`ArtefactoCrudo`: representación de un archivo fuente antes de parsear.
-
-Es el punto de entrada del pipeline: lo que existe cuando alguien deposita un
-PDF en la fuente de ingesta, antes de que se le extraiga texto o se detecte
-su tipo. No contiene PII (solo metadatos de integridad/localización), por lo
-que —a diferencia de `IdentidadCruda`— es un `dataclass` simple, no un
-`BaseModel` con `SecretStr`.
-"""
+Sin PII (solo metadatos de integridad/localización): `dataclass` simple, no `BaseModel`."""
 
 from __future__ import annotations
 
@@ -25,10 +19,7 @@ class FormatoArtefacto(str, Enum):
 @dataclass(frozen=True)
 class ArtefactoCrudo:
     """Artefacto sin procesar: uri (localización), sha256 (integridad) y formato.
-
-    `sha256` valida formato (64 hex minúsculas, como produce `hashlib.sha256().hexdigest()`)
-    para detectar errores de cómputo/transcripción temprano, en el borde del pipeline.
-    """
+    `sha256` valida formato (64 hex minúsculas) para detectar errores de cómputo temprano."""
 
     uri: str
     sha256: str

@@ -1,23 +1,24 @@
 """Observabilidad cableada en la raíz de composición (design.md, Decisión 7).
 
-`ColectorMetricas`/`BitacoraSegura` (`observabilidad/`) estaban construidos,
-testeados y con CERO imports de producción hasta este tramo. Los tests de acá
-verifican la CONDUCTA real -- no la forma del código -- para que ninguna pieza
-de observabilidad se declare terminada sin que algo la ejercite de punta a
+`BitacoraSegura` (`observabilidad/`) estaba construida, testeada y con CERO
+imports de producción hasta este tramo. Los tests de acá verifican la
+CONDUCTA real -- no la forma del código -- para que ninguna pieza de
+observabilidad se declare terminada sin que algo la ejercite de punta a
 punta por la raíz de composición de producción
 (`trabajadores/tareas.py::construir_fabrica_ejecutor`), el mismo molde que
 `tests/integracion/test_wiring_produccion.py`. Un test de `inspect.getsource`
 no alcanza acá: la afirmación es sobre si las observaciones LLEGAN, no sobre
 si el cableado está escrito.
+
+`observabilidad/metricas.py`/`ColectorMetricas` se retiraron en
+auditoria-y-poda E5 (métricas de sólo escritura, ningún llamador fuera de
+tests) -- este archivo cubría también su cableado hasta entonces.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import date
-
-os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
 
 import pytest
 import sqlalchemy as sa
@@ -27,7 +28,6 @@ from anonimizacion.dominio.modelos import ClavesPaciente, DocumentoParseado, Reg
 from anonimizacion.dominio.tipos_documento import TipoDocumento
 from anonimizacion.ingesta.artefacto import ArtefactoCrudo, FormatoArtefacto
 from anonimizacion.observabilidad.bitacora_segura import BitacoraSegura
-from anonimizacion.observabilidad.metricas import MetricasEnMemoria
 from anonimizacion.pii.motor import MotorPii
 from anonimizacion.pipeline.ejecutor import EjecutorPipeline, ItemLote
 from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
@@ -101,37 +101,6 @@ def _engine_con_esquema() -> sa.Engine:
     return engine
 
 
-class _ColectorEspia:
-    """Espía de `ColectorMetricas`: registra cada llamada recibida, no valida nada."""
-
-    def __init__(self) -> None:
-        self.documentos_procesados: list[TipoDocumento] = []
-        self.fallos: list[CodigoErrorDocumento] = []
-        self.duraciones: list[tuple[str, float]] = []
-
-    def incrementar_documento_procesado(self, tipo_documento: TipoDocumento) -> None:
-        self.documentos_procesados.append(tipo_documento)
-
-    def incrementar_fallo(self, codigo: CodigoErrorDocumento) -> None:
-        self.fallos.append(codigo)
-
-    def observar_duracion_ms(self, etapa: str, duracion_ms: float) -> None:
-        self.duraciones.append((etapa, duracion_ms))
-
-
-class _ColectorQueExplota:
-    """Cumple `ColectorMetricas` por tipado estructural, pero revienta en cada método."""
-
-    def incrementar_documento_procesado(self, tipo_documento: TipoDocumento) -> None:
-        raise RuntimeError("colector roto: incrementar_documento_procesado")
-
-    def incrementar_fallo(self, codigo: CodigoErrorDocumento) -> None:
-        raise RuntimeError("colector roto: incrementar_fallo")
-
-    def observar_duracion_ms(self, etapa: str, duracion_ms: float) -> None:
-        raise RuntimeError("colector roto: observar_duracion_ms")
-
-
 class _BitacoraEspia:
     """Espía de `BitacoraSegura`: guarda una copia de cada evento recibido."""
 
@@ -150,7 +119,6 @@ def test_la_fabrica_cablea_la_observabilidad(tmp_path, motor: MotorPii) -> None:
     ejecutor ni una llamada directa a `EjecutorPipeline`."""
     artefactos = _grupo_completo(tmp_path, "observado")
     engine = _engine_con_esquema()
-    espia_metricas = _ColectorEspia()
     espia_bitacora = _BitacoraEspia()
 
     fabrica = tareas.construir_fabrica_ejecutor(
@@ -160,7 +128,6 @@ def test_la_fabrica_cablea_la_observabilidad(tmp_path, motor: MotorPii) -> None:
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
-        metricas=espia_metricas,
         bitacora=espia_bitacora,
     )
     tareas.configurar_ejecutor(fabrica)
@@ -171,12 +138,10 @@ def test_la_fabrica_cablea_la_observabilidad(tmp_path, motor: MotorPii) -> None:
 
     assert len(resultados) == 3
     assert {resultado["estado"] for resultado in resultados} == {"exito"}
-    assert len(espia_metricas.documentos_procesados) == 3
-    assert len(espia_metricas.duraciones) > 0
     assert len(espia_bitacora.eventos) == 3
 
 
-def test_sin_inyeccion_explicita_igual_hay_colector(tmp_path, motor: MotorPii) -> None:
+def test_sin_inyeccion_explicita_igual_hay_bitacora(tmp_path, motor: MotorPii) -> None:
     """7.3: cubre el agujero del test anterior -- conservar el punto de
     inyección y borrar el default de producción dejaría el test 7.1 en verde
     y producción ciega igual."""
@@ -192,7 +157,6 @@ def test_sin_inyeccion_explicita_igual_hay_colector(tmp_path, motor: MotorPii) -
 
     ejecutor = fabrica()
 
-    assert isinstance(ejecutor._metricas, MetricasEnMemoria)
     assert isinstance(ejecutor._bitacora, BitacoraSegura)
 
 
@@ -219,7 +183,14 @@ def test_la_fabrica_comparte_el_motor_pii_con_la_bitacora_de_produccion(tmp_path
     assert ejecutor._bitacora._motor_pii is motor
 
 
-def test_un_colector_que_explota_no_tumba_el_grupo(tmp_path, motor: MotorPii) -> None:
+class _BitacoraQueExplota:
+    """Cumple la superficie de `BitacoraSegura` por tipado estructural, pero revienta."""
+
+    def registrar(self, evento, *, nivel: int = 20) -> dict:
+        raise RuntimeError("bitacora rota: registrar")
+
+
+def test_una_bitacora_que_explota_no_tumba_el_grupo(tmp_path, motor: MotorPii) -> None:
     """7.5: invariante 3 de la propuesta -- la observabilidad es accesoria."""
     artefactos = _grupo_completo(tmp_path, "resiliente")
     engine = _engine_con_esquema()
@@ -231,7 +202,7 @@ def test_un_colector_que_explota_no_tumba_el_grupo(tmp_path, motor: MotorPii) ->
         pepper=PEPPER,
         destino=EscritorPostgres(engine),
         cuarentena=EscritorCuarentena(engine),
-        metricas=_ColectorQueExplota(),
+        bitacora=_BitacoraQueExplota(),
     )
     tareas.configurar_ejecutor(fabrica)
     try:

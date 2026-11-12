@@ -73,16 +73,8 @@ def validar_campo_reconciliacion(campo: str) -> None:
         raise ValueError("campo inválido")
 
 
-# `ReferenciaCampo` y `HallazgoCobertura` viven en el dominio, no en
-# `reconciliacion`, porque son value objects de localización: dónde cae un
-# campo dentro del texto extraído (página, selector, ordinal), sin retener
-# contenido ni PII. No son infraestructura de reconciliación, son datos del
-# dominio como cualquier otro modelo de `dominio/modelos.py`. Antes vivían en
-# `reconciliacion/base.py`, que a su vez depende de `DocumentoParseado`
-# (`dominio/modelos.py`) — un ciclo real, oculto porque `modelos.py` diferia
-# el import bajo `TYPE_CHECKING` y dentro de `__post_init__`. Moverlos acá
-# rompe el ciclo sin cambiar el contrato: `reconciliacion/base.py` los
-# reimporta desde este módulo.
+# Viven en dominio, no en reconciliacion, porque son value objects de localización
+# (rompe un ciclo con dominio/modelos.py; reconciliacion/base.py los reimporta de acá).
 @dataclass(frozen=True)
 class ReferenciaCampo:
     """Localización no sensible de un campo dentro del texto extraído."""

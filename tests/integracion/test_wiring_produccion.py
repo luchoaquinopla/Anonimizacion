@@ -2,26 +2,22 @@
 
 Confirma que `trabajadores/tareas.py::construir_fabrica_ejecutor` es la raíz
 de composición real del worker: arma una `FuenteLocal` UNA sola vez y la
-inyecta en `EjecutorPipeline(fuente=...)`, de modo que `procesar_documento`
-(la tarea Celery real, con `CELERY_TASK_ALWAYS_EAGER`) resuelve un documento
-de punta a punta sin que `tareas.py` conozca `pathlib` en ningún punto
-propio -- toda la resolución de la `uri` pasa por el puerto de ingesta.
+inyecta en `EjecutorPipeline(fuente=...)`, de modo que `procesar_grupo`
+resuelve un documento de punta a punta sin que `tareas.py` conozca `pathlib`
+en ningún punto propio -- toda la resolución de la `uri` pasa por el puerto
+de ingesta.
 """
 
 from __future__ import annotations
 
-import os
-
 import sqlalchemy as sa
 
-os.environ["CELERY_TASK_ALWAYS_EAGER"] = "1"
-
-from anonimizacion.pii.motor import MotorPii  # noqa: E402
-from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves  # noqa: E402
-from anonimizacion.salida.cuarentena import EscritorCuarentena  # noqa: E402
-from anonimizacion.salida.destinos.postgres import EscritorPostgres  # noqa: E402
-from anonimizacion.salida.modelos_orm import Base  # noqa: E402
-from anonimizacion.trabajadores import tareas  # noqa: E402
+from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
+from anonimizacion.salida.cuarentena import EscritorCuarentena
+from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.modelos_orm import Base
+from anonimizacion.trabajadores import tareas
 
 from ..fixtures.v1 import documentos
 

@@ -13,24 +13,21 @@ de producción -- ver `docs/pipeline.md`.
 """
 from __future__ import annotations
 
-import os
 from datetime import date
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-os.environ["CELERY_TASK_ALWAYS_EAGER"] = "1"
+from anonimizacion.dominio.modelos import RegistroAnonimizado
+from anonimizacion.dominio.tipos_documento import TipoDocumento
+from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves
+from anonimizacion.salida.cuarentena import EscritorCuarentena
+from anonimizacion.salida.destinos.postgres import EscritorPostgres
+from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio
+from anonimizacion.trabajadores import tareas
 
-from anonimizacion.dominio.modelos import RegistroAnonimizado  # noqa: E402
-from anonimizacion.dominio.tipos_documento import TipoDocumento  # noqa: E402
-from anonimizacion.pii.motor import MotorPii  # noqa: E402
-from anonimizacion.pseudonimizacion.resolutor_claves import ResolutorClaves  # noqa: E402
-from anonimizacion.salida.cuarentena import EscritorCuarentena  # noqa: E402
-from anonimizacion.salida.destinos.postgres import EscritorPostgres  # noqa: E402
-from anonimizacion.salida.modelos_orm import Base, Cuarentena, Estudio  # noqa: E402
-from anonimizacion.trabajadores import tareas  # noqa: E402
-
-from ..fixtures.v1 import documentos  # noqa: E402
+from ..fixtures.v1 import documentos
 
 PEPPER = b"pepper-idempotencia-nunca-real"
 

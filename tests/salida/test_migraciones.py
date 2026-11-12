@@ -388,8 +388,8 @@ def test_migracion_0008_agrega_corrida_id_en_estudio_y_cuarentena(tmp_path) -> N
 
 def test_migracion_0008_conserva_duplicados_preexistentes_de_cuarentena(tmp_path) -> None:
     """Fija el punto de partida real: hay duplicados de `id_documento` sin
-    corrida en el sistema hoy (ningún reintento de Celery tenía restricción
-    que lo impidiera). La migración 0008 no los toca -- ver design.md,
+    corrida en el sistema hoy (ningún reproceso tenía restricción que lo
+    impidiera). La migración 0008 no los toca -- ver design.md,
     Decisión 4: los `NULL` no colisionan entre sí, así que la restricción
     única se crea sobre ellos sin deduplicar ni rellenar nada."""
     ruta_db = tmp_path / "duplicados_previos.db"

@@ -1,74 +1,33 @@
-"""Punto de entrada único instalable (`arranque-para-el-instituto`).
-
-Antes de este módulo, operar el pipeline exigía clonar el repositorio y
-lanzar DOS scripts sueltos (`scripts/procesar_carpeta.py`,
-`scripts/servir_panel.py`), cada uno con su propio `argparse` y su propia URL
-de base por defecto. Este módulo es el composition root real: un único
-comando instalado (`[project.scripts]`, ver `pyproject.toml`) con
-subcomandos --
-
-    anonimizacion diagnosticar   # ¿está todo listo para operar?
-    anonimizacion procesar --entrada <carpeta>
-    anonimizacion servir
-
-Fuera de alcance deliberado de este cambio (ver la respuesta completa en
-`sdd/arranque-para-el-instituto/apply-progress`): empaquetar un instalador o
-un servicio de Windows. Este comando sigue asumiendo una instalación editable
-del repositorio clonado (`pip install -e .`) -- IT hace ese paso una vez;
-después el operador sólo usa este comando y un archivo de configuración.
-
-Por qué se cargan los scripts viejos por RUTA (`_cargar_script`) en vez de
-importarlos como paquete o migrar su lógica a `src/`: `scripts/` no forma
-parte del wheel instalado (`pyproject.toml`,
-`[tool.hatch.build.targets.wheel]` sólo empaqueta `src/anonimizacion`) y hay
-un PR abierto (#40, `feat/acceso-al-panel`) tocando
-`scripts/servir_panel.py` -- mover su lógica acá hoy sería conflicto
-garantizado para cero beneficio real. Este módulo reutiliza exactamente el
-mismo patrón que ya usan `tests/scripts/test_procesar_carpeta.py` y
-`test_servir_panel.py` (`importlib.util.spec_from_file_location`) para cargar
-el script por ruta absoluta y traduce la configuración resuelta (archivo +
-banderas) al mismo `sys.argv` que esos scripts ya interpretan -- CERO cambios
-a `scripts/procesar_carpeta.py` ni a `scripts/servir_panel.py`. Cuando el PR
-#40 mergee y la superficie de `servir_panel.py` se estabilice, migrar su
-composición a `src/anonimizacion/web/` deja de tener el costo de conflicto
-que tiene hoy -- pero eso es una decisión para otro cambio, no para éste.
-"""
+"""Punto de entrada único instalable: composition root con subcomandos
+(`diagnosticar`/`procesar`/`esqueleto`/`exportar`/`servir`). Resuelve banderas/config y
+llama a `comandos.procesar.ejecutar(...)`/`comandos.servir.servir(...)` con argumentos
+con nombre -- no carga nada por ruta ni re-parsea `sys.argv`. Instalador/servicio de
+Windows fuera de alcance (ver `sdd/arranque-para-el-instituto/apply-progress`)."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import sys
 from dataclasses import replace
 from pathlib import Path
-from types import ModuleType
 
+from anonimizacion.comandos import procesar as comandos_procesar
+from anonimizacion.comandos import servir as comandos_servir
 from anonimizacion.configuracion import ConfiguracionOperador, ErrorConfiguracion, cargar_configuracion
 from anonimizacion.diagnostico import Hallazgo, diagnosticar
 from anonimizacion.dominio.errores import ErrorParseo
 from anonimizacion.esqueleto import Esqueleto, FixtureParseable, generar_esqueleto, generar_fixture_parseable
 from anonimizacion.extraccion.texto_pymupdf import extraer_texto
+from anonimizacion.pii.motor import MotorPii
+from anonimizacion.pseudonimizacion.almacen_pepper import obtener_pepper
 from anonimizacion.salida.destinos.postgres import construir_engine_postgres
 from anonimizacion.salida.exportacion import TAMANO_PAGINA_DEFECTO, exportar_dataset
-
-_RAIZ_REPO = Path(__file__).resolve().parents[2]
-
-
-def _cargar_script(nombre_archivo: str) -> ModuleType:
-    """Carga `scripts/<nombre_archivo>` por ruta -- ver el docstring del módulo."""
-    ruta = _RAIZ_REPO / "scripts" / nombre_archivo
-    spec = importlib.util.spec_from_file_location(f"_anonimizacion_cli_{ruta.stem}", ruta)
-    if spec is None or spec.loader is None:  # pragma: no cover -- sólo si el archivo desaparece
-        raise RuntimeError(f"No se pudo cargar '{ruta}': revisar que el archivo exista.")
-    modulo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modulo)
-    return modulo
+from anonimizacion.trabajadores.despacho_paralelo import validar_grado_concurrencia
 
 
 def _reportar_diagnostico(hallazgos: list[Hallazgo]) -> bool:
-    """Imprime TODOS los hallazgos (ok y error) para que el operador vea de
-    una vez todo lo que falta, no un problema a la vez en sucesivos intentos
-    fallidos. Devuelve `True` sólo si no hay ningún error."""
+    """Imprime todos los hallazgos de una vez, no uno por intento fallido.
+    Devuelve `True` sólo si no hay ningún error."""
     todo_ok = True
     for hallazgo in hallazgos:
         etiqueta = "OK   " if hallazgo.ok else "FALTA"
@@ -80,6 +39,12 @@ def _reportar_diagnostico(hallazgos: list[Hallazgo]) -> bool:
 
 def _resolver(valor_cli: object, valor_config: object) -> object:
     return valor_cli if valor_cli is not None else valor_config
+
+
+def _tipo_procesos(valor: str) -> int:
+    """`type=` de argparse para `--procesos`: valida el tope duro una sola vez, para
+    que un valor inválido falle antes de tocar Postgres/spaCy."""
+    return validar_grado_concurrencia(int(valor))
 
 
 def _cargar_config_o_none(ruta: Path | None) -> ConfiguracionOperador | None:
@@ -115,7 +80,9 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_procesar = subparsers.add_parser("procesar", help="Procesa una carpeta de PDFs de punta a punta.")
     _agregar_argumentos_comunes(p_procesar)
     p_procesar.add_argument("--entrada", type=Path, default=None, help="carpeta con los PDFs a procesar")
-    p_procesar.add_argument("--procesos", type=int, default=None, help="grado de concurrencia")
+    p_procesar.add_argument(
+        "--procesos", type=_tipo_procesos, default=None, help="grado de concurrencia (tope duro validado acá)"
+    )
 
     p_esqueleto = subparsers.add_parser(
         "esqueleto",
@@ -125,12 +92,8 @@ def _construir_parser() -> argparse.ArgumentParser:
     p_esqueleto.add_argument(
         "--salida", type=Path, default=None, help="archivo donde escribir el esqueleto (default: stdout)"
     )
-    # Opción, no subcomando: ambos modos comparten el 100% del resto del
-    # pipeline (extraer el PDF, resolver --salida, reportar errores sin ruta
-    # cruda) -- lo único que cambia es la función de sustitución dentro de
-    # `esqueleto.py` (`enmascarar_por_forma` vs. `sustituir_por_valores_plausibles`,
-    # misma allowlist estructural para ambas). Un subcomando nuevo duplicaría
-    # el parsing de `pdf`/`--salida` para cero beneficio real.
+    # Opción, no subcomando: ambos modos comparten el resto del pipeline, sólo
+    # cambia la función de sustitución dentro de esqueleto.py.
     p_esqueleto.add_argument(
         "--modo",
         choices=("enmascarado", "parseable"),
@@ -159,7 +122,9 @@ def _construir_parser() -> argparse.ArgumentParser:
     _agregar_argumentos_comunes(p_servir)
     p_servir.add_argument("--puerto", type=int, default=None)
     p_servir.add_argument("--raiz", type=Path, default=None, help="raíz autorizada para lanzar corridas nuevas")
-    p_servir.add_argument("--procesos", type=int, default=None, help="grado de concurrencia de cada corrida")
+    p_servir.add_argument(
+        "--procesos", type=_tipo_procesos, default=None, help="grado de concurrencia de cada corrida (tope duro validado acá)"
+    )
     p_servir.add_argument(
         "--escuchar-red",
         action="store_true",
@@ -201,34 +166,41 @@ def _comando_procesar(args: argparse.Namespace) -> int:
         print("No se puede procesar: resolver lo anterior antes de reintentar.", file=sys.stderr)
         return 1
 
-    modulo = _cargar_script("procesar_carpeta.py")
-    argv = [
-        "procesar_carpeta.py",
-        "--entrada",
-        str(entrada),
-        "--db-url",
-        str(db_url),
-        "--procesos",
-        str(procesos),
-    ]
-    argv_original = sys.argv
-    sys.argv = argv
-    try:
-        return modulo.main()
-    finally:
-        sys.argv = argv_original
+    print("Pepper: cargando desde ANONIMIZACION_PEPPER...", file=sys.stderr)
+    pepper = obtener_pepper()
+
+    # motor sólo se carga acá para el camino secuencial: con procesos>1 cada hijo
+    # arma su propio MotorPii (~875 MB) -- cargarlo también acá sería una copia de más.
+    motor: MotorPii | None = None
+    if procesos <= 1:
+        print("Motor de PII: cargando modelo de spaCy (puede tardar unos segundos)...", file=sys.stderr)
+        motor = MotorPii()
+    else:
+        print(
+            f"Motor de PII: se carga en cada uno de los {procesos} procesos hijos, no en este proceso.",
+            file=sys.stderr,
+        )
+
+    print(f"Conectando a Postgres: {db_url}", file=sys.stderr)
+    engine = construir_engine_postgres(str(db_url))
+
+    return comandos_procesar.ejecutar(
+        entrada=entrada,
+        engine=engine,
+        motor=motor,
+        pepper=pepper,
+        procesos=procesos,
+        db_url=str(db_url),
+    )
 
 
 def _comando_esqueleto(args: argparse.Namespace) -> int:
-    """No requiere `--config`/`--db-url` ni `diagnosticar`: es una herramienta
-    de lectura local, sin tocar la base de datos ni la cola -- el operador la
-    corre directo sobre sus PDFs reales, que nunca se copian al repositorio.
-    """
+    """No requiere `--config`/`--db-url` ni `diagnosticar`: herramienta de lectura
+    local que el operador corre directo sobre PDFs que nunca se copian al repo."""
     try:
         texto = extraer_texto(args.pdf)
     except ErrorParseo as error:
-        # Nunca la ruta cruda del PDF acá (mismo principio que
-        # `dominio/errores.py`: sin mensajes crudos ni rutas de archivo).
+        # Nunca la ruta cruda del PDF acá (sin mensajes crudos ni rutas de archivo).
         print(f"No se pudo extraer texto del PDF: {error.codigo.value}", file=sys.stderr)
         return 1
 
@@ -253,10 +225,8 @@ def _comando_esqueleto(args: argparse.Namespace) -> int:
 
 
 def _comando_exportar(args: argparse.Namespace) -> int:
-    """Exporta el dataset vinculado. Sin `diagnosticar` de por medio: no
-    procesa PDFs ni requiere `--entrada` -- sólo lee `db_url`, ya validada
-    implícitamente por `exportar_dataset` (falla con un error de conexión
-    normal de SQLAlchemy si la URL no sirve)."""
+    """Exporta el dataset vinculado. Sin `diagnosticar`: no procesa PDFs, sólo lee
+    `db_url` (validada implícitamente por `exportar_dataset` al conectar)."""
     config = _cargar_config_o_none(args.config)
     if config is None:
         return 1
@@ -293,26 +263,13 @@ def _comando_servir(args: argparse.Namespace) -> int:
         print("No se puede levantar el panel: resolver lo anterior antes de reintentar.", file=sys.stderr)
         return 1
 
-    modulo = _cargar_script("servir_panel.py")
-    argv = [
-        "servir_panel.py",
-        "--db-url",
-        str(db_url),
-        "--puerto",
-        str(puerto),
-        "--raiz",
-        str(raiz),
-        "--procesos",
-        str(procesos),
-    ]
-    if escuchar_red:
-        argv.append("--escuchar-red")
-    argv_original = sys.argv
-    sys.argv = argv
-    try:
-        return modulo.main()
-    finally:
-        sys.argv = argv_original
+    return comandos_servir.servir(
+        db_url=str(db_url),
+        puerto=puerto,
+        raiz=Path(raiz),
+        procesos=procesos,
+        escuchar_red=escuchar_red,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

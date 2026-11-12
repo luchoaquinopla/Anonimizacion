@@ -27,7 +27,9 @@ def _documento(fuentes: tuple[ReferenciaCampo, ...]) -> DocumentoParseado:
 
 def test_reconcilia_medida_y_texto_del_eco() -> None:
     fuentes = (ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0), ReferenciaCampo("eco.seccion", 1, "eco.seccion", 0))
-    ReconciliadorEcoDoppler().reconciliar(_documento(fuentes), TextoExtraido(("AO 28 mm\nCONCLUSIONES\nEstudio normal.",)))
+    resultado = ReconciliadorEcoDoppler().reconciliar(_documento(fuentes), TextoExtraido(("AO 28 mm\nCONCLUSIONES\nEstudio normal.",)))
+
+    assert resultado == ()
 
 
 def test_reconcilia_seccion_cuyo_encabezado_termina_en_dos_puntos() -> None:
@@ -41,7 +43,9 @@ def test_reconcilia_seccion_cuyo_encabezado_termina_en_dos_puntos() -> None:
         fuentes=(fuente,),
     )
 
-    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("CONCLUSIONES:\nEstudio normal.",)))
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("CONCLUSIONES:\nEstudio normal.",)))
+
+    assert resultado == ()
 
 
 def test_no_confunde_un_texto_con_dos_puntos_con_el_encabezado_de_seccion() -> None:
@@ -65,7 +69,9 @@ def test_reconcilia_firma_del_informante_cuando_existe() -> None:
     documento = _documento((fuente,))
     contenido = ContenidoEco(documento.contenido.medidas, documento.contenido.secciones_texto, FirmaMedico("Medico Sintetico", "MP 99"))
     documento = DocumentoParseado(documento.tipo_documento, 1, documento.identidad, documento.fecha_estudio, contenido, fuentes=(fuente,))
-    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("Medico Sintetico MP 99",)))
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("Medico Sintetico MP 99",)))
+
+    assert resultado == ()
 
 
 def test_reconcilia_firma_legada_y_numero_estudio() -> None:
@@ -73,7 +79,9 @@ def test_reconcilia_firma_legada_y_numero_estudio() -> None:
     fuentes = (ReferenciaCampo("eco.firma", 1, "eco.firma"), ReferenciaCampo("eco.numero_estudio", 1, "eco.numero_estudio"))
     contenido = ContenidoEco((), (), FirmaMedico("Medico Sintetico", "99"))
     documento = DocumentoParseado(TipoDocumento.ECOCARDIOGRAMA, 1, IdentidadCruda(nombre=SecretStr("Persona"), ids_internos=(SecretStr("E-1"),)), date(2025, 3, 20), contenido, fuentes=fuentes)
-    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("Firma: Medico Sintetico - MP 99\nNº Estudio: E-1",)))
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("Firma: Medico Sintetico - MP 99\nNº Estudio: E-1",)))
+
+    assert resultado == ()
 
 
 def test_inventaria_headers_medidas_secciones_y_firma_en_paginas_reales() -> None:
@@ -181,7 +189,9 @@ def test_reconcilia_medida_del_parser_en_formato_pipe() -> None:
     ))
     documento = ParseadorEcoDoppler().parsear(texto)
 
-    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+    assert resultado == ()
 
 
 def test_reconcilia_tabla_real_de_medidas_en_dos_columnas() -> None:
@@ -195,7 +205,9 @@ def test_reconcilia_tabla_real_de_medidas_en_dos_columnas() -> None:
     ))
     documento = ParseadorEcoDoppler().parsear(texto)
 
-    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+    assert resultado == ()
 
 
 def test_emite_selector_especifico_por_etiqueta_en_tabla_de_dos_columnas() -> None:
@@ -252,7 +264,9 @@ def test_reconcilia_etiqueta_de_medida_con_espacio_y_puntuacion() -> None:
         fuentes=(ReferenciaCampo("eco.medida", 1, "eco.medida.p.posterior", 0),),
     )
 
-    ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("MEDIDAS\nP. Posterior 8 mm",)))
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, TextoExtraido(("MEDIDAS\nP. Posterior 8 mm",)))
+
+    assert resultado == ()
 
 
 def test_reconcilia_seccion_que_continua_en_la_pagina_siguiente() -> None:
@@ -264,16 +278,20 @@ def test_reconcilia_seccion_que_continua_en_la_pagina_siguiente() -> None:
     ))
     documento = ParseadorEcoDoppler().parsear(texto)
 
-    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+    assert resultado == ()
 
 
 def test_aprueba_medida_eco_asociada_aunque_el_valor_aparezca_fuera_de_la_tabla() -> None:
     documento = _documento((ReferenciaCampo("eco.medida", 1, "eco.medida.ao", 0),))
 
-    ReconciliadorEcoDoppler().reconciliar(
+    resultado = ReconciliadorEcoDoppler().reconciliar(
         documento,
         TextoExtraido(("MEDIDAS\nAO 28 mm\nComentario libre: AO 28 mm",)),
     )
+
+    assert resultado == ()
 
 
 def test_publica_con_marca_cuando_hay_dos_medidas_estructuradas_y_el_modelo_cita_una() -> None:
@@ -343,10 +361,12 @@ def test_aprueba_nombre_eco_en_su_header() -> None:
     fuente = ReferenciaCampo("eco.nombre", 1, "eco.nombre")
     documento = _documento((fuente,))
 
-    ReconciliadorEcoDoppler().reconciliar(
+    resultado = ReconciliadorEcoDoppler().reconciliar(
         documento,
         TextoExtraido(("Paciente: Persona Sintetica\nMEDIDAS",)),
     )
+
+    assert resultado == ()
 
 
 def test_aprueba_nombre_eco_sin_arrastrar_columnas_vecinas_del_header() -> None:
@@ -357,7 +377,9 @@ def test_aprueba_nombre_eco_sin_arrastrar_columnas_vecinas_del_header() -> None:
     ))
     documento = ParseadorEcoDoppler().parsear(texto)
 
-    ReconciliadorEcoDoppler().reconciliar(documento, texto)
+    resultado = ReconciliadorEcoDoppler().reconciliar(documento, texto)
+
+    assert resultado == ()
 
 
 def test_rechaza_firma_esperada_disgregada_junto_a_otra_firma() -> None:
@@ -394,10 +416,12 @@ def test_aprueba_firma_real_en_lineas_separadas() -> None:
         fuentes=(fuente,),
     )
 
-    ReconciliadorEcoDoppler().reconciliar(
+    resultado = ReconciliadorEcoDoppler().reconciliar(
         documento,
         TextoExtraido(("MEDICO SINTETICO\nMatrícula W 9999",)),
     )
+
+    assert resultado == ()
 
 
 def test_aprueba_firma_real_con_linea_intermedia_antes_de_la_matricula() -> None:
@@ -412,10 +436,12 @@ def test_aprueba_firma_real_con_linea_intermedia_antes_de_la_matricula() -> None
         fuentes=(fuente,),
     )
 
-    ReconciliadorEcoDoppler().reconciliar(
+    resultado = ReconciliadorEcoDoppler().reconciliar(
         documento,
         TextoExtraido(("MEDICO SINTETICO\nEspecialista en cardiologia\nMatrícula W 9999",)),
     )
+
+    assert resultado == ()
 
 
 def test_rechaza_matricula_posterior_separada_por_firma_legada_de_otro_medico() -> None:

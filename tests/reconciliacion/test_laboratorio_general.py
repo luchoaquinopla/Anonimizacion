@@ -36,7 +36,9 @@ def _documento(
 def test_reconcilia_resultados_repetidos_por_ordinal() -> None:
     filas = (ResultadoLaboratorio("HEMATOLOGIA", "Prueba A", "10,5", "u", None), ResultadoLaboratorio("HEMATOLOGIA", "Prueba B", "12", "u", None))
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0), ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 1))
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), TextoExtraido(("Prueba A 10.5 u\nPrueba B 12 u",)))
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), TextoExtraido(("Prueba A 10.5 u\nPrueba B 12 u",)))
+
+    assert resultado == ()
 
 
 def test_rechaza_resultado_laboratorio_discrepante() -> None:
@@ -51,7 +53,9 @@ def test_laboratorio_reconcilia_con_texto_ordenado() -> None:
     filas = (ResultadoLaboratorio("HEMATOLOGIA", "Prueba A", "10", "u", None),)
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado"),)
     texto = TextoExtraido(("Prueba A\n10\nu",), ("Prueba A 10 u",))
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_asocia_resultado_sin_confundirlo_con_subcadena_del_numero_de_peticion() -> None:
@@ -61,7 +65,9 @@ def test_laboratorio_asocia_resultado_sin_confundirlo_con_subcadena_del_numero_d
         "No Peticion: 900\nHEMATOLOGIA\nGlucosa | 90 | mg/dL | 70-110",
     ))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_hora_extraccion_sin_validador_asociacion_rechaza_documento_legitimo() -> None:
@@ -118,7 +124,9 @@ def test_reconciliador_laboratorio_reconcilia_hora_extraccion_end_to_end() -> No
         "Hora de Extraccion: 08:30\nHEMATOLOGIA\nHemoglobina | 14,2 | g/dL | 12 - 16",
     ))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(documento, texto)
+
+    assert resultado == ()
 
 
 def test_reconciliador_laboratorio_rechaza_hora_extraccion_discrepante() -> None:
@@ -214,7 +222,9 @@ def test_laboratorio_conserva_subseccion_para_validar_asociacion() -> None:
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),)
     texto = TextoExtraido(("HEMATOLOGIA\nHEMOGRAMA\nHemoglobina | 14,2 | g/dL | 12 - 16",))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_rechaza_referencia_en_pagina_incorrecta_con_valor_repetido() -> None:
@@ -287,7 +297,9 @@ def test_laboratorio_reconstruye_nombre_partido_antes_de_asociar_fila() -> None:
         "2021)",
     ))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_inventaria_resultado_cualitativo_omitido() -> None:
@@ -308,7 +320,9 @@ def test_laboratorio_valida_resultado_cualitativo_con_destino() -> None:
     fuentes = (ReferenciaCampo("laboratorio.resultado", 1, "laboratorio.resultado", 0),)
     texto = TextoExtraido(("HEMATOLOGIA\nSARS-CoV-2  NO DETECTADO",))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_no_inventaria_narrativa_como_resultado_cualitativo() -> None:
@@ -331,7 +345,9 @@ def test_laboratorio_canonicaliza_alias_ionograma_y_conserva_asociacion_ordinal(
         "IONOGRAMA SERICO\nSodio  140  mEq/L  135 - 145",
     ))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_inventaria_fila_cualitativa_pipe_fuera_de_allowlist() -> None:
@@ -357,7 +373,9 @@ def test_laboratorio_no_reconstruye_nombre_partido_en_formato_pipe() -> None:
         "2021)",
     ))
 
-    ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+    resultado = ReconciliadorLaboratorioGeneral().reconciliar(_documento(filas, fuentes), texto)
+
+    assert resultado == ()
 
 
 def test_laboratorio_inventaria_cualitativo_abierto_en_formato_real_omitido() -> None:
